@@ -7,6 +7,9 @@ const XtreamLibraryConfig = {
     selectedVodCategoryIds: [],
     selectedSeriesCategoryIds: [],
 
+    // Track last clicked checkbox per category type for shift+click range selection
+    lastClickedIndex: { vod: null, series: null },
+
     loadConfig: function () {
         Dashboard.showLoadingMsg();
 
@@ -207,19 +210,42 @@ const XtreamLibraryConfig = {
         }
 
         let html = '';
-        categories.forEach(function (category) {
+        categories.forEach(function (category, index) {
             const isChecked = selectedIds.includes(category.CategoryId) ? 'checked' : '';
             const checkboxId = type + 'Cat_' + category.CategoryId;
             html += '<div class="checkboxContainer">';
             html += '<label class="emby-checkbox-label">';
             html += '<input is="emby-checkbox" type="checkbox" id="' + checkboxId + '" ';
-            html += 'data-category-id="' + category.CategoryId + '" data-category-type="' + type + '" ' + isChecked + '/>';
+            html += 'data-category-id="' + category.CategoryId + '" data-category-type="' + type + '" ';
+            html += 'data-index="' + index + '" ' + isChecked + '/>';
             html += '<span>' + XtreamLibraryConfig.escapeHtml(category.CategoryName) + '</span>';
             html += '</label>';
             html += '</div>';
         });
 
         container.innerHTML = html;
+
+        // Add shift+click range selection support
+        const self = this;
+        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+        checkboxes.forEach(function (checkbox) {
+            checkbox.addEventListener('click', function (e) {
+                const currentIndex = parseInt(checkbox.getAttribute('data-index'));
+                const lastIndex = self.lastClickedIndex[type];
+
+                if (e.shiftKey && lastIndex !== null && lastIndex !== currentIndex) {
+                    const start = Math.min(lastIndex, currentIndex);
+                    const end = Math.max(lastIndex, currentIndex);
+                    const newState = checkbox.checked;
+
+                    for (let i = start; i <= end; i++) {
+                        checkboxes[i].checked = newState;
+                    }
+                }
+
+                self.lastClickedIndex[type] = currentIndex;
+            });
+        });
     },
 
     getSelectedCategoryIds: function (type) {
