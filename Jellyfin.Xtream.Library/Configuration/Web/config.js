@@ -46,19 +46,27 @@ const XtreamLibraryConfig = {
 
     testConnection: function () {
         const statusSpan = document.getElementById('connectionStatus');
-        statusSpan.innerHTML = '<span style="color: orange;">Testing...</span>';
+        statusSpan.innerHTML = '<span style="color: orange;">Testing... (save settings first if not done)</span>';
 
         ApiClient.fetch({
             url: ApiClient.getUrl('XtreamLibrary/TestConnection'),
-            type: 'GET'
+            type: 'GET',
+            dataType: 'json'
         }).then(function (response) {
-            if (response.Success) {
-                statusSpan.innerHTML = '<span style="color: green;">' + response.Message + '</span>';
+            // Handle both Response object and pre-parsed JSON
+            if (response && typeof response.json === 'function') {
+                return response.json();
+            }
+            return response;
+        }).then(function (data) {
+            if (data.Success) {
+                statusSpan.innerHTML = '<span style="color: green;">' + data.Message + '</span>';
             } else {
-                statusSpan.innerHTML = '<span style="color: red;">' + response.Message + '</span>';
+                statusSpan.innerHTML = '<span style="color: red;">' + data.Message + '</span>';
             }
         }).catch(function (error) {
-            statusSpan.innerHTML = '<span style="color: red;">Connection failed: ' + (error.message || 'Unknown error') + '</span>';
+            console.error('TestConnection error:', error);
+            statusSpan.innerHTML = '<span style="color: red;">Connection failed: ' + (error.message || 'Check console for details') + '</span>';
         });
     },
 
@@ -68,26 +76,39 @@ const XtreamLibraryConfig = {
 
         ApiClient.fetch({
             url: ApiClient.getUrl('XtreamLibrary/Sync'),
-            type: 'POST'
+            type: 'POST',
+            dataType: 'json'
         }).then(function (response) {
-            if (response.Success) {
+            if (response && typeof response.json === 'function') {
+                return response.json();
+            }
+            return response;
+        }).then(function (data) {
+            if (data.Success) {
                 statusSpan.innerHTML = '<span style="color: green;">Sync completed!</span>';
-                XtreamLibraryConfig.displaySyncResult(response);
+                XtreamLibraryConfig.displaySyncResult(data);
             } else {
-                statusSpan.innerHTML = '<span style="color: red;">Sync failed: ' + (response.Error || 'Unknown error') + '</span>';
+                statusSpan.innerHTML = '<span style="color: red;">Sync failed: ' + (data.Error || 'Unknown error') + '</span>';
             }
         }).catch(function (error) {
-            statusSpan.innerHTML = '<span style="color: red;">Sync failed: ' + (error.message || 'Unknown error') + '</span>';
+            console.error('Sync error:', error);
+            statusSpan.innerHTML = '<span style="color: red;">Sync failed: ' + (error.message || 'Check console for details') + '</span>';
         });
     },
 
     loadSyncStatus: function () {
         ApiClient.fetch({
             url: ApiClient.getUrl('XtreamLibrary/Status'),
-            type: 'GET'
+            type: 'GET',
+            dataType: 'json'
         }).then(function (response) {
-            if (response) {
-                XtreamLibraryConfig.displaySyncResult(response);
+            if (response && typeof response.json === 'function') {
+                return response.json();
+            }
+            return response;
+        }).then(function (data) {
+            if (data) {
+                XtreamLibraryConfig.displaySyncResult(data);
             }
         }).catch(function () {
             // No previous sync, ignore
