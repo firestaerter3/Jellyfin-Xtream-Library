@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Xtream Library</title>
+</head>
+<body>
+    <div id="XtreamLibraryConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
+         data-require="emby-input,emby-button,emby-checkbox,emby-select">
+        <div data-role="content">
+            <div class="content-primary">
+                <form id="XtreamLibraryConfigForm" class="XtreamLibraryConfigForm">
+                    <div class="sectionTitleContainer flex align-items-center">
+                        <h2 class="sectionTitle">Xtream Library Settings</h2>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Provider Credentials</h3>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtBaseUrl">Base URL</label>
+                            <input is="emby-input" type="text" id="txtBaseUrl" name="BaseUrl"
+                                   placeholder="http://provider.com:8000" required />
+                            <div class="fieldDescription">
+                                The base URL of your Xtream provider (including protocol and port, no trailing slash).
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtUsername">Username</label>
+                            <input is="emby-input" type="text" id="txtUsername" name="Username" required />
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtPassword">Password</label>
+                            <input is="emby-input" type="password" id="txtPassword" name="Password" required />
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtUserAgent">Custom User-Agent (Optional)</label>
+                            <input is="emby-input" type="text" id="txtUserAgent" name="UserAgent" />
+                            <div class="fieldDescription">
+                                Optional custom User-Agent string for API requests.
+                            </div>
+                        </div>
+                        <div>
+                            <button is="emby-button" type="button" id="btnTestConnection" class="raised button-submit">
+                                <span>Test Connection</span>
+                            </button>
+                            <span id="connectionStatus" style="margin-left: 10px;"></span>
+                        </div>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Library Settings</h3>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtLibraryPath">Library Path</label>
+                            <input is="emby-input" type="text" id="txtLibraryPath" name="LibraryPath"
+                                   placeholder="/config/xtream-library" required />
+                            <div class="fieldDescription">
+                                Path where STRM files will be created. Use /config/xtream-library for Docker setups.
+                                After first sync, add Movies and Series subfolders as Jellyfin libraries.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Sync Options</h3>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input is="emby-checkbox" type="checkbox" id="chkSyncMovies" name="SyncMovies" />
+                                <span>Sync Movies/VOD</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Enable syncing of movies and VOD content.
+                            </div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input is="emby-checkbox" type="checkbox" id="chkSyncSeries" name="SyncSeries" />
+                                <span>Sync Series</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Enable syncing of series content with proper season/episode structure.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtSyncInterval">Sync Interval (minutes)</label>
+                            <input is="emby-input" type="number" id="txtSyncInterval" name="SyncIntervalMinutes"
+                                   min="10" max="1440" step="1" />
+                            <div class="fieldDescription">
+                                How often to sync content from the provider (10-1440 minutes).
+                            </div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input is="emby-checkbox" type="checkbox" id="chkTriggerScan" name="TriggerLibraryScan" />
+                                <span>Trigger Library Scan After Sync</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Automatically trigger a Jellyfin library scan after content sync.
+                            </div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input is="emby-checkbox" type="checkbox" id="chkCleanupOrphans" name="CleanupOrphans" />
+                                <span>Cleanup Orphaned Files</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Remove STRM files for content that no longer exists on the provider.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Manual Sync</h3>
+                        <div>
+                            <button is="emby-button" type="button" id="btnManualSync" class="raised button-submit">
+                                <span>Run Sync Now</span>
+                            </button>
+                            <span id="syncStatus" style="margin-left: 10px;"></span>
+                        </div>
+                        <div id="lastSyncInfo" style="margin-top: 10px;"></div>
+                    </div>
+
+                    <div>
+                        <button is="emby-button" type="submit" class="raised button-submit block">
+                            <span>Save</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <script type="text/javascript" src="config.js"></script>
+    </div>
+</body>
+</html>

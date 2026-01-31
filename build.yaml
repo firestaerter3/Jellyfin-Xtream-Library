@@ -1,0 +1,31 @@
+name: "Xtream Library"
+guid: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+version: "1.0.0.0"
+targetAbi: "10.11.0.0"
+framework: "net9.0"
+owner: "rolandb5"
+overview: "Sync Xtream VOD and Series content to native Jellyfin libraries via STRM files"
+description: |
+  Xtream Library creates STRM files from your Xtream provider's VOD and Series content,
+  enabling native Jellyfin library integration with full metadata support from TMDB/TVDb.
+
+  Features:
+  - Sync Movies/VOD as STRM files with Jellyfin naming conventions
+  - Sync Series with proper Season/Episode folder structure
+  - Automatic library scan after sync
+  - Orphan cleanup for removed content
+  - Scheduled sync with configurable interval
+  - Manual sync via API or scheduled task
+
+  This plugin is designed for universal client compatibility, including Swiftfin.
+category: "General"
+artifacts:
+  - "Jellyfin.Xtream.Library.dll"
+changelog: |
+  ## v1.0.0.0
+  - Initial release
+  - Movies/VOD sync support
+  - Series/Episodes sync support
+  - Automatic library scan
+  - Orphan cleanup
+  - Configuration UI
