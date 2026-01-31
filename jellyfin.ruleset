@@ -108,5 +108,7 @@
         <Rule Id="CA2234" Action="None" />
         <!-- disable warning CA3003: Potential file path injection vulnerability -->
         <Rule Id="CA3003" Action="None" />
+        <!-- disable warning CA1819: Properties should not return arrays (needed for configuration DTOs) -->
+        <Rule Id="CA1819" Action="None" />
     </Rules>
 </RuleSet>

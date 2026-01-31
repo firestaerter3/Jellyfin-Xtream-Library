@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System;
 using MediaBrowser.Model.Plugins;
 
 namespace Jellyfin.Xtream.Library;
@@ -71,4 +72,16 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Gets or sets an optional custom User-Agent string for API requests.
     /// </summary>
     public string UserAgent { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the array of selected VOD category IDs to sync.
+    /// Empty array means sync all categories (backward compatible).
+    /// </summary>
+    public int[] SelectedVodCategoryIds { get; set; } = Array.Empty<int>();
+
+    /// <summary>
+    /// Gets or sets the array of selected Series category IDs to sync.
+    /// Empty array means sync all categories (backward compatible).
+    /// </summary>
+    public int[] SelectedSeriesCategoryIds { get; set; } = Array.Empty<int>();
 }
