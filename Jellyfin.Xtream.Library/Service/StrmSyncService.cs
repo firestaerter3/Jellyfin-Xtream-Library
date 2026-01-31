@@ -177,6 +177,29 @@ public partial class StrmSyncService
         var categories = await _client.GetVodCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
         var processedStreamIds = new HashSet<int>();
 
+        // Filter categories if user has selected specific ones
+        var selectedIds = Plugin.Instance.Configuration.SelectedVodCategoryIds;
+        if (selectedIds.Length > 0)
+        {
+            var selectedIdSet = selectedIds.ToHashSet();
+            var filteredCategories = categories.Where(c => selectedIdSet.Contains(c.CategoryId)).ToList();
+            var skippedCount = categories.Count - filteredCategories.Count;
+            if (skippedCount > 0)
+            {
+                _logger.LogInformation("Filtering VOD categories: {Selected} selected, {Skipped} skipped", filteredCategories.Count, skippedCount);
+            }
+
+            // Warn about non-existent category IDs
+            var existingIds = categories.Select(c => c.CategoryId).ToHashSet();
+            var missingIds = selectedIds.Where(id => !existingIds.Contains(id)).ToList();
+            if (missingIds.Count > 0)
+            {
+                _logger.LogWarning("Selected VOD category IDs not found on provider: {MissingIds}", string.Join(", ", missingIds));
+            }
+
+            categories = filteredCategories;
+        }
+
         foreach (var category in categories)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -242,6 +265,29 @@ public partial class StrmSyncService
     {
         var categories = await _client.GetSeriesCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
         var processedSeriesIds = new HashSet<int>();
+
+        // Filter categories if user has selected specific ones
+        var selectedIds = Plugin.Instance.Configuration.SelectedSeriesCategoryIds;
+        if (selectedIds.Length > 0)
+        {
+            var selectedIdSet = selectedIds.ToHashSet();
+            var filteredCategories = categories.Where(c => selectedIdSet.Contains(c.CategoryId)).ToList();
+            var skippedCount = categories.Count - filteredCategories.Count;
+            if (skippedCount > 0)
+            {
+                _logger.LogInformation("Filtering Series categories: {Selected} selected, {Skipped} skipped", filteredCategories.Count, skippedCount);
+            }
+
+            // Warn about non-existent category IDs
+            var existingIds = categories.Select(c => c.CategoryId).ToHashSet();
+            var missingIds = selectedIds.Where(id => !existingIds.Contains(id)).ToList();
+            if (missingIds.Count > 0)
+            {
+                _logger.LogWarning("Selected Series category IDs not found on provider: {MissingIds}", string.Join(", ", missingIds));
+            }
+
+            categories = filteredCategories;
+        }
 
         foreach (var category in categories)
         {
@@ -338,7 +384,7 @@ public partial class StrmSyncService
         }
     }
 
-    private static string BuildEpisodeFileName(string seriesName, int seasonNumber, Episode episode)
+    internal static string BuildEpisodeFileName(string seriesName, int seasonNumber, Episode episode)
     {
         string episodeTitle = SanitizeFileName(episode.Title);
         string seasonStr = seasonNumber.ToString("D2", System.Globalization.CultureInfo.InvariantCulture);
@@ -352,7 +398,7 @@ public partial class StrmSyncService
         return $"{seriesName} - S{seasonStr}E{episodeStr} - {episodeTitle}.strm";
     }
 
-    private static string SanitizeFileName(string name)
+    internal static string SanitizeFileName(string? name)
     {
         if (string.IsNullOrEmpty(name))
         {
@@ -375,7 +421,7 @@ public partial class StrmSyncService
         return string.IsNullOrEmpty(cleanName) ? "Unknown" : cleanName;
     }
 
-    private static int? ExtractYear(string name)
+    internal static int? ExtractYear(string? name)
     {
         if (string.IsNullOrEmpty(name))
         {
@@ -408,7 +454,7 @@ public partial class StrmSyncService
         }
     }
 
-    private static void CleanupEmptyDirectories(string directory, string stopAt)
+    internal static void CleanupEmptyDirectories(string directory, string stopAt)
     {
         while (!string.IsNullOrEmpty(directory) &&
                !directory.Equals(stopAt, StringComparison.OrdinalIgnoreCase) &&

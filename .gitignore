@@ -53,6 +53,9 @@ project.fragment.lock.json
 ehthumbs.db
 Thumbs.db
 
+# Test results
+TestResults/
+
 # Local dev notes
 CLAUDE.local.md
 *.local.md

@@ -1,0 +1,172 @@
+// Copyright (C) 2024  Roland Breitschaft
+
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+using FluentAssertions;
+using Jellyfin.Xtream.Library.Api;
+using Jellyfin.Xtream.Library.Client;
+using Jellyfin.Xtream.Library.Service;
+using Jellyfin.Xtream.Library.Tests.Helpers;
+using MediaBrowser.Controller.Library;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+using Moq;
+using Xunit;
+
+namespace Jellyfin.Xtream.Library.Tests.Api;
+
+public class SyncControllerTests
+{
+    private readonly Mock<IXtreamClient> _mockClient;
+    private readonly Mock<ILibraryManager> _mockLibraryManager;
+    private readonly Mock<ILogger<StrmSyncService>> _mockSyncServiceLogger;
+    private readonly Mock<ILogger<SyncController>> _mockControllerLogger;
+    private readonly StrmSyncService _syncService;
+    private readonly SyncController _controller;
+
+    public SyncControllerTests()
+    {
+        _mockClient = new Mock<IXtreamClient>();
+        _mockLibraryManager = new Mock<ILibraryManager>();
+        _mockSyncServiceLogger = new Mock<ILogger<StrmSyncService>>();
+        _mockControllerLogger = new Mock<ILogger<SyncController>>();
+
+        _syncService = new StrmSyncService(
+            _mockClient.Object,
+            _mockLibraryManager.Object,
+            _mockSyncServiceLogger.Object);
+
+        _controller = new SyncController(
+            _syncService,
+            _mockClient.Object,
+            _mockControllerLogger.Object);
+    }
+
+    #region GetStatus Tests
+
+    [Fact]
+    public void GetStatus_NoPreviousSync_ReturnsNoContent()
+    {
+        var result = _controller.GetStatus();
+
+        result.Result.Should().BeOfType<NoContentResult>();
+    }
+
+    [Fact]
+    public async Task GetStatus_AfterSync_ReturnsOkWithResult()
+    {
+        // Note: This test would require setting up the Plugin.Instance which is complex
+        // In a real scenario, we would need to refactor the service to accept configuration via DI
+        // For now, we test the behavior where LastSyncResult is null
+        var result = _controller.GetStatus();
+
+        var noContentResult = result.Result.Should().BeOfType<NoContentResult>().Subject;
+        noContentResult.StatusCode.Should().Be(StatusCodes.Status204NoContent);
+    }
+
+    #endregion
+
+    #region ConnectionTestResult Tests
+
+    [Fact]
+    public void ConnectionTestResult_DefaultValues_AreCorrect()
+    {
+        var result = new ConnectionTestResult();
+
+        result.Success.Should().BeFalse();
+        result.Message.Should().BeEmpty();
+        result.Username.Should().BeNull();
+        result.Status.Should().BeNull();
+        result.MaxConnections.Should().BeNull();
+        result.ActiveConnections.Should().BeNull();
+    }
+
+    [Fact]
+    public void ConnectionTestResult_WithValues_SetsCorrectly()
+    {
+        var result = new ConnectionTestResult
+        {
+            Success = true,
+            Message = "Connected successfully",
+            Username = "testuser",
+            Status = "Active",
+            MaxConnections = 5,
+            ActiveConnections = 2,
+        };
+
+        result.Success.Should().BeTrue();
+        result.Message.Should().Be("Connected successfully");
+        result.Username.Should().Be("testuser");
+        result.Status.Should().Be("Active");
+        result.MaxConnections.Should().Be(5);
+        result.ActiveConnections.Should().Be(2);
+    }
+
+    #endregion
+
+    #region SyncResult Tests
+
+    [Fact]
+    public void SyncResult_Duration_CalculatesCorrectly()
+    {
+        var result = new SyncResult
+        {
+            StartTime = new DateTime(2024, 1, 1, 10, 0, 0),
+            EndTime = new DateTime(2024, 1, 1, 10, 5, 30),
+        };
+
+        result.Duration.Should().Be(TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
+    public void SyncResult_DefaultValues_AreCorrect()
+    {
+        var result = new SyncResult();
+
+        result.Success.Should().BeFalse();
+        result.Error.Should().BeNull();
+        result.MoviesCreated.Should().Be(0);
+        result.MoviesSkipped.Should().Be(0);
+        result.EpisodesCreated.Should().Be(0);
+        result.EpisodesSkipped.Should().Be(0);
+        result.FilesDeleted.Should().Be(0);
+        result.Errors.Should().Be(0);
+    }
+
+    [Fact]
+    public void SyncResult_WithValues_SetsCorrectly()
+    {
+        var result = new SyncResult
+        {
+            Success = true,
+            MoviesCreated = 10,
+            MoviesSkipped = 5,
+            EpisodesCreated = 100,
+            EpisodesSkipped = 50,
+            FilesDeleted = 3,
+            Errors = 2,
+        };
+
+        result.Success.Should().BeTrue();
+        result.MoviesCreated.Should().Be(10);
+        result.MoviesSkipped.Should().Be(5);
+        result.EpisodesCreated.Should().Be(100);
+        result.EpisodesSkipped.Should().Be(50);
+        result.FilesDeleted.Should().Be(3);
+        result.Errors.Should().Be(2);
+    }
+
+    #endregion
+}

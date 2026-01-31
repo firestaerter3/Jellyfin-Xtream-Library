@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Jellyfin.Xtream.Library.Tests/Jellyfin.Xtream.Library.Tests.csproj" />
+  <Project Path="Jellyfin.Xtream.Library/Jellyfin.Xtream.Library.csproj" />
+</Solution>

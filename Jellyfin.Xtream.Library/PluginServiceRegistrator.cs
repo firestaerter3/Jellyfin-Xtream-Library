@@ -31,7 +31,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
     /// <inheritdoc />
     public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
-        serviceCollection.AddSingleton<IXtreamClient, XtreamClient>();
+        serviceCollection.AddHttpClient<IXtreamClient, XtreamClient>();
         serviceCollection.AddSingleton<StrmSyncService>();
         serviceCollection.AddSingleton<IScheduledTask, SyncLibraryTask>();
     }
