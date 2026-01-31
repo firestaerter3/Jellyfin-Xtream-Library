@@ -84,4 +84,16 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Empty array means sync all categories (backward compatible).
     /// </summary>
     public int[] SelectedSeriesCategoryIds { get; set; } = Array.Empty<int>();
+
+    /// <summary>
+    /// Gets or sets the number of parallel API requests during sync.
+    /// Higher values speed up sync but may overload the provider.
+    /// </summary>
+    public int SyncParallelism { get; set; } = 3;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to skip series that already have STRM files.
+    /// This avoids unnecessary API calls for existing content.
+    /// </summary>
+    public bool SmartSkipExisting { get; set; } = true;
 }

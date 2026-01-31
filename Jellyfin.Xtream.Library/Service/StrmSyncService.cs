@@ -14,6 +14,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -206,11 +207,12 @@ public partial class StrmSyncService
         SyncResult result,
         CancellationToken cancellationToken)
     {
+        var config = Plugin.Instance.Configuration;
         var categories = await _client.GetVodCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
-        var processedStreamIds = new HashSet<int>();
+        var processedStreamIds = new ConcurrentDictionary<int, bool>();
 
         // Filter categories if user has selected specific ones
-        var selectedIds = Plugin.Instance.Configuration.SelectedVodCategoryIds;
+        var selectedIds = config.SelectedVodCategoryIds;
         if (selectedIds.Length > 0)
         {
             var selectedIdSet = selectedIds.ToHashSet();
@@ -232,29 +234,51 @@ public partial class StrmSyncService
             categories = filteredCategories;
         }
 
-        CurrentProgress.TotalCategories = categories.Count;
-        CurrentProgress.CategoriesProcessed = 0;
+        // Collect all unique movies from all categories first
+        _logger.LogInformation("Collecting movies from {Count} categories...", categories.Count);
+        CurrentProgress.Phase = "Collecting movies";
+        var allMovies = new List<StreamInfo>();
 
         foreach (var category in categories)
         {
             cancellationToken.ThrowIfCancellationRequested();
-
-            CurrentProgress.CurrentItem = category.CategoryName;
-            _logger.LogDebug("Processing VOD category: {CategoryName} ({CategoryId})", category.CategoryName, category.CategoryId);
-
             var streams = await _client.GetVodStreamsByCategoryAsync(connectionInfo, category.CategoryId, cancellationToken).ConfigureAwait(false);
-            CurrentProgress.TotalItems = streams.Count;
-            CurrentProgress.ItemsProcessed = 0;
 
             foreach (var stream in streams)
             {
-                CurrentProgress.ItemsProcessed++;
-                // Skip duplicates (same movie can appear in multiple categories)
-                if (!processedStreamIds.Add(stream.StreamId))
+                if (processedStreamIds.TryAdd(stream.StreamId, true))
                 {
-                    continue;
+                    allMovies.Add(stream);
                 }
+            }
+        }
 
+        _logger.LogInformation("Found {Count} unique movies to process", allMovies.Count);
+        CurrentProgress.Phase = "Syncing Movies";
+        CurrentProgress.TotalCategories = 1;
+        CurrentProgress.CategoriesProcessed = 0;
+        CurrentProgress.TotalItems = allMovies.Count;
+        CurrentProgress.ItemsProcessed = 0;
+
+        // Thread-safe counters
+        int moviesCreated = 0;
+        int moviesSkipped = 0;
+        int errors = 0;
+        var syncedFilesLock = new object();
+
+        // Process movies in parallel
+        var parallelism = Math.Max(1, config.SyncParallelism);
+        _logger.LogInformation("Processing movies with parallelism={Parallelism}", parallelism);
+
+        await Parallel.ForEachAsync(
+            allMovies,
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = parallelism,
+                CancellationToken = cancellationToken,
+            },
+            async (stream, ct) =>
+            {
                 try
                 {
                     string movieName = SanitizeFileName(stream.Name);
@@ -265,12 +289,15 @@ public partial class StrmSyncService
                     string strmFileName = $"{folderName}.strm";
                     string strmPath = Path.Combine(movieFolder, strmFileName);
 
-                    syncedFiles.Add(strmPath);
+                    lock (syncedFilesLock)
+                    {
+                        syncedFiles.Add(strmPath);
+                    }
 
                     if (File.Exists(strmPath))
                     {
-                        result.MoviesSkipped++;
-                        continue;
+                        Interlocked.Increment(ref moviesSkipped);
+                        return;
                     }
 
                     // Create movie folder
@@ -281,21 +308,29 @@ public partial class StrmSyncService
                     string streamUrl = $"{connectionInfo.BaseUrl}/movie/{connectionInfo.UserName}/{connectionInfo.Password}/{stream.StreamId}.{extension}";
 
                     // Write STRM file
-                    await File.WriteAllTextAsync(strmPath, streamUrl, cancellationToken).ConfigureAwait(false);
-                    result.MoviesCreated++;
-                    CurrentProgress.MoviesCreated = result.MoviesCreated;
+                    await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
+                    Interlocked.Increment(ref moviesCreated);
 
                     _logger.LogDebug("Created movie STRM: {StrmPath}", strmPath);
                 }
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Failed to create STRM for movie: {MovieName}", stream.Name);
-                    result.Errors++;
+                    Interlocked.Increment(ref errors);
                 }
-            }
+                finally
+                {
+                    CurrentProgress.ItemsProcessed++;
+                    CurrentProgress.MoviesCreated = moviesCreated;
+                }
+            }).ConfigureAwait(false);
 
-            CurrentProgress.CategoriesProcessed++;
-        }
+        // Update result with thread-safe counters
+        result.MoviesCreated += moviesCreated;
+        result.MoviesSkipped += moviesSkipped;
+        result.Errors += errors;
+
+        CurrentProgress.CategoriesProcessed = 1;
     }
 
     private async Task SyncSeriesAsync(
@@ -305,11 +340,12 @@ public partial class StrmSyncService
         SyncResult result,
         CancellationToken cancellationToken)
     {
+        var config = Plugin.Instance.Configuration;
         var categories = await _client.GetSeriesCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
-        var processedSeriesIds = new HashSet<int>();
+        var processedSeriesIds = new ConcurrentDictionary<int, bool>();
 
         // Filter categories if user has selected specific ones
-        var selectedIds = Plugin.Instance.Configuration.SelectedSeriesCategoryIds;
+        var selectedIds = config.SelectedSeriesCategoryIds;
         if (selectedIds.Length > 0)
         {
             var selectedIdSet = selectedIds.ToHashSet();
@@ -331,44 +367,148 @@ public partial class StrmSyncService
             categories = filteredCategories;
         }
 
-        CurrentProgress.TotalCategories = categories.Count;
-        CurrentProgress.CategoriesProcessed = 0;
+        // Collect all unique series from all categories first
+        _logger.LogInformation("Collecting series from {Count} categories...", categories.Count);
+        CurrentProgress.Phase = "Collecting series";
+        var allSeries = new List<Series>();
 
         foreach (var category in categories)
         {
             cancellationToken.ThrowIfCancellationRequested();
-
-            CurrentProgress.CurrentItem = category.CategoryName;
-            _logger.LogDebug("Processing series category: {CategoryName} ({CategoryId})", category.CategoryName, category.CategoryId);
-
             var seriesList = await _client.GetSeriesByCategoryAsync(connectionInfo, category.CategoryId, cancellationToken).ConfigureAwait(false);
-            CurrentProgress.TotalItems = seriesList.Count;
-            CurrentProgress.ItemsProcessed = 0;
 
             foreach (var series in seriesList)
             {
-                CurrentProgress.ItemsProcessed++;
-
-                // Skip duplicates (same series can appear in multiple categories)
-                if (!processedSeriesIds.Add(series.SeriesId))
+                if (processedSeriesIds.TryAdd(series.SeriesId, true))
                 {
-                    continue;
+                    allSeries.Add(series);
                 }
+            }
+        }
 
+        _logger.LogInformation("Found {Count} unique series to process", allSeries.Count);
+        CurrentProgress.Phase = "Syncing Series";
+        CurrentProgress.TotalCategories = 1; // Treat all series as one batch
+        CurrentProgress.CategoriesProcessed = 0;
+        CurrentProgress.TotalItems = allSeries.Count;
+        CurrentProgress.ItemsProcessed = 0;
+
+        // Thread-safe counters
+        int episodesCreated = 0;
+        int episodesSkipped = 0;
+        int errors = 0;
+        int smartSkipped = 0;
+        var syncedFilesLock = new object();
+
+        // Process series in parallel
+        var parallelism = Math.Max(1, config.SyncParallelism);
+        _logger.LogInformation("Processing series with parallelism={Parallelism}, smartSkip={SmartSkip}", parallelism, config.SmartSkipExisting);
+
+        await Parallel.ForEachAsync(
+            allSeries,
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = parallelism,
+                CancellationToken = cancellationToken,
+            },
+            async (series, ct) =>
+            {
                 try
                 {
-                    await SyncSingleSeriesAsync(connectionInfo, seriesPath, series, syncedFiles, result, cancellationToken).ConfigureAwait(false);
-                    CurrentProgress.EpisodesCreated = result.EpisodesCreated;
+                    string seriesName = SanitizeFileName(series.Name);
+                    int? year = ExtractYear(series.Name);
+                    string seriesFolderName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
+                    string seriesFolder = Path.Combine(seriesPath, seriesFolderName);
+
+                    // Smart skip: if series folder exists and has STRM files, skip API call
+                    if (config.SmartSkipExisting && Directory.Exists(seriesFolder))
+                    {
+                        var existingStrms = Directory.GetFiles(seriesFolder, "*.strm", SearchOption.AllDirectories);
+                        if (existingStrms.Length > 0)
+                        {
+                            // Add existing files to synced set (for orphan protection)
+                            lock (syncedFilesLock)
+                            {
+                                foreach (var strm in existingStrms)
+                                {
+                                    syncedFiles.Add(strm);
+                                }
+                            }
+
+                            Interlocked.Add(ref episodesSkipped, existingStrms.Length);
+                            Interlocked.Increment(ref smartSkipped);
+                            CurrentProgress.ItemsProcessed++;
+                            return;
+                        }
+                    }
+
+                    // Fetch episode info from API
+                    var seriesInfo = await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, series.SeriesId, ct).ConfigureAwait(false);
+
+                    if (seriesInfo.Episodes == null || seriesInfo.Episodes.Count == 0)
+                    {
+                        CurrentProgress.ItemsProcessed++;
+                        return;
+                    }
+
+                    foreach (var seasonEntry in seriesInfo.Episodes)
+                    {
+                        int seasonNumber = seasonEntry.Key;
+                        var episodes = seasonEntry.Value;
+                        string seasonFolder = Path.Combine(seriesFolder, $"Season {seasonNumber}");
+
+                        foreach (var episode in episodes)
+                        {
+                            string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode);
+                            string strmPath = Path.Combine(seasonFolder, episodeFileName);
+
+                            lock (syncedFilesLock)
+                            {
+                                syncedFiles.Add(strmPath);
+                            }
+
+                            if (File.Exists(strmPath))
+                            {
+                                Interlocked.Increment(ref episodesSkipped);
+                                continue;
+                            }
+
+                            // Create season folder
+                            Directory.CreateDirectory(seasonFolder);
+
+                            // Build stream URL
+                            string extension = string.IsNullOrEmpty(episode.ContainerExtension) ? "mkv" : episode.ContainerExtension;
+                            string streamUrl = $"{connectionInfo.BaseUrl}/series/{connectionInfo.UserName}/{connectionInfo.Password}/{episode.EpisodeId}.{extension}";
+
+                            // Write STRM file
+                            await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
+                            Interlocked.Increment(ref episodesCreated);
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Failed to sync series: {SeriesName}", series.Name);
-                    result.Errors++;
+                    Interlocked.Increment(ref errors);
                 }
-            }
+                finally
+                {
+                    CurrentProgress.ItemsProcessed++;
+                    CurrentProgress.EpisodesCreated = episodesCreated;
+                }
+            }).ConfigureAwait(false);
 
-            CurrentProgress.CategoriesProcessed++;
+        // Update result with thread-safe counters
+        result.EpisodesCreated += episodesCreated;
+        result.EpisodesSkipped += episodesSkipped;
+        result.Errors += errors;
+
+        if (smartSkipped > 0)
+        {
+            _logger.LogInformation("Smart-skipped {Count} series (already had STRM files)", smartSkipped);
         }
+
+        CurrentProgress.CategoriesProcessed = 1;
     }
 
     private async Task SyncSingleSeriesAsync(
@@ -379,6 +519,7 @@ public partial class StrmSyncService
         SyncResult result,
         CancellationToken cancellationToken)
     {
+        // This method is now only used as fallback - main logic moved to parallel SyncSeriesAsync
         var seriesInfo = await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, series.SeriesId, cancellationToken).ConfigureAwait(false);
 
         if (seriesInfo.Episodes == null || seriesInfo.Episodes.Count == 0)
