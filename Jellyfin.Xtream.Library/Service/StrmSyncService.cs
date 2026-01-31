@@ -58,6 +58,11 @@ public partial class StrmSyncService
     public SyncResult? LastSyncResult { get; private set; }
 
     /// <summary>
+    /// Gets the current sync progress.
+    /// </summary>
+    public SyncProgress CurrentProgress { get; } = new SyncProgress();
+
+    /// <summary>
     /// Performs a full sync of all content from the Xtream provider.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
@@ -67,10 +72,23 @@ public partial class StrmSyncService
         var config = Plugin.Instance.Configuration;
         var result = new SyncResult { StartTime = DateTime.UtcNow };
 
+        // Initialize progress tracking
+        CurrentProgress.IsRunning = true;
+        CurrentProgress.StartTime = DateTime.UtcNow;
+        CurrentProgress.Phase = "Initializing";
+        CurrentProgress.CurrentItem = string.Empty;
+        CurrentProgress.TotalCategories = 0;
+        CurrentProgress.CategoriesProcessed = 0;
+        CurrentProgress.TotalItems = 0;
+        CurrentProgress.ItemsProcessed = 0;
+        CurrentProgress.MoviesCreated = 0;
+        CurrentProgress.EpisodesCreated = 0;
+
         if (string.IsNullOrEmpty(config.BaseUrl) || string.IsNullOrEmpty(config.Username))
         {
             _logger.LogWarning("Xtream credentials not configured, skipping sync");
             result.Error = "Credentials not configured";
+            CurrentProgress.IsRunning = false;
             return result;
         }
 
@@ -101,6 +119,7 @@ public partial class StrmSyncService
             if (config.SyncMovies)
             {
                 _logger.LogInformation("Syncing movies/VOD content...");
+                CurrentProgress.Phase = "Syncing Movies";
                 await SyncMoviesAsync(connectionInfo, moviesPath, syncedFiles, result, cancellationToken).ConfigureAwait(false);
             }
 
@@ -108,17 +127,25 @@ public partial class StrmSyncService
             if (config.SyncSeries)
             {
                 _logger.LogInformation("Syncing series content...");
+                CurrentProgress.Phase = "Syncing Series";
+                CurrentProgress.CategoriesProcessed = 0;
+                CurrentProgress.TotalCategories = 0;
                 await SyncSeriesAsync(connectionInfo, seriesPath, syncedFiles, result, cancellationToken).ConfigureAwait(false);
             }
 
             // Cleanup orphaned files
             if (config.CleanupOrphans)
             {
+                CurrentProgress.Phase = "Cleaning up orphans";
+                CurrentProgress.CurrentItem = string.Empty;
                 var orphanedFiles = existingStrmFiles.Except(syncedFiles, StringComparer.OrdinalIgnoreCase).ToList();
+                CurrentProgress.TotalItems = orphanedFiles.Count;
+                CurrentProgress.ItemsProcessed = 0;
                 foreach (var orphan in orphanedFiles)
                 {
                     try
                     {
+                        CurrentProgress.ItemsProcessed++;
                         File.Delete(orphan);
                         result.FilesDeleted++;
                         _logger.LogDebug("Deleted orphaned file: {FilePath}", orphan);
@@ -162,6 +189,11 @@ public partial class StrmSyncService
             result.Error = ex.Message;
             result.EndTime = DateTime.UtcNow;
         }
+        finally
+        {
+            CurrentProgress.IsRunning = false;
+            CurrentProgress.Phase = "Complete";
+        }
 
         LastSyncResult = result;
         return result;
@@ -200,16 +232,23 @@ public partial class StrmSyncService
             categories = filteredCategories;
         }
 
+        CurrentProgress.TotalCategories = categories.Count;
+        CurrentProgress.CategoriesProcessed = 0;
+
         foreach (var category in categories)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            CurrentProgress.CurrentItem = category.CategoryName;
             _logger.LogDebug("Processing VOD category: {CategoryName} ({CategoryId})", category.CategoryName, category.CategoryId);
 
             var streams = await _client.GetVodStreamsByCategoryAsync(connectionInfo, category.CategoryId, cancellationToken).ConfigureAwait(false);
+            CurrentProgress.TotalItems = streams.Count;
+            CurrentProgress.ItemsProcessed = 0;
 
             foreach (var stream in streams)
             {
+                CurrentProgress.ItemsProcessed++;
                 // Skip duplicates (same movie can appear in multiple categories)
                 if (!processedStreamIds.Add(stream.StreamId))
                 {
@@ -244,6 +283,7 @@ public partial class StrmSyncService
                     // Write STRM file
                     await File.WriteAllTextAsync(strmPath, streamUrl, cancellationToken).ConfigureAwait(false);
                     result.MoviesCreated++;
+                    CurrentProgress.MoviesCreated = result.MoviesCreated;
 
                     _logger.LogDebug("Created movie STRM: {StrmPath}", strmPath);
                 }
@@ -253,6 +293,8 @@ public partial class StrmSyncService
                     result.Errors++;
                 }
             }
+
+            CurrentProgress.CategoriesProcessed++;
         }
     }
 
@@ -289,16 +331,24 @@ public partial class StrmSyncService
             categories = filteredCategories;
         }
 
+        CurrentProgress.TotalCategories = categories.Count;
+        CurrentProgress.CategoriesProcessed = 0;
+
         foreach (var category in categories)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            CurrentProgress.CurrentItem = category.CategoryName;
             _logger.LogDebug("Processing series category: {CategoryName} ({CategoryId})", category.CategoryName, category.CategoryId);
 
             var seriesList = await _client.GetSeriesByCategoryAsync(connectionInfo, category.CategoryId, cancellationToken).ConfigureAwait(false);
+            CurrentProgress.TotalItems = seriesList.Count;
+            CurrentProgress.ItemsProcessed = 0;
 
             foreach (var series in seriesList)
             {
+                CurrentProgress.ItemsProcessed++;
+
                 // Skip duplicates (same series can appear in multiple categories)
                 if (!processedSeriesIds.Add(series.SeriesId))
                 {
@@ -308,6 +358,7 @@ public partial class StrmSyncService
                 try
                 {
                     await SyncSingleSeriesAsync(connectionInfo, seriesPath, series, syncedFiles, result, cancellationToken).ConfigureAwait(false);
+                    CurrentProgress.EpisodesCreated = result.EpisodesCreated;
                 }
                 catch (Exception ex)
                 {
@@ -315,6 +366,8 @@ public partial class StrmSyncService
                     result.Errors++;
                 }
             }
+
+            CurrentProgress.CategoriesProcessed++;
         }
     }
 
@@ -492,6 +545,62 @@ public partial class StrmSyncService
 
     [GeneratedRegex(@"_+")]
     private static partial Regex MultipleUnderscoresPattern();
+}
+
+/// <summary>
+/// Real-time progress of a sync operation.
+/// </summary>
+public class SyncProgress
+{
+    /// <summary>
+    /// Gets or sets a value indicating whether a sync is currently in progress.
+    /// </summary>
+    public bool IsRunning { get; set; }
+
+    /// <summary>
+    /// Gets or sets the current phase of the sync.
+    /// </summary>
+    public string Phase { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the current item being processed.
+    /// </summary>
+    public string CurrentItem { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the total number of categories to process.
+    /// </summary>
+    public int TotalCategories { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of categories processed.
+    /// </summary>
+    public int CategoriesProcessed { get; set; }
+
+    /// <summary>
+    /// Gets or sets the total items in the current category.
+    /// </summary>
+    public int TotalItems { get; set; }
+
+    /// <summary>
+    /// Gets or sets the items processed in the current category.
+    /// </summary>
+    public int ItemsProcessed { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of movies created so far.
+    /// </summary>
+    public int MoviesCreated { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of episodes created so far.
+    /// </summary>
+    public int EpisodesCreated { get; set; }
+
+    /// <summary>
+    /// Gets or sets the start time.
+    /// </summary>
+    public DateTime? StartTime { get; set; }
 }
 
 /// <summary>

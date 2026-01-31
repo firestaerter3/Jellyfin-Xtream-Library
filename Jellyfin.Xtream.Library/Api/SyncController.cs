@@ -98,6 +98,17 @@ public class SyncController : ControllerBase
     }
 
     /// <summary>
+    /// Gets the current sync progress.
+    /// </summary>
+    /// <returns>The current sync progress.</returns>
+    [HttpGet("Progress")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public ActionResult<SyncProgress> GetProgress()
+    {
+        return Ok(_syncService.CurrentProgress);
+    }
+
+    /// <summary>
     /// Tests the connection to the Xtream provider.
     /// </summary>
     /// <param name="request">Optional connection test request with credentials.</param>

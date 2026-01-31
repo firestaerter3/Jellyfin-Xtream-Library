@@ -92,9 +92,15 @@ const XtreamLibraryConfig = {
         });
     },
 
+    // Progress polling interval handle
+    progressInterval: null,
+
     runSync: function () {
         const statusSpan = document.getElementById('syncStatus');
-        statusSpan.innerHTML = '<span style="color: orange;">Syncing...</span>';
+        const self = this;
+
+        // Start progress polling
+        self.startProgressPolling();
 
         ApiClient.fetch({
             url: ApiClient.getUrl('XtreamLibrary/Sync'),
@@ -106,16 +112,87 @@ const XtreamLibraryConfig = {
             }
             return response;
         }).then(function (data) {
+            self.stopProgressPolling();
             if (data.Success) {
                 statusSpan.innerHTML = '<span style="color: green;">Sync completed!</span>';
-                XtreamLibraryConfig.displaySyncResult(data);
+                self.displaySyncResult(data);
             } else {
                 statusSpan.innerHTML = '<span style="color: red;">Sync failed: ' + (data.Error || 'Unknown error') + '</span>';
             }
         }).catch(function (error) {
+            self.stopProgressPolling();
             console.error('Sync error:', error);
             statusSpan.innerHTML = '<span style="color: red;">Sync failed: ' + (error.message || 'Check console for details') + '</span>';
         });
+    },
+
+    startProgressPolling: function () {
+        const self = this;
+        const statusSpan = document.getElementById('syncStatus');
+
+        // Initial display
+        statusSpan.innerHTML = '<span style="color: orange;">Starting sync...</span>';
+
+        // Poll every 500ms
+        self.progressInterval = setInterval(function () {
+            fetch(ApiClient.getUrl('XtreamLibrary/Progress'), {
+                method: 'GET',
+                headers: {
+                    'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
+                }
+            }).then(function (r) {
+                return r.ok ? r.json() : null;
+            }).then(function (progress) {
+                if (progress && progress.IsRunning) {
+                    self.displayProgress(progress);
+                }
+            }).catch(function () {
+                // Ignore polling errors
+            });
+        }, 500);
+    },
+
+    stopProgressPolling: function () {
+        if (this.progressInterval) {
+            clearInterval(this.progressInterval);
+            this.progressInterval = null;
+        }
+    },
+
+    displayProgress: function (progress) {
+        const statusSpan = document.getElementById('syncStatus');
+        let html = '<span style="color: orange;">';
+
+        // Phase and current category
+        html += progress.Phase;
+        if (progress.CurrentItem) {
+            html += ': ' + this.escapeHtml(progress.CurrentItem);
+        }
+
+        // Category progress
+        if (progress.TotalCategories > 0) {
+            html += '<br/>Categories: ' + progress.CategoriesProcessed + '/' + progress.TotalCategories;
+        }
+
+        // Item progress within current category
+        if (progress.TotalItems > 0) {
+            html += ' | Items: ' + progress.ItemsProcessed + '/' + progress.TotalItems;
+        }
+
+        // Created counts
+        const created = [];
+        if (progress.MoviesCreated > 0) {
+            created.push(progress.MoviesCreated + ' movies');
+        }
+        if (progress.EpisodesCreated > 0) {
+            created.push(progress.EpisodesCreated + ' episodes');
+        }
+        if (created.length > 0) {
+            html += '<br/>Created: ' + created.join(', ');
+        }
+
+        html += '</span>';
+        statusSpan.innerHTML = html;
     },
 
     loadSyncStatus: function () {
