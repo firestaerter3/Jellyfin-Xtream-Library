@@ -16,9 +16,14 @@ The standard Xtream channel-based plugin presents content as Jellyfin "Channels"
 ### From Repository
 
 Add the plugin repository to Jellyfin:
-- Repository URL: `https://raw.githubusercontent.com/rolandb5/jellyfin-plugin-repo/master/manifest.json`
 
-Then install "Xtream Library" from the plugin catalog.
+1. Open admin dashboard → `Plugins` → `Repositories` tab
+2. Click `+` to add a repository
+3. **Name:** `Xtream Plugins`
+4. **URL:** `https://firestaerter3.github.io/Jellyfin.Xtream/repository.json`
+5. Click Save
+
+Then install "Xtream Library" from the plugin catalog (under General category).
 
 ### Manual Installation
 

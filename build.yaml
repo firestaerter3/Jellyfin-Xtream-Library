@@ -3,7 +3,7 @@ guid: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 version: "1.0.0.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
-owner: "rolandb5"
+owner: "firestaerter3"
 overview: "Sync Xtream VOD and Series content to native Jellyfin libraries via STRM files"
 description: |
   Xtream Library creates STRM files from your Xtream provider's VOD and Series content,
