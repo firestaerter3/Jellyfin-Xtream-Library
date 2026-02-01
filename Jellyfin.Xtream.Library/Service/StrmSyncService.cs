@@ -356,7 +356,7 @@ public partial class StrmSyncService
                 CollectExistingStrmFiles(config.LibraryPath, existingStrmFiles);
             }
 
-            var syncedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var syncedFiles = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
 
             // Sync Movies/VOD
             if (config.SyncMovies)
@@ -381,7 +381,7 @@ public partial class StrmSyncService
             {
                 CurrentProgress.Phase = "Cleaning up orphans";
                 CurrentProgress.CurrentItem = string.Empty;
-                var orphanedFiles = existingStrmFiles.Except(syncedFiles, StringComparer.OrdinalIgnoreCase).ToList();
+                var orphanedFiles = existingStrmFiles.Except(syncedFiles.Keys, StringComparer.OrdinalIgnoreCase).ToList();
 
                 // Protection: Check if deletion would exceed safety threshold (provider glitch protection)
                 const double SafetyThreshold = 0.20; // 20%
@@ -538,7 +538,7 @@ public partial class StrmSyncService
     private async Task SyncMoviesAsync(
         ConnectionInfo connectionInfo,
         string moviesPath,
-        HashSet<string> syncedFiles,
+        ConcurrentDictionary<string, byte> syncedFiles,
         SyncResult result,
         CancellationToken cancellationToken)
     {
@@ -625,18 +625,50 @@ public partial class StrmSyncService
         }
 
         _logger.LogInformation("Found {Count} unique movies to process", allMovies.Count);
-        CurrentProgress.Phase = "Syncing Movies";
         CurrentProgress.TotalCategories = 1;
         CurrentProgress.CategoriesProcessed = 0;
         CurrentProgress.TotalItems = allMovies.Count;
         CurrentProgress.ItemsProcessed = 0;
+
+        // Pre-fetch VOD info if proactive media info is enabled
+        var vodInfoCache = new ConcurrentDictionary<int, VodInfoResponse?>();
+        if (config.EnableProactiveMediaInfo)
+        {
+            _logger.LogInformation("Pre-fetching media info for {Count} movies (parallelism={Parallelism})...", allMovies.Count, config.SyncParallelism);
+            CurrentProgress.Phase = "Fetching media info";
+
+            await Parallel.ForEachAsync(
+                allMovies,
+                new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = Math.Max(1, config.SyncParallelism),
+                    CancellationToken = cancellationToken,
+                },
+                async (movieEntry, ct) =>
+                {
+                    try
+                    {
+                        var vodInfo = await _client.GetVodInfoAsync(connectionInfo, movieEntry.Stream.StreamId, ct)
+                            .ConfigureAwait(false);
+                        vodInfoCache[movieEntry.Stream.StreamId] = vodInfo;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Failed to pre-fetch VOD info for {StreamId}", movieEntry.Stream.StreamId);
+                        vodInfoCache[movieEntry.Stream.StreamId] = null;
+                    }
+                }).ConfigureAwait(false);
+
+            _logger.LogInformation("Pre-fetched media info for {Count} movies", vodInfoCache.Count);
+        }
+
+        CurrentProgress.Phase = "Syncing Movies";
 
         // Thread-safe counters and collections
         int moviesCreated = 0;
         int moviesSkipped = 0;
         int errors = 0;
         int unmatchedCount = 0;
-        var syncedFilesLock = new object();
         var failedItems = new ConcurrentBag<FailedItem>();
         var unmatchedMovies = new ConcurrentBag<string>();
 
@@ -721,10 +753,7 @@ public partial class StrmSyncService
                         string strmFileName = $"{folderName}.strm";
                         string strmPath = Path.Combine(movieFolder, strmFileName);
 
-                        lock (syncedFilesLock)
-                        {
-                            syncedFiles.Add(strmPath);
-                        }
+                        syncedFiles.TryAdd(strmPath, 0);
 
                         if (File.Exists(strmPath))
                         {
@@ -743,7 +772,8 @@ public partial class StrmSyncService
                         // Write NFO with media info if enabled (only for first target folder)
                         if (enableProactiveMediaInfo && targetFolders.First() == targetFolder)
                         {
-                            var vodInfo = await _client.GetVodInfoAsync(connectionInfo, stream.StreamId, ct).ConfigureAwait(false);
+                            // Use pre-fetched VOD info from cache
+                            vodInfoCache.TryGetValue(stream.StreamId, out var vodInfo);
                             if (vodInfo?.Info != null)
                             {
                                 var nfoPath = Path.Combine(movieFolder, $"{folderName}.nfo");
@@ -821,7 +851,7 @@ public partial class StrmSyncService
     private async Task SyncSeriesAsync(
         ConnectionInfo connectionInfo,
         string seriesPath,
-        HashSet<string> syncedFiles,
+        ConcurrentDictionary<string, byte> syncedFiles,
         SyncResult result,
         CancellationToken cancellationToken)
     {
@@ -924,10 +954,12 @@ public partial class StrmSyncService
         int errors = 0;
         int smartSkipped = 0;
         int unmatchedCount = 0;
-        var syncedFilesLock = new object();
         var processedSeasons = new ConcurrentDictionary<string, bool>();
         var failedItems = new ConcurrentBag<FailedItem>();
         var unmatchedSeries = new ConcurrentBag<string>();
+
+        // Cache for directory scans to avoid redundant I/O
+        var directoryCache = new ConcurrentDictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
 
         // Parse folder ID overrides
         var tvdbOverrides = ParseFolderIdOverrides(config.TvdbFolderIdOverrides);
@@ -1008,20 +1040,21 @@ public partial class StrmSyncService
                             break;
                         }
 
-                        var existingStrms = Directory.GetFiles(seriesFolderPath, "*.strm", SearchOption.AllDirectories);
+                        // Use cached directory scan to avoid redundant I/O
+                        var existingStrms = directoryCache.GetOrAdd(
+                            seriesFolderPath,
+                            path => Directory.GetFiles(path, "*.strm", SearchOption.AllDirectories));
+
                         if (existingStrms.Length == 0)
                         {
                             anyNeedsSync = true;
                             break;
                         }
 
-                        // Add existing files to synced set (for orphan protection)
-                        lock (syncedFilesLock)
+                        // Add existing files to synced set (for orphan protection) - lock-free
+                        foreach (var strm in existingStrms)
                         {
-                            foreach (var strm in existingStrms)
-                            {
-                                syncedFiles.Add(strm);
-                            }
+                            syncedFiles.TryAdd(strm, 0);
                         }
                     }
 
@@ -1034,7 +1067,11 @@ public partial class StrmSyncService
                                 ? seriesPath
                                 : Path.Combine(seriesPath, targetFolder);
                             string seriesFolderPath = Path.Combine(seriesBasePath, seriesFolderName);
-                            var existingStrms = Directory.GetFiles(seriesFolderPath, "*.strm", SearchOption.AllDirectories);
+
+                            // Use cached directory scan (already populated above)
+                            var existingStrms = directoryCache.GetOrAdd(
+                                seriesFolderPath,
+                                path => Directory.GetFiles(path, "*.strm", SearchOption.AllDirectories));
                             var existingSeasonsCount = Directory.GetDirectories(seriesFolderPath, "Season *").Length;
                             Interlocked.Add(ref seasonsSkipped, existingSeasonsCount);
                             Interlocked.Add(ref episodesSkipped, existingStrms.Length);
@@ -1080,10 +1117,7 @@ public partial class StrmSyncService
                                 string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode);
                                 string strmPath = Path.Combine(seasonFolder, episodeFileName);
 
-                                lock (syncedFilesLock)
-                                {
-                                    syncedFiles.Add(strmPath);
-                                }
+                                syncedFiles.TryAdd(strmPath, 0);
 
                                 if (File.Exists(strmPath))
                                 {
@@ -1245,7 +1279,7 @@ public partial class StrmSyncService
         ConnectionInfo connectionInfo,
         string seriesPath,
         Series series,
-        HashSet<string> syncedFiles,
+        ConcurrentDictionary<string, byte> syncedFiles,
         SyncResult result,
         CancellationToken cancellationToken)
     {
@@ -1278,7 +1312,7 @@ public partial class StrmSyncService
                     string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode);
                     string strmPath = Path.Combine(seasonFolder, episodeFileName);
 
-                    syncedFiles.Add(strmPath);
+                    syncedFiles.TryAdd(strmPath, 0);
 
                     if (File.Exists(strmPath))
                     {

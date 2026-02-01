@@ -65,6 +65,7 @@ const XtreamLibraryConfig = {
 
             // Metadata lookup
             document.getElementById('chkEnableMetadataLookup').checked = config.EnableMetadataLookup || false;
+            document.getElementById('txtMetadataParallelism').value = config.MetadataParallelism || 3;
 
             // Artwork download for unmatched
             document.getElementById('chkDownloadArtworkForUnmatched').checked = config.DownloadArtworkForUnmatched !== false;
@@ -166,6 +167,7 @@ const XtreamLibraryConfig = {
 
             // Metadata lookup
             config.EnableMetadataLookup = document.getElementById('chkEnableMetadataLookup').checked;
+            config.MetadataParallelism = parseInt(document.getElementById('txtMetadataParallelism').value) || 3;
 
             // Artwork download for unmatched
             config.DownloadArtworkForUnmatched = document.getElementById('chkDownloadArtworkForUnmatched').checked;

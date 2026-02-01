@@ -221,6 +221,15 @@
                                     Requires metadata plugins (TMDb, TVDb) to be installed and configured in Jellyfin.
                                 </div>
                             </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtMetadataParallelism">Metadata Lookup Parallelism</label>
+                                <input is="emby-input" type="number" id="txtMetadataParallelism" name="MetadataParallelism"
+                                       min="1" max="20" step="1" />
+                                <div class="fieldDescription">
+                                    Number of parallel metadata lookups (1-20). Higher values speed up first sync but may
+                                    trigger API rate limits on TMDb/TVDb. Default: 3.
+                                </div>
+                            </div>
                             <div class="checkboxContainer checkboxContainer-withDescription">
                                 <label class="emby-checkbox-label">
                                     <input is="emby-checkbox" type="checkbox" id="chkDownloadArtworkForUnmatched" name="DownloadArtworkForUnmatched" />

@@ -34,7 +34,7 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
     private readonly IProviderManager _providerManager;
     private readonly MetadataCache _cache;
     private readonly ILogger<MetadataLookupService> _logger;
-    private readonly SemaphoreSlim _rateLimiter = new(3, 3); // Max 3 concurrent lookups
+    private SemaphoreSlim? _rateLimiter;
     private bool _initialized;
     private bool _disposed;
 
@@ -63,6 +63,12 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
         }
 
         var config = Plugin.Instance.Configuration;
+
+        // Initialize rate limiter based on configuration
+        var parallelism = Math.Max(1, Math.Min(config.MetadataParallelism, 20));
+        _rateLimiter = new SemaphoreSlim(parallelism, parallelism);
+        _logger.LogInformation("Metadata lookup initialized with parallelism={Parallelism}", parallelism);
+
         if (!string.IsNullOrEmpty(config.LibraryPath))
         {
             await _cache.InitializeAsync(config.LibraryPath).ConfigureAwait(false);
@@ -87,6 +93,11 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
         {
             _logger.LogDebug("Cache hit for movie: {Title} ({Year}) -> TMDb {Id}", title, year, cached?.TmdbId);
             return cached?.TmdbId;
+        }
+
+        if (_rateLimiter == null)
+        {
+            throw new InvalidOperationException("MetadataLookupService not initialized. Call InitializeAsync first.");
         }
 
         await _rateLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -155,6 +166,11 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
             return cached?.TvdbId;
         }
 
+        if (_rateLimiter == null)
+        {
+            throw new InvalidOperationException("MetadataLookupService not initialized. Call InitializeAsync first.");
+        }
+
         await _rateLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -217,7 +233,7 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
             return;
         }
 
-        _rateLimiter.Dispose();
+        _rateLimiter?.Dispose();
         _disposed = true;
     }
 }

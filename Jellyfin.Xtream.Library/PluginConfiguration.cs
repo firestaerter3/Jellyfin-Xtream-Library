@@ -125,6 +125,12 @@ public class PluginConfiguration : BasePluginConfiguration
     public int MetadataCacheAgeDays { get; set; } = 30;
 
     /// <summary>
+    /// Gets or sets the number of parallel metadata lookups.
+    /// Higher values speed up first sync but may trigger API rate limits.
+    /// </summary>
+    public int MetadataParallelism { get; set; } = 3;
+
+    /// <summary>
     /// Gets or sets a value indicating whether to download artwork from the provider
     /// for content that could not be matched to TMDb/TVDb.
     /// This ensures unmatched content still has posters and thumbnails.
