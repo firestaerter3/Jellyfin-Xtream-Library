@@ -581,28 +581,45 @@ public partial class StrmSyncService
         }
 
         // Collect all unique movies from all categories, tracking category membership
-        _logger.LogInformation("Collecting movies from {Count} categories...", categories.Count);
+        _logger.LogInformation("Collecting movies from {Count} categories (parallelism={Parallelism})...", categories.Count, config.SyncParallelism);
         CurrentProgress.Phase = "Collecting movies";
         var allMovies = new List<(StreamInfo Stream, HashSet<int> CategoryIds)>();
-        var movieCategoryMap = new Dictionary<int, HashSet<int>>(); // streamId → categoryIds
+        var movieCategoryMap = new ConcurrentDictionary<int, HashSet<int>>(); // streamId → categoryIds
+        var streamBag = new ConcurrentBag<(StreamInfo Stream, int CategoryId)>();
 
-        foreach (var category in categories)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var streams = await _client.GetVodStreamsByCategoryAsync(connectionInfo, category.CategoryId, cancellationToken).ConfigureAwait(false);
-
-            foreach (var stream in streams)
+        // Fetch streams from all categories in parallel
+        await Parallel.ForEachAsync(
+            categories,
+            new ParallelOptions
             {
-                if (processedStreamIds.TryAdd(stream.StreamId, true))
+                MaxDegreeOfParallelism = Math.Max(1, config.SyncParallelism),
+                CancellationToken = cancellationToken,
+            },
+            async (category, ct) =>
+            {
+                var streams = await _client.GetVodStreamsByCategoryAsync(connectionInfo, category.CategoryId, ct)
+                    .ConfigureAwait(false);
+                foreach (var stream in streams)
                 {
-                    var categorySet = new HashSet<int> { category.CategoryId };
-                    movieCategoryMap[stream.StreamId] = categorySet;
-                    allMovies.Add((stream, categorySet));
+                    streamBag.Add((stream, category.CategoryId));
                 }
-                else if (movieCategoryMap.TryGetValue(stream.StreamId, out var existingCategories))
+            }).ConfigureAwait(false);
+
+        // Process collected streams sequentially to build category membership
+        foreach (var (stream, categoryId) in streamBag)
+        {
+            if (processedStreamIds.TryAdd(stream.StreamId, true))
+            {
+                var categorySet = new HashSet<int> { categoryId };
+                movieCategoryMap[stream.StreamId] = categorySet;
+                allMovies.Add((stream, categorySet));
+            }
+            else if (movieCategoryMap.TryGetValue(stream.StreamId, out var existingCategories))
+            {
+                // Movie already exists, add this category to its set
+                lock (existingCategories)
                 {
-                    // Movie already exists, add this category to its set
-                    existingCategories.Add(category.CategoryId);
+                    existingCategories.Add(categoryId);
                 }
             }
         }
@@ -847,28 +864,45 @@ public partial class StrmSyncService
         }
 
         // Collect all unique series from all categories, tracking category membership
-        _logger.LogInformation("Collecting series from {Count} categories...", categories.Count);
+        _logger.LogInformation("Collecting series from {Count} categories (parallelism={Parallelism})...", categories.Count, config.SyncParallelism);
         CurrentProgress.Phase = "Collecting series";
         var allSeries = new List<(Series Series, HashSet<int> CategoryIds)>();
-        var seriesCategoryMap = new Dictionary<int, HashSet<int>>(); // seriesId → categoryIds
+        var seriesCategoryMap = new ConcurrentDictionary<int, HashSet<int>>(); // seriesId → categoryIds
+        var seriesBag = new ConcurrentBag<(Series Series, int CategoryId)>();
 
-        foreach (var category in categories)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var seriesList = await _client.GetSeriesByCategoryAsync(connectionInfo, category.CategoryId, cancellationToken).ConfigureAwait(false);
-
-            foreach (var series in seriesList)
+        // Fetch series from all categories in parallel
+        await Parallel.ForEachAsync(
+            categories,
+            new ParallelOptions
             {
-                if (processedSeriesIds.TryAdd(series.SeriesId, true))
+                MaxDegreeOfParallelism = Math.Max(1, config.SyncParallelism),
+                CancellationToken = cancellationToken,
+            },
+            async (category, ct) =>
+            {
+                var seriesList = await _client.GetSeriesByCategoryAsync(connectionInfo, category.CategoryId, ct)
+                    .ConfigureAwait(false);
+                foreach (var series in seriesList)
                 {
-                    var categorySet = new HashSet<int> { category.CategoryId };
-                    seriesCategoryMap[series.SeriesId] = categorySet;
-                    allSeries.Add((series, categorySet));
+                    seriesBag.Add((series, category.CategoryId));
                 }
-                else if (seriesCategoryMap.TryGetValue(series.SeriesId, out var existingCategories))
+            }).ConfigureAwait(false);
+
+        // Process collected series sequentially to build category membership
+        foreach (var (series, categoryId) in seriesBag)
+        {
+            if (processedSeriesIds.TryAdd(series.SeriesId, true))
+            {
+                var categorySet = new HashSet<int> { categoryId };
+                seriesCategoryMap[series.SeriesId] = categorySet;
+                allSeries.Add((series, categorySet));
+            }
+            else if (seriesCategoryMap.TryGetValue(series.SeriesId, out var existingCategories))
+            {
+                // Series already exists, add this category to its set
+                lock (existingCategories)
                 {
-                    // Series already exists, add this category to its set
-                    existingCategories.Add(category.CategoryId);
+                    existingCategories.Add(categoryId);
                 }
             }
         }
