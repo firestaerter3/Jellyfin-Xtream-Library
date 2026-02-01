@@ -96,4 +96,18 @@ public class PluginConfiguration : BasePluginConfiguration
     /// This avoids unnecessary API calls for existing content.
     /// </summary>
     public bool SmartSkipExisting { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets folder name to TMDb ID overrides for movies.
+    /// Format: one mapping per line, "FolderName=TmdbID".
+    /// Example: "The Matrix (1999)=603" forces TMDb ID 603 for that folder.
+    /// </summary>
+    public string TmdbFolderIdOverrides { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets folder name to TVDb ID overrides for series.
+    /// Format: one mapping per line, "FolderName=TvdbID".
+    /// Example: "Breaking Bad (2008)=81189" forces TVDb ID 81189 for that folder.
+    /// </summary>
+    public string TvdbFolderIdOverrides { get; set; } = string.Empty;
 }

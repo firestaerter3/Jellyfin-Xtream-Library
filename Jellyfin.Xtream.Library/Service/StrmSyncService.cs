@@ -64,6 +64,219 @@ public partial class StrmSyncService
     public SyncProgress CurrentProgress { get; } = new SyncProgress();
 
     /// <summary>
+    /// Gets the list of failed items from the last sync that can be retried.
+    /// </summary>
+    public IReadOnlyList<FailedItem> FailedItems => LastSyncResult?.FailedItems ?? Array.Empty<FailedItem>();
+
+    /// <summary>
+    /// Retries syncing all failed items from the last sync.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The retry result with statistics.</returns>
+    public async Task<SyncResult> RetryFailedAsync(CancellationToken cancellationToken)
+    {
+        var config = Plugin.Instance.Configuration;
+        var result = new SyncResult { StartTime = DateTime.UtcNow };
+
+        var itemsToRetry = FailedItems.ToList();
+        if (itemsToRetry.Count == 0)
+        {
+            result.EndTime = DateTime.UtcNow;
+            result.Success = true;
+            return result;
+        }
+
+        _logger.LogInformation("Retrying {Count} failed items", itemsToRetry.Count);
+
+        CurrentProgress.IsRunning = true;
+        CurrentProgress.StartTime = DateTime.UtcNow;
+        CurrentProgress.Phase = "Retrying failed items";
+        CurrentProgress.TotalItems = itemsToRetry.Count;
+        CurrentProgress.ItemsProcessed = 0;
+
+        try
+        {
+            var connectionInfo = Plugin.Instance.Creds;
+            string moviesPath = Path.Combine(config.LibraryPath, "Movies");
+            string seriesPath = Path.Combine(config.LibraryPath, "Series");
+
+            foreach (var item in itemsToRetry)
+            {
+                try
+                {
+                    CurrentProgress.CurrentItem = item.Name;
+
+                    if (item.ItemType == "Movie")
+                    {
+                        await RetryMovieAsync(connectionInfo, moviesPath, item, result, cancellationToken).ConfigureAwait(false);
+                    }
+                    else if (item.ItemType == "Series")
+                    {
+                        await RetrySingleSeriesAsync(connectionInfo, seriesPath, item, result, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Retry failed for {ItemType}: {ItemName}", item.ItemType, item.Name);
+                    result.Errors++;
+                    result.AddFailedItem(new FailedItem
+                    {
+                        ItemType = item.ItemType,
+                        ItemId = item.ItemId,
+                        Name = item.Name,
+                        SeriesId = item.SeriesId,
+                        SeasonNumber = item.SeasonNumber,
+                        EpisodeNumber = item.EpisodeNumber,
+                        ErrorMessage = ex.Message,
+                    });
+                }
+                finally
+                {
+                    CurrentProgress.ItemsProcessed++;
+                }
+            }
+
+            result.EndTime = DateTime.UtcNow;
+            result.Success = true;
+
+            _logger.LogInformation(
+                "Retry completed: {MoviesCreated} movies, {EpisodesCreated} episodes created; {Errors} still failed",
+                result.MoviesCreated,
+                result.EpisodesCreated,
+                result.Errors);
+
+            // Update last sync result to remove successfully retried items
+            if (LastSyncResult != null)
+            {
+                LastSyncResult.MoviesCreated += result.MoviesCreated;
+                LastSyncResult.EpisodesCreated += result.EpisodesCreated;
+                LastSyncResult.SeriesCreated += result.SeriesCreated;
+                LastSyncResult.SeasonsCreated += result.SeasonsCreated;
+                LastSyncResult.SetFailedItems(result.FailedItems);
+                LastSyncResult.Errors = result.FailedItems.Count;
+            }
+
+            // Trigger library scan if enabled and items were created
+            if (config.TriggerLibraryScan && (result.MoviesCreated > 0 || result.EpisodesCreated > 0))
+            {
+                _logger.LogInformation("Triggering Jellyfin library scan after retry...");
+                await TriggerLibraryScanAsync().ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            result.EndTime = DateTime.UtcNow;
+            result.Success = false;
+            result.Error = ex.Message;
+            _logger.LogError(ex, "Retry operation failed");
+        }
+        finally
+        {
+            CurrentProgress.IsRunning = false;
+        }
+
+        return result;
+    }
+
+    private async Task RetryMovieAsync(
+        ConnectionInfo connectionInfo,
+        string moviesPath,
+        FailedItem item,
+        SyncResult result,
+        CancellationToken cancellationToken)
+    {
+        // Use stored item info to build the STRM file directly
+        string movieName = SanitizeFileName(item.Name);
+        int? year = ExtractYear(item.Name);
+        string folderName = year.HasValue ? $"{movieName} ({year})" : movieName;
+        string movieFolder = Path.Combine(moviesPath, folderName);
+        string strmFileName = $"{folderName}.strm";
+        string strmPath = Path.Combine(movieFolder, strmFileName);
+
+        if (File.Exists(strmPath))
+        {
+            result.MoviesSkipped++;
+            return;
+        }
+
+        Directory.CreateDirectory(movieFolder);
+
+        // Build stream URL using stored item ID (assume mp4 as default extension)
+        string streamUrl = $"{connectionInfo.BaseUrl}/movie/{connectionInfo.UserName}/{connectionInfo.Password}/{item.ItemId}.mp4";
+
+        await File.WriteAllTextAsync(strmPath, streamUrl, cancellationToken).ConfigureAwait(false);
+        result.MoviesCreated++;
+
+        _logger.LogInformation("Retry successful for movie: {MovieName}", item.Name);
+    }
+
+    private async Task RetrySingleSeriesAsync(
+        ConnectionInfo connectionInfo,
+        string seriesPath,
+        FailedItem item,
+        SyncResult result,
+        CancellationToken cancellationToken)
+    {
+        var seriesInfo = await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, item.ItemId, cancellationToken).ConfigureAwait(false);
+
+        if (seriesInfo.Episodes == null || seriesInfo.Episodes.Count == 0)
+        {
+            _logger.LogWarning("Series has no episodes: {SeriesName}", item.Name);
+            return;
+        }
+
+        string seriesName = SanitizeFileName(item.Name);
+        int? year = ExtractYear(item.Name);
+        string seriesFolderName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
+        string seriesFolder = Path.Combine(seriesPath, seriesFolderName);
+        bool isNewSeries = !Directory.Exists(seriesFolder);
+        bool createdEpisodes = false;
+
+        foreach (var seasonEntry in seriesInfo.Episodes)
+        {
+            int seasonNumber = seasonEntry.Key;
+            var episodes = seasonEntry.Value;
+            string seasonFolder = Path.Combine(seriesFolder, $"Season {seasonNumber}");
+            bool isNewSeason = !Directory.Exists(seasonFolder);
+            bool seasonCreatedEpisodes = false;
+
+            foreach (var episode in episodes)
+            {
+                string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode);
+                string strmPath = Path.Combine(seasonFolder, episodeFileName);
+
+                if (File.Exists(strmPath))
+                {
+                    result.EpisodesSkipped++;
+                    continue;
+                }
+
+                Directory.CreateDirectory(seasonFolder);
+
+                string extension = string.IsNullOrEmpty(episode.ContainerExtension) ? "mkv" : episode.ContainerExtension;
+                string streamUrl = $"{connectionInfo.BaseUrl}/series/{connectionInfo.UserName}/{connectionInfo.Password}/{episode.EpisodeId}.{extension}";
+
+                await File.WriteAllTextAsync(strmPath, streamUrl, cancellationToken).ConfigureAwait(false);
+                result.EpisodesCreated++;
+                seasonCreatedEpisodes = true;
+                createdEpisodes = true;
+            }
+
+            if (isNewSeason && seasonCreatedEpisodes)
+            {
+                result.SeasonsCreated++;
+            }
+        }
+
+        if (isNewSeries && createdEpisodes)
+        {
+            result.SeriesCreated++;
+        }
+
+        _logger.LogInformation("Retry successful for series: {SeriesName}", item.Name);
+    }
+
+    /// <summary>
     /// Performs a full sync of all content from the Xtream provider.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
@@ -149,10 +362,21 @@ public partial class StrmSyncService
                         CurrentProgress.ItemsProcessed++;
                         File.Delete(orphan);
                         result.FilesDeleted++;
+
+                        // Track movie vs episode deletions separately
+                        if (orphan.StartsWith(moviesPath, StringComparison.OrdinalIgnoreCase))
+                        {
+                            result.MoviesDeleted++;
+                        }
+                        else if (orphan.StartsWith(seriesPath, StringComparison.OrdinalIgnoreCase))
+                        {
+                            result.EpisodesDeleted++;
+                        }
+
                         _logger.LogDebug("Deleted orphaned file: {FilePath}", orphan);
 
                         // Try to clean up empty parent directories
-                        CleanupEmptyDirectories(Path.GetDirectoryName(orphan)!, config.LibraryPath);
+                        CleanupEmptyDirectories(Path.GetDirectoryName(orphan)!, config.LibraryPath, seriesPath, result);
                     }
                     catch (Exception ex)
                     {
@@ -162,7 +386,13 @@ public partial class StrmSyncService
 
                 if (orphanedFiles.Count > 0)
                 {
-                    _logger.LogInformation("Cleaned up {Count} orphaned STRM files", orphanedFiles.Count);
+                    _logger.LogInformation(
+                        "Cleaned up {Count} orphaned STRM files ({Movies} movies, {Episodes} episodes) and {Series} series, {Seasons} seasons",
+                        orphanedFiles.Count,
+                        result.MoviesDeleted,
+                        result.EpisodesDeleted,
+                        result.SeriesDeleted,
+                        result.SeasonsDeleted);
                 }
             }
 
@@ -170,12 +400,15 @@ public partial class StrmSyncService
             result.Success = true;
 
             _logger.LogInformation(
-                "Sync completed: {MoviesCreated} movies, {EpisodesCreated} episodes created; {MoviesSkipped} movies, {EpisodesSkipped} episodes skipped; {Deleted} orphans deleted",
+                "Sync completed: Movies({MoviesCreated} added, {MoviesSkipped} skipped, {MoviesDeleted} deleted), Series({SeriesCreated} added, {SeriesSkipped} skipped), Episodes({EpisodesCreated} added, {EpisodesSkipped} skipped, {EpisodesDeleted} deleted)",
                 result.MoviesCreated,
-                result.EpisodesCreated,
                 result.MoviesSkipped,
+                result.MoviesDeleted,
+                result.SeriesCreated,
+                result.SeriesSkipped,
+                result.EpisodesCreated,
                 result.EpisodesSkipped,
-                result.FilesDeleted);
+                result.EpisodesDeleted);
 
             // Trigger library scan if enabled
             if (config.TriggerLibraryScan && (result.MoviesCreated > 0 || result.EpisodesCreated > 0 || result.FilesDeleted > 0))
@@ -260,11 +493,19 @@ public partial class StrmSyncService
         CurrentProgress.TotalItems = allMovies.Count;
         CurrentProgress.ItemsProcessed = 0;
 
-        // Thread-safe counters
+        // Thread-safe counters and collections
         int moviesCreated = 0;
         int moviesSkipped = 0;
         int errors = 0;
         var syncedFilesLock = new object();
+        var failedItems = new ConcurrentBag<FailedItem>();
+
+        // Parse folder ID overrides
+        var tmdbOverrides = ParseFolderIdOverrides(config.TmdbFolderIdOverrides);
+        if (tmdbOverrides.Count > 0)
+        {
+            _logger.LogInformation("Loaded {Count} TMDb folder ID overrides", tmdbOverrides.Count);
+        }
 
         // Process movies in parallel
         var parallelism = Math.Max(1, config.SyncParallelism);
@@ -284,7 +525,7 @@ public partial class StrmSyncService
                     string movieName = SanitizeFileName(stream.Name);
                     int? year = ExtractYear(stream.Name);
 
-                    string folderName = year.HasValue ? $"{movieName} ({year})" : movieName;
+                    string folderName = BuildMovieFolderName(movieName, year, tmdbOverrides);
                     string movieFolder = Path.Combine(moviesPath, folderName);
                     string strmFileName = $"{folderName}.strm";
                     string strmPath = Path.Combine(movieFolder, strmFileName);
@@ -317,6 +558,13 @@ public partial class StrmSyncService
                 {
                     _logger.LogWarning(ex, "Failed to create STRM for movie: {MovieName}", stream.Name);
                     Interlocked.Increment(ref errors);
+                    failedItems.Add(new FailedItem
+                    {
+                        ItemType = "Movie",
+                        ItemId = stream.StreamId,
+                        Name = stream.Name,
+                        ErrorMessage = ex.Message,
+                    });
                 }
                 finally
                 {
@@ -329,6 +577,7 @@ public partial class StrmSyncService
         result.MoviesCreated += moviesCreated;
         result.MoviesSkipped += moviesSkipped;
         result.Errors += errors;
+        result.AddFailedItems(failedItems);
 
         CurrentProgress.CategoriesProcessed = 1;
     }
@@ -394,11 +643,24 @@ public partial class StrmSyncService
         CurrentProgress.ItemsProcessed = 0;
 
         // Thread-safe counters
+        int seriesCreated = 0;
+        int seriesSkipped = 0;
+        int seasonsCreated = 0;
+        int seasonsSkipped = 0;
         int episodesCreated = 0;
         int episodesSkipped = 0;
         int errors = 0;
         int smartSkipped = 0;
         var syncedFilesLock = new object();
+        var processedSeasons = new ConcurrentDictionary<string, bool>();
+        var failedItems = new ConcurrentBag<FailedItem>();
+
+        // Parse folder ID overrides
+        var tvdbOverrides = ParseFolderIdOverrides(config.TvdbFolderIdOverrides);
+        if (tvdbOverrides.Count > 0)
+        {
+            _logger.LogInformation("Loaded {Count} TVDb folder ID overrides", tvdbOverrides.Count);
+        }
 
         // Process series in parallel
         var parallelism = Math.Max(1, config.SyncParallelism);
@@ -417,8 +679,9 @@ public partial class StrmSyncService
                 {
                     string seriesName = SanitizeFileName(series.Name);
                     int? year = ExtractYear(series.Name);
-                    string seriesFolderName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
+                    string seriesFolderName = BuildSeriesFolderName(seriesName, year, tvdbOverrides);
                     string seriesFolder = Path.Combine(seriesPath, seriesFolderName);
+                    bool isNewSeries = !Directory.Exists(seriesFolder);
 
                     // Smart skip: if series folder exists and has STRM files, skip API call
                     if (config.SmartSkipExisting && Directory.Exists(seriesFolder))
@@ -435,7 +698,11 @@ public partial class StrmSyncService
                                 }
                             }
 
+                            // Count existing seasons
+                            var existingSeasons = Directory.GetDirectories(seriesFolder, "Season *").Length;
+                            Interlocked.Add(ref seasonsSkipped, existingSeasons);
                             Interlocked.Add(ref episodesSkipped, existingStrms.Length);
+                            Interlocked.Increment(ref seriesSkipped);
                             Interlocked.Increment(ref smartSkipped);
                             CurrentProgress.ItemsProcessed++;
                             return;
@@ -451,11 +718,16 @@ public partial class StrmSyncService
                         return;
                     }
 
+                    bool seriesHasNewEpisodes = false;
+
                     foreach (var seasonEntry in seriesInfo.Episodes)
                     {
                         int seasonNumber = seasonEntry.Key;
                         var episodes = seasonEntry.Value;
                         string seasonFolder = Path.Combine(seriesFolder, $"Season {seasonNumber}");
+                        bool isNewSeason = !Directory.Exists(seasonFolder);
+
+                        bool seasonHasNewEpisodes = false;
 
                         foreach (var episode in episodes)
                         {
@@ -483,13 +755,45 @@ public partial class StrmSyncService
                             // Write STRM file
                             await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
                             Interlocked.Increment(ref episodesCreated);
+                            seasonHasNewEpisodes = true;
+                            seriesHasNewEpisodes = true;
                         }
+
+                        // Track season created/skipped (only count each season once)
+                        if (processedSeasons.TryAdd(seasonFolder, true))
+                        {
+                            if (isNewSeason && seasonHasNewEpisodes)
+                            {
+                                Interlocked.Increment(ref seasonsCreated);
+                            }
+                            else
+                            {
+                                Interlocked.Increment(ref seasonsSkipped);
+                            }
+                        }
+                    }
+
+                    // Track series created/skipped
+                    if (isNewSeries && seriesHasNewEpisodes)
+                    {
+                        Interlocked.Increment(ref seriesCreated);
+                    }
+                    else
+                    {
+                        Interlocked.Increment(ref seriesSkipped);
                     }
                 }
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Failed to sync series: {SeriesName}", series.Name);
                     Interlocked.Increment(ref errors);
+                    failedItems.Add(new FailedItem
+                    {
+                        ItemType = "Series",
+                        ItemId = series.SeriesId,
+                        Name = series.Name,
+                        ErrorMessage = ex.Message,
+                    });
                 }
                 finally
                 {
@@ -499,9 +803,14 @@ public partial class StrmSyncService
             }).ConfigureAwait(false);
 
         // Update result with thread-safe counters
+        result.SeriesCreated += seriesCreated;
+        result.SeriesSkipped += seriesSkipped;
+        result.SeasonsCreated += seasonsCreated;
+        result.SeasonsSkipped += seasonsSkipped;
         result.EpisodesCreated += episodesCreated;
         result.EpisodesSkipped += episodesSkipped;
         result.Errors += errors;
+        result.AddFailedItems(failedItems);
 
         if (smartSkipped > 0)
         {
@@ -599,11 +908,34 @@ public partial class StrmSyncService
             return "Unknown";
         }
 
+        string cleanName = name;
+
+        // Remove prefix language tags like "┃NL┃" or "| NL |" at start of name
+        cleanName = PrefixLanguageTagPattern().Replace(cleanName, string.Empty);
+
         // Remove language/country tags like "| NL |", "┃NL┃", "[NL]", "| EN |", etc.
-        string cleanName = LanguageTagPattern().Replace(name, string.Empty);
+        cleanName = LanguageTagPattern().Replace(cleanName, string.Empty);
+
+        // Remove language phrases like "(NL GESPROKEN)", "(EN SPOKEN)", "(DUBBED)", "[NL Gesproken]", "[NL Gepsroken]", etc.
+        cleanName = LanguagePhrasePattern().Replace(cleanName, string.Empty);
+
+        // Remove bracketed content with Asian characters (Japanese/Chinese original titles)
+        cleanName = AsianBracketedTextPattern().Replace(cleanName, string.Empty);
+
+        // Remove codec tags like "HEVC", "x264", "x265", "H.264", "AVC", etc.
+        cleanName = CodecTagPattern().Replace(cleanName, string.Empty);
+
+        // Remove quality tags like "4K", "1080p", "720p", "HDR", "UHD", etc.
+        cleanName = QualityTagPattern().Replace(cleanName, string.Empty);
+
+        // Remove source tags like "BluRay", "WEBRip", "HDTV", etc.
+        cleanName = SourceTagPattern().Replace(cleanName, string.Empty);
 
         // Remove year from name if present (we'll add it back in folder name format)
-        cleanName = YearPattern().Replace(cleanName, string.Empty).Trim();
+        cleanName = YearPattern().Replace(cleanName, string.Empty);
+
+        // Fix malformed quotes/apostrophes (e.g., "Angela'\'s" -> "Angela's")
+        cleanName = MalformedQuotePattern().Replace(cleanName, "'");
 
         // Remove invalid file name characters
         char[] invalidChars = Path.GetInvalidFileNameChars();
@@ -612,8 +944,10 @@ public partial class StrmSyncService
             cleanName = cleanName.Replace(c, '_');
         }
 
-        // Remove consecutive underscores and trim
-        cleanName = MultipleUnderscoresPattern().Replace(cleanName, "_").Trim('_', ' ');
+        // Clean up whitespace and underscores
+        cleanName = MultipleSpacesPattern().Replace(cleanName, " ");
+        cleanName = MultipleUnderscoresPattern().Replace(cleanName, "_");
+        cleanName = cleanName.Trim('_', ' ', '-');
 
         return string.IsNullOrEmpty(cleanName) ? "Unknown" : cleanName;
     }
@@ -638,6 +972,74 @@ public partial class StrmSyncService
         return null;
     }
 
+    /// <summary>
+    /// Parses folder ID override configuration string into a dictionary.
+    /// </summary>
+    /// <param name="config">The configuration string with one mapping per line.</param>
+    /// <returns>Dictionary mapping folder names to provider IDs.</returns>
+    internal static Dictionary<string, int> ParseFolderIdOverrides(string? config)
+    {
+        var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(config))
+        {
+            return result;
+        }
+
+        foreach (string line in config.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            int equalsIndex = line.IndexOf('=', StringComparison.Ordinal);
+            if (equalsIndex > 0 && equalsIndex < line.Length - 1)
+            {
+                string folderName = line[..equalsIndex].Trim();
+                string idStr = line[(equalsIndex + 1)..].Trim();
+                if (!string.IsNullOrEmpty(folderName) && int.TryParse(idStr, out int id))
+                {
+                    result[folderName] = id;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Builds a movie folder name, optionally with TMDb ID suffix.
+    /// </summary>
+    /// <param name="sanitizedName">The sanitized movie name.</param>
+    /// <param name="year">Optional release year.</param>
+    /// <param name="overrides">Dictionary of folder name to TMDb ID overrides.</param>
+    /// <returns>Folder name, with [tmdbid-X] suffix if override exists.</returns>
+    internal static string BuildMovieFolderName(string sanitizedName, int? year, Dictionary<string, int> overrides)
+    {
+        string baseName = year.HasValue ? $"{sanitizedName} ({year})" : sanitizedName;
+
+        if (overrides.TryGetValue(baseName, out int tmdbId))
+        {
+            return $"{baseName} [tmdbid-{tmdbId}]";
+        }
+
+        return baseName;
+    }
+
+    /// <summary>
+    /// Builds a series folder name, optionally with TVDb ID suffix.
+    /// </summary>
+    /// <param name="sanitizedName">The sanitized series name.</param>
+    /// <param name="year">Optional premiere year.</param>
+    /// <param name="overrides">Dictionary of folder name to TVDb ID overrides.</param>
+    /// <returns>Folder name, with [tvdbid-X] suffix if override exists.</returns>
+    internal static string BuildSeriesFolderName(string sanitizedName, int? year, Dictionary<string, int> overrides)
+    {
+        string baseName = year.HasValue ? $"{sanitizedName} ({year})" : sanitizedName;
+
+        if (overrides.TryGetValue(baseName, out int tvdbId))
+        {
+            return $"{baseName} [tvdbid-{tvdbId}]";
+        }
+
+        return baseName;
+    }
+
     private static void CollectExistingStrmFiles(string basePath, HashSet<string> files)
     {
         if (!Directory.Exists(basePath))
@@ -651,7 +1053,7 @@ public partial class StrmSyncService
         }
     }
 
-    internal static void CleanupEmptyDirectories(string directory, string stopAt)
+    internal static void CleanupEmptyDirectories(string directory, string stopAt, string seriesPath, SyncResult result)
     {
         while (!string.IsNullOrEmpty(directory) &&
                !directory.Equals(stopAt, StringComparison.OrdinalIgnoreCase) &&
@@ -661,8 +1063,25 @@ public partial class StrmSyncService
             {
                 try
                 {
+                    // Check if this is a season folder (parent is a series folder)
+                    string? parentDir = Path.GetDirectoryName(directory);
+                    string folderName = Path.GetFileName(directory);
+
+                    if (parentDir != null &&
+                        Path.GetDirectoryName(parentDir)?.Equals(seriesPath, StringComparison.OrdinalIgnoreCase) == true &&
+                        folderName.StartsWith("Season ", StringComparison.OrdinalIgnoreCase))
+                    {
+                        result.SeasonsDeleted++;
+                    }
+                    else if (parentDir != null &&
+                             parentDir.Equals(seriesPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // This is a series folder (direct child of seriesPath)
+                        result.SeriesDeleted++;
+                    }
+
                     Directory.Delete(directory);
-                    directory = Path.GetDirectoryName(directory)!;
+                    directory = parentDir!;
                 }
                 catch
                 {
@@ -690,9 +1109,40 @@ public partial class StrmSyncService
     [GeneratedRegex(@"_+")]
     private static partial Regex MultipleUnderscoresPattern();
 
+    [GeneratedRegex(@"\s{2,}")]
+    private static partial Regex MultipleSpacesPattern();
+
+    // Matches prefix language tags like "┃NL┃" or "| NL |" at start of name
+    [GeneratedRegex(@"^[\|\┃]\s*[A-Z]{2,3}\s*[\|\┃]\s*", RegexOptions.IgnoreCase)]
+    private static partial Regex PrefixLanguageTagPattern();
+
     // Matches language tags like "| NL |", "┃NL┃", "[NL]", "| EN |", "| DE |", etc.
-    [GeneratedRegex(@"[\|\┃\[]\s*[A-Z]{2,3}\s*[\|\┃\]]")]
+    [GeneratedRegex(@"[\|\┃\[]\s*[A-Z]{2,3}\s*[\|\┃\]]", RegexOptions.IgnoreCase)]
     private static partial Regex LanguageTagPattern();
+
+    // Matches language phrases like "(NL GESPROKEN)", "(EN SPOKEN)", "(DUBBED)", "(OV)", "(SUB)", "[NL Gesproken]", "[NL Gepsroken]", etc.
+    [GeneratedRegex(@"[\(\[]\s*(?:NL|EN|DE|FR|ES|IT|PT|RU|PL|JP|KR|CN)\s*(?:GESPROKEN|GEPSROKEN|SPOKEN|DUBBED|SUBS?|SUBBED|OV|OmU|AUDIO)?\s*[\)\]]", RegexOptions.IgnoreCase)]
+    private static partial Regex LanguagePhrasePattern();
+
+    // Matches bracketed content containing Asian characters (CJK: Chinese, Japanese, Korean)
+    [GeneratedRegex(@"\s*[\[\(][^\]\)]*[\u3000-\u9FFF\uAC00-\uD7AF\u3040-\u309F\u30A0-\u30FF]+[^\]\)]*[\]\)]")]
+    private static partial Regex AsianBracketedTextPattern();
+
+    // Matches codec tags like "HEVC", "x264", "x265", "H.264", "H264", "AVC", "10bit", etc.
+    [GeneratedRegex(@"\b(?:HEVC|[xh]\.?26[45]|AVC|MPEG-?[24]|VP9|AV1|10-?bit|8-?bit)\b", RegexOptions.IgnoreCase)]
+    private static partial Regex CodecTagPattern();
+
+    // Matches quality tags like "4K", "UHD", "1080p", "720p", "480p", "HDR", "HDR10", "SDR", "2160p", etc.
+    [GeneratedRegex(@"\b(?:4K|UHD|2160p|1080[pi]|720p|480p|576p|HDR10\+?|HDR|SDR|FHD|HD|SD)\b", RegexOptions.IgnoreCase)]
+    private static partial Regex QualityTagPattern();
+
+    // Matches source tags like "BluRay", "BRRip", "WEBRip", "WEB-DL", "HDTV", "DVDRip", "REMUX", etc.
+    [GeneratedRegex(@"\b(?:Blu-?Ray|BRRip|BDRip|WEB-?(?:Rip|DL)?|HDTV|DVDRip|DVD|REMUX|CAM|TS|HC|PROPER|REPACK)\b", RegexOptions.IgnoreCase)]
+    private static partial Regex SourceTagPattern();
+
+    // Fixes malformed quotes like "'\'" "\''" "'\''" to just "'"
+    [GeneratedRegex(@"'(?:[\\']+')*|(?:[\\'])+(?='|\s|$)")]
+    private static partial Regex MalformedQuotePattern();
 }
 
 /// <summary>
@@ -756,6 +1206,8 @@ public class SyncProgress
 /// </summary>
 public class SyncResult
 {
+    private readonly List<FailedItem> _failedItems = new();
+
     /// <summary>
     /// Gets or sets the start time of the sync.
     /// </summary>
@@ -787,6 +1239,56 @@ public class SyncResult
     public int MoviesSkipped { get; set; }
 
     /// <summary>
+    /// Gets or sets the number of movies deleted (orphans).
+    /// </summary>
+    public int MoviesDeleted { get; set; }
+
+    /// <summary>
+    /// Gets the total number of movies (created + skipped).
+    /// </summary>
+    public int TotalMovies => MoviesCreated + MoviesSkipped;
+
+    /// <summary>
+    /// Gets or sets the number of series created.
+    /// </summary>
+    public int SeriesCreated { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of series skipped (already existed).
+    /// </summary>
+    public int SeriesSkipped { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of series deleted (orphans).
+    /// </summary>
+    public int SeriesDeleted { get; set; }
+
+    /// <summary>
+    /// Gets the total number of series (created + skipped).
+    /// </summary>
+    public int TotalSeries => SeriesCreated + SeriesSkipped;
+
+    /// <summary>
+    /// Gets or sets the number of seasons created.
+    /// </summary>
+    public int SeasonsCreated { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of seasons skipped (already existed).
+    /// </summary>
+    public int SeasonsSkipped { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of seasons deleted (orphans).
+    /// </summary>
+    public int SeasonsDeleted { get; set; }
+
+    /// <summary>
+    /// Gets the total number of seasons (created + skipped).
+    /// </summary>
+    public int TotalSeasons => SeasonsCreated + SeasonsSkipped;
+
+    /// <summary>
     /// Gets or sets the number of episodes created.
     /// </summary>
     public int EpisodesCreated { get; set; }
@@ -797,7 +1299,17 @@ public class SyncResult
     public int EpisodesSkipped { get; set; }
 
     /// <summary>
-    /// Gets or sets the number of files deleted (orphans).
+    /// Gets or sets the number of episodes deleted (orphans).
+    /// </summary>
+    public int EpisodesDeleted { get; set; }
+
+    /// <summary>
+    /// Gets the total number of episodes (created + skipped).
+    /// </summary>
+    public int TotalEpisodes => EpisodesCreated + EpisodesSkipped;
+
+    /// <summary>
+    /// Gets or sets the number of files deleted (orphans) - legacy, use specific counts.
     /// </summary>
     public int FilesDeleted { get; set; }
 
@@ -807,7 +1319,80 @@ public class SyncResult
     public int Errors { get; set; }
 
     /// <summary>
+    /// Gets the list of failed items.
+    /// </summary>
+    public IReadOnlyList<FailedItem> FailedItems => _failedItems;
+
+    /// <summary>
     /// Gets the duration of the sync operation.
     /// </summary>
     public TimeSpan Duration => EndTime - StartTime;
+
+    /// <summary>
+    /// Adds a failed item to the list.
+    /// </summary>
+    /// <param name="item">The failed item to add.</param>
+    internal void AddFailedItem(FailedItem item) => _failedItems.Add(item);
+
+    /// <summary>
+    /// Adds multiple failed items to the list.
+    /// </summary>
+    /// <param name="items">The failed items to add.</param>
+    internal void AddFailedItems(IEnumerable<FailedItem> items) => _failedItems.AddRange(items);
+
+    /// <summary>
+    /// Clears and replaces all failed items.
+    /// </summary>
+    /// <param name="items">The new list of failed items.</param>
+    internal void SetFailedItems(IEnumerable<FailedItem> items)
+    {
+        _failedItems.Clear();
+        _failedItems.AddRange(items);
+    }
+}
+
+/// <summary>
+/// Represents an item that failed during sync.
+/// </summary>
+public class FailedItem
+{
+    /// <summary>
+    /// Gets or sets the type of item (Movie, Series, Episode).
+    /// </summary>
+    public string ItemType { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the item ID from the provider.
+    /// </summary>
+    public int ItemId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the item name.
+    /// </summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the series ID (for episodes).
+    /// </summary>
+    public int? SeriesId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the season number (for episodes).
+    /// </summary>
+    public int? SeasonNumber { get; set; }
+
+    /// <summary>
+    /// Gets or sets the episode number (for episodes).
+    /// </summary>
+    public int? EpisodeNumber { get; set; }
+
+    /// <summary>
+    /// Gets or sets the error message.
+    /// </summary>
+    public string ErrorMessage { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the time of failure.
+    /// </summary>
+    public DateTime FailedAt { get; set; } = DateTime.UtcNow;
 }

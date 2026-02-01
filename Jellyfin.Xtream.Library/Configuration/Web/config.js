@@ -10,8 +10,27 @@ const XtreamLibraryConfig = {
     // Track last clicked checkbox per category type for shift+click range selection
     lastClickedIndex: { vod: null, series: null },
 
+    // Tab switching
+    switchTab: function (tabName) {
+        // Update tab buttons
+        document.querySelectorAll('.xtream-tab').forEach(function (tab) {
+            tab.classList.remove('active');
+            if (tab.getAttribute('data-tab') === tabName) {
+                tab.classList.add('active');
+            }
+        });
+
+        // Update tab content
+        document.querySelectorAll('.xtream-tab-content').forEach(function (content) {
+            content.classList.remove('active');
+        });
+        document.getElementById('tab-' + tabName).classList.add('active');
+    },
+
     loadConfig: function () {
         Dashboard.showLoadingMsg();
+
+        const self = this;
 
         ApiClient.getPluginConfiguration(this.pluginUniqueId).then(function (config) {
             document.getElementById('txtBaseUrl').value = config.BaseUrl || '';
@@ -29,7 +48,17 @@ const XtreamLibraryConfig = {
             XtreamLibraryConfig.selectedVodCategoryIds = config.SelectedVodCategoryIds || [];
             XtreamLibraryConfig.selectedSeriesCategoryIds = config.SelectedSeriesCategoryIds || [];
 
+            // Folder ID overrides
+            document.getElementById('txtTmdbFolderIdOverrides').value = config.TmdbFolderIdOverrides || '';
+            document.getElementById('txtTvdbFolderIdOverrides').value = config.TvdbFolderIdOverrides || '';
+
             Dashboard.hideLoadingMsg();
+
+            // Auto-load categories if credentials are configured
+            if (config.BaseUrl && config.Username) {
+                self.loadVodCategories();
+                self.loadSeriesCategories();
+            }
         });
 
         // Load last sync status
@@ -54,6 +83,10 @@ const XtreamLibraryConfig = {
             // Get selected category IDs from checkboxes
             config.SelectedVodCategoryIds = XtreamLibraryConfig.getSelectedCategoryIds('vod');
             config.SelectedSeriesCategoryIds = XtreamLibraryConfig.getSelectedCategoryIds('series');
+
+            // Folder ID overrides
+            config.TmdbFolderIdOverrides = document.getElementById('txtTmdbFolderIdOverrides').value;
+            config.TvdbFolderIdOverrides = document.getElementById('txtTvdbFolderIdOverrides').value;
 
             ApiClient.updatePluginConfiguration(XtreamLibraryConfig.pluginUniqueId, config).then(function () {
                 Dashboard.processPluginConfigurationUpdateResult();
@@ -218,62 +251,151 @@ const XtreamLibraryConfig = {
         const infoDiv = document.getElementById('lastSyncInfo');
         if (!result) {
             infoDiv.innerHTML = '';
+            this.updateFailedItemsDisplay([]);
             return;
         }
 
         const startTime = new Date(result.StartTime).toLocaleString();
         const status = result.Success ? '<span style="color: green;">Success</span>' : '<span style="color: red;">Failed</span>';
 
-        let html = '<div class="fieldDescription">';
-        html += '<strong>Last Sync:</strong> ' + startTime + ' - ' + status + '<br/>';
-        html += '<strong>Movies:</strong> ' + result.MoviesCreated + ' created, ' + result.MoviesSkipped + ' skipped<br/>';
-        html += '<strong>Episodes:</strong> ' + result.EpisodesCreated + ' created, ' + result.EpisodesSkipped + ' skipped<br/>';
-        html += '<strong>Orphans Deleted:</strong> ' + result.FilesDeleted;
+        let html = '<strong>Last Sync:</strong> ' + startTime + ' - ' + status + '<br/><br/>';
+
+        // Movies section
+        html += '<strong>Movies</strong><br/>';
+        html += '&nbsp;&nbsp;Total: ' + (result.TotalMovies || (result.MoviesCreated + result.MoviesSkipped)) + '<br/>';
+        html += '&nbsp;&nbsp;' + result.MoviesCreated + ' added, ' + (result.MoviesDeleted || 0) + ' deleted';
+        html += '<br/><br/>';
+
+        // Series section
+        html += '<strong>Series</strong><br/>';
+        html += '&nbsp;&nbsp;Total: ' + (result.TotalSeries || (result.SeriesCreated + result.SeriesSkipped) || 0) + '<br/>';
+        html += '&nbsp;&nbsp;' + (result.SeriesCreated || 0) + ' added, ' + (result.SeriesDeleted || 0) + ' deleted';
+        html += '<br/>';
+
+        // Seasons
+        html += '&nbsp;&nbsp;Seasons: ' + (result.TotalSeasons || (result.SeasonsCreated + result.SeasonsSkipped) || 0) + ' total';
+        html += ', ' + (result.SeasonsCreated || 0) + ' added, ' + (result.SeasonsDeleted || 0) + ' deleted';
+        html += '<br/>';
+
+        // Episodes
+        html += '&nbsp;&nbsp;Episodes: ' + (result.TotalEpisodes || (result.EpisodesCreated + result.EpisodesSkipped)) + ' total';
+        html += ', ' + result.EpisodesCreated + ' added, ' + (result.EpisodesDeleted || 0) + ' deleted';
+
+        // Errors
         if (result.Errors > 0) {
-            html += '<br/><span style="color: orange;"><strong>Errors:</strong> ' + result.Errors + '</span>';
+            html += '<br/><br/><span style="color: orange;"><strong>Errors:</strong> ' + result.Errors + '</span>';
         }
         if (result.Error) {
             html += '<br/><span style="color: red;"><strong>Error:</strong> ' + result.Error + '</span>';
         }
-        html += '</div>';
 
         infoDiv.innerHTML = html;
+
+        // Update failed items display
+        this.updateFailedItemsDisplay(result.FailedItems || []);
     },
 
-    loadCategories: function () {
-        const statusSpan = document.getElementById('categoryLoadStatus');
-        statusSpan.innerHTML = '<span style="color: orange;">Loading categories...</span>';
+    updateFailedItemsDisplay: function (failedItems) {
+        const btnRetry = document.getElementById('btnRetryFailed');
+        const failedCount = document.getElementById('failedCount');
+        const failedList = document.getElementById('failedItemsList');
+        const failedContent = document.getElementById('failedItemsContent');
+
+        if (failedItems.length > 0) {
+            btnRetry.style.display = 'inline-block';
+            failedCount.textContent = failedItems.length;
+            failedList.style.display = 'block';
+
+            let html = '<ul style="margin: 5px 0; padding-left: 20px;">';
+            failedItems.forEach(function (item) {
+                html += '<li><span style="color: orange;">' + XtreamLibraryConfig.escapeHtml(item.ItemType) + ':</span> ';
+                html += XtreamLibraryConfig.escapeHtml(item.Name);
+                if (item.ErrorMessage) {
+                    html += ' <span style="color: #888;">(' + XtreamLibraryConfig.escapeHtml(item.ErrorMessage) + ')</span>';
+                }
+                html += '</li>';
+            });
+            html += '</ul>';
+            failedContent.innerHTML = html;
+        } else {
+            btnRetry.style.display = 'none';
+            failedList.style.display = 'none';
+            failedContent.innerHTML = '';
+        }
+    },
+
+    retryFailed: function () {
+        const statusSpan = document.getElementById('syncStatus');
+        const self = this;
+
+        statusSpan.innerHTML = '<span style="color: orange;">Retrying failed items...</span>';
+
+        fetch(ApiClient.getUrl('XtreamLibrary/RetryFailed'), {
+            method: 'POST',
+            headers: {
+                'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
+            }
+        }).then(function (response) {
+            return response.json();
+        }).then(function (data) {
+            if (data.Success) {
+                statusSpan.innerHTML = '<span style="color: green;">Retry completed!</span>';
+                // Reload status to get updated results
+                self.loadSyncStatus();
+            } else {
+                statusSpan.innerHTML = '<span style="color: red;">Retry failed: ' + (data.Error || 'Unknown error') + '</span>';
+            }
+        }).catch(function (error) {
+            console.error('Retry error:', error);
+            statusSpan.innerHTML = '<span style="color: red;">Retry failed: ' + (error.message || 'Check console for details') + '</span>';
+        });
+    },
+
+    loadVodCategories: function () {
+        const statusSpan = document.getElementById('vodCategoryLoadStatus');
+        statusSpan.innerHTML = '<span style="color: orange;">Loading...</span>';
 
         const self = this;
 
-        // Fetch both VOD and Series categories in parallel
-        Promise.all([
-            fetch(ApiClient.getUrl('XtreamLibrary/Categories/Vod'), {
-                method: 'GET',
-                headers: {
-                    'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
-                }
-            }).then(function (r) { return r.ok ? r.json() : Promise.reject(r); }),
-            fetch(ApiClient.getUrl('XtreamLibrary/Categories/Series'), {
-                method: 'GET',
-                headers: {
-                    'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
-                }
-            }).then(function (r) { return r.ok ? r.json() : Promise.reject(r); })
-        ]).then(function (results) {
-            self.vodCategories = results[0] || [];
-            self.seriesCategories = results[1] || [];
-
+        fetch(ApiClient.getUrl('XtreamLibrary/Categories/Vod'), {
+            method: 'GET',
+            headers: {
+                'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
+            }
+        }).then(function (r) {
+            return r.ok ? r.json() : Promise.reject(r);
+        }).then(function (categories) {
+            self.vodCategories = categories || [];
             self.renderCategoryList('vod', self.vodCategories, self.selectedVodCategoryIds);
-            self.renderCategoryList('series', self.seriesCategories, self.selectedSeriesCategoryIds);
-
             document.getElementById('vodCategoriesSection').style.display = 'block';
-            document.getElementById('seriesCategoriesSection').style.display = 'block';
-
-            statusSpan.innerHTML = '<span style="color: green;">Loaded ' + self.vodCategories.length + ' VOD, ' + self.seriesCategories.length + ' Series categories</span>';
+            statusSpan.innerHTML = '<span style="color: green;">Loaded ' + self.vodCategories.length + ' categories</span>';
         }).catch(function (error) {
-            console.error('Failed to load categories:', error);
-            statusSpan.innerHTML = '<span style="color: red;">Failed to load categories. Check credentials and try again.</span>';
+            console.error('Failed to load VOD categories:', error);
+            statusSpan.innerHTML = '<span style="color: red;">Failed to load. Check credentials.</span>';
+        });
+    },
+
+    loadSeriesCategories: function () {
+        const statusSpan = document.getElementById('seriesCategoryLoadStatus');
+        statusSpan.innerHTML = '<span style="color: orange;">Loading...</span>';
+
+        const self = this;
+
+        fetch(ApiClient.getUrl('XtreamLibrary/Categories/Series'), {
+            method: 'GET',
+            headers: {
+                'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
+            }
+        }).then(function (r) {
+            return r.ok ? r.json() : Promise.reject(r);
+        }).then(function (categories) {
+            self.seriesCategories = categories || [];
+            self.renderCategoryList('series', self.seriesCategories, self.selectedSeriesCategoryIds);
+            document.getElementById('seriesCategoriesSection').style.display = 'block';
+            statusSpan.innerHTML = '<span style="color: green;">Loaded ' + self.seriesCategories.length + ' categories</span>';
+        }).catch(function (error) {
+            console.error('Failed to load Series categories:', error);
+            statusSpan.innerHTML = '<span style="color: red;">Failed to load. Check credentials.</span>';
         });
     },
 
@@ -360,7 +482,16 @@ function initXtreamLibraryConfig() {
     const form = document.getElementById('XtreamLibraryConfigForm');
     const btnTest = document.getElementById('btnTestConnection');
     const btnSync = document.getElementById('btnManualSync');
-    const btnLoadCategories = document.getElementById('btnLoadCategories');
+    const btnLoadVodCategories = document.getElementById('btnLoadVodCategories');
+    const btnLoadSeriesCategories = document.getElementById('btnLoadSeriesCategories');
+
+    // Tab switching
+    document.querySelectorAll('.xtream-tab').forEach(function (tab) {
+        tab.addEventListener('click', function (e) {
+            e.preventDefault();
+            XtreamLibraryConfig.switchTab(tab.getAttribute('data-tab'));
+        });
+    });
 
     if (form) {
         form.addEventListener('submit', function (e) {
@@ -384,10 +515,25 @@ function initXtreamLibraryConfig() {
         });
     }
 
-    if (btnLoadCategories) {
-        btnLoadCategories.addEventListener('click', function (e) {
+    const btnRetryFailed = document.getElementById('btnRetryFailed');
+    if (btnRetryFailed) {
+        btnRetryFailed.addEventListener('click', function (e) {
             e.preventDefault();
-            XtreamLibraryConfig.loadCategories();
+            XtreamLibraryConfig.retryFailed();
+        });
+    }
+
+    if (btnLoadVodCategories) {
+        btnLoadVodCategories.addEventListener('click', function (e) {
+            e.preventDefault();
+            XtreamLibraryConfig.loadVodCategories();
+        });
+    }
+
+    if (btnLoadSeriesCategories) {
+        btnLoadSeriesCategories.addEventListener('click', function (e) {
+            e.preventDefault();
+            XtreamLibraryConfig.loadSeriesCategories();
         });
     }
 
