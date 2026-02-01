@@ -162,6 +162,22 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IDi
            $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}&action=get_series_info&series_id={seriesId}",
            cancellationToken);
 
+    public async Task<VodInfoResponse?> GetVodInfoAsync(ConnectionInfo connectionInfo, int vodId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await QueryApi<VodInfoResponse>(
+                connectionInfo,
+                $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}&action=get_vod_info&vod_id={vodId}",
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to fetch VOD info for ID {VodId}", vodId);
+            return null;
+        }
+    }
+
     /// <summary>
     /// Dispose the HTTP client.
     /// </summary>

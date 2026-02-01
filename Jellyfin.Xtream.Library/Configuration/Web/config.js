@@ -67,6 +67,9 @@ const XtreamLibraryConfig = {
             // Artwork download for unmatched
             document.getElementById('chkDownloadArtworkForUnmatched').checked = config.DownloadArtworkForUnmatched !== false;
 
+            // Proactive media info
+            document.getElementById('chkEnableProactiveMediaInfo').checked = config.EnableProactiveMediaInfo || false;
+
             // Schedule settings
             document.getElementById('selSyncScheduleType').value = config.SyncScheduleType || 'Interval';
             document.getElementById('selSyncDailyHour').value = config.SyncDailyHour || 3;
@@ -138,6 +141,9 @@ const XtreamLibraryConfig = {
 
             // Artwork download for unmatched
             config.DownloadArtworkForUnmatched = document.getElementById('chkDownloadArtworkForUnmatched').checked;
+
+            // Proactive media info
+            config.EnableProactiveMediaInfo = document.getElementById('chkEnableProactiveMediaInfo').checked;
 
             // Schedule settings
             config.SyncScheduleType = document.getElementById('selSyncScheduleType').value;

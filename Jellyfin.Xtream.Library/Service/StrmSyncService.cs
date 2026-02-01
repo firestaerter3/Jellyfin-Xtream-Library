@@ -633,7 +633,8 @@ public partial class StrmSyncService
         // Process movies in parallel
         var parallelism = Math.Max(1, config.SyncParallelism);
         var enableMetadataLookup = config.EnableMetadataLookup;
-        _logger.LogInformation("Processing movies with parallelism={Parallelism}, metadataLookup={MetadataLookup}", parallelism, enableMetadataLookup);
+        var enableProactiveMediaInfo = config.EnableProactiveMediaInfo;
+        _logger.LogInformation("Processing movies with parallelism={Parallelism}, metadataLookup={MetadataLookup}, proactiveMediaInfo={ProactiveMediaInfo}", parallelism, enableMetadataLookup, enableProactiveMediaInfo);
 
         await Parallel.ForEachAsync(
             allMovies,
@@ -721,6 +722,23 @@ public partial class StrmSyncService
                         // Write STRM file
                         await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
                         anyCreated = true;
+
+                        // Write NFO with media info if enabled (only for first target folder)
+                        if (enableProactiveMediaInfo && targetFolders.First() == targetFolder)
+                        {
+                            var vodInfo = await _client.GetVodInfoAsync(connectionInfo, stream.StreamId, ct).ConfigureAwait(false);
+                            if (vodInfo?.Info != null)
+                            {
+                                var nfoPath = Path.Combine(movieFolder, $"{folderName}.nfo");
+                                await NfoWriter.WriteMovieNfoAsync(
+                                    nfoPath,
+                                    stream.Name,
+                                    vodInfo.Info.Video,
+                                    vodInfo.Info.Audio,
+                                    vodInfo.Info.DurationSecs,
+                                    ct).ConfigureAwait(false);
+                            }
+                        }
 
                         // Download artwork for unmatched movies
                         if (!autoLookupTmdbId.HasValue && !tmdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched)
@@ -887,7 +905,8 @@ public partial class StrmSyncService
         // Process series in parallel
         var parallelism = Math.Max(1, config.SyncParallelism);
         var enableMetadataLookup = config.EnableMetadataLookup;
-        _logger.LogInformation("Processing series with parallelism={Parallelism}, smartSkip={SmartSkip}, metadataLookup={MetadataLookup}", parallelism, config.SmartSkipExisting, enableMetadataLookup);
+        var enableProactiveMediaInfo = config.EnableProactiveMediaInfo;
+        _logger.LogInformation("Processing series with parallelism={Parallelism}, smartSkip={SmartSkip}, metadataLookup={MetadataLookup}, proactiveMediaInfo={ProactiveMediaInfo}", parallelism, config.SmartSkipExisting, enableMetadataLookup, enableProactiveMediaInfo);
 
         await Parallel.ForEachAsync(
             allSeries,
@@ -1050,6 +1069,23 @@ public partial class StrmSyncService
                                 Interlocked.Increment(ref episodesCreated);
                                 seasonHasNewEpisodes = true;
                                 seriesHasNewEpisodes = true;
+
+                                // Write NFO with media info if enabled (only for first target folder)
+                                if (enableProactiveMediaInfo && targetFolders.First() == targetFolder && episode.Info != null)
+                                {
+                                    var nfoFileName = Path.GetFileNameWithoutExtension(episodeFileName) + ".nfo";
+                                    var nfoPath = Path.Combine(seasonFolder, nfoFileName);
+                                    await NfoWriter.WriteEpisodeNfoAsync(
+                                        nfoPath,
+                                        seriesName,
+                                        seasonNumber,
+                                        episode.EpisodeNum,
+                                        episode.Title,
+                                        episode.Info.Video,
+                                        episode.Info.Audio,
+                                        episode.Info.DurationSecs,
+                                        ct).ConfigureAwait(false);
+                                }
 
                                 // Download episode thumbnail for unmatched series
                                 if (!autoLookupTvdbId.HasValue && !tvdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched)

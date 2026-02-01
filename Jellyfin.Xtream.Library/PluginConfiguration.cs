@@ -132,6 +132,13 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool DownloadArtworkForUnmatched { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether to proactively fetch media info
+    /// (resolution, codec, audio channels) during sync and write NFO sidecar files.
+    /// This allows Jellyfin to display media info without first-time playback.
+    /// </summary>
+    public bool EnableProactiveMediaInfo { get; set; }
+
+    /// <summary>
     /// Gets or sets the sync schedule type.
     /// "Interval" = run every X minutes, "Daily" = run at specific time each day.
     /// </summary>

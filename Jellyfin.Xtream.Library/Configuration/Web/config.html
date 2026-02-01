@@ -225,6 +225,16 @@
                                     Ensures unmatched movies and series still have artwork in Jellyfin.
                                 </div>
                             </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkEnableProactiveMediaInfo" name="EnableProactiveMediaInfo" />
+                                    <span>Proactive Media Info</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Fetch media info (resolution, codec, audio) during sync and write NFO sidecar files.
+                                    Shows media details in Jellyfin without first-time playback. Increases sync time.
+                                </div>
+                            </div>
                             <div style="margin-top: 10px;">
                                 <button is="emby-button" type="button" id="btnClearMetadataCache" class="raised">
                                     <span>Clear Metadata Cache</span>
