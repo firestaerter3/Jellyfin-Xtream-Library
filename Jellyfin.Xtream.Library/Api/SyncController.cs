@@ -324,28 +324,30 @@ public class SyncController : ControllerBase
         {
             if (System.IO.Directory.Exists(moviesPath))
             {
-                var movieDirs = System.IO.Directory.GetDirectories(moviesPath);
-                moviesDeleted = movieDirs.Length;
+                // Count actual movie STRM files (handles both single and multiple folder modes)
+                var movieStrms = System.IO.Directory.GetFiles(moviesPath, "*.strm", System.IO.SearchOption.AllDirectories);
+                moviesDeleted = movieStrms.Length;
                 System.IO.Directory.Delete(moviesPath, recursive: true);
                 System.IO.Directory.CreateDirectory(moviesPath);
-                _logger.LogInformation("Deleted {Count} movie folders from {Path}", moviesDeleted, moviesPath);
+                _logger.LogInformation("Deleted {Count} movies from {Path}", moviesDeleted, moviesPath);
             }
 
             if (System.IO.Directory.Exists(seriesPath))
             {
-                var seriesDirs = System.IO.Directory.GetDirectories(seriesPath);
-                seriesDeleted = seriesDirs.Length;
+                // Count actual episode STRM files (handles both single and multiple folder modes)
+                var seriesStrms = System.IO.Directory.GetFiles(seriesPath, "*.strm", System.IO.SearchOption.AllDirectories);
+                seriesDeleted = seriesStrms.Length;
                 System.IO.Directory.Delete(seriesPath, recursive: true);
                 System.IO.Directory.CreateDirectory(seriesPath);
-                _logger.LogInformation("Deleted {Count} series folders from {Path}", seriesDeleted, seriesPath);
+                _logger.LogInformation("Deleted {Count} episodes from {Path}", seriesDeleted, seriesPath);
             }
 
             return Ok(new
             {
                 Success = true,
-                Message = $"Deleted {moviesDeleted} movies and {seriesDeleted} series.",
+                Message = $"Deleted {moviesDeleted} movies and {seriesDeleted} episodes.",
                 MoviesDeleted = moviesDeleted,
-                SeriesDeleted = seriesDeleted,
+                EpisodesDeleted = seriesDeleted,
             });
         }
         catch (System.Exception ex)
