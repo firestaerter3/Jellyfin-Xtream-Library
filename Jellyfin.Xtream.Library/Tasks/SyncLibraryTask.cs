@@ -69,6 +69,9 @@ public class SyncLibraryTask : IScheduledTask, IConfigurableScheduledTask
         _logger.LogInformation("Starting Xtream Library sync task");
         progress.Report(0);
 
+        // Start progress monitoring task
+        var progressTask = MonitorProgressAsync(progress, cancellationToken);
+
         try
         {
             var result = await _syncService.SyncAsync(cancellationToken).ConfigureAwait(false);
@@ -98,14 +101,74 @@ public class SyncLibraryTask : IScheduledTask, IConfigurableScheduledTask
             _logger.LogError(ex, "Xtream Library sync failed with exception");
             throw;
         }
+        finally
+        {
+            // Wait for progress task to complete
+            await progressTask.ConfigureAwait(false);
+        }
 
         progress.Report(100);
+    }
+
+    /// <summary>
+    /// Monitors and reports sync progress to Jellyfin's task system.
+    /// </summary>
+    private async Task MonitorProgressAsync(IProgress<double> progress, CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested && _syncService.CurrentProgress.IsRunning)
+            {
+                var currentProgress = _syncService.CurrentProgress;
+
+                // Calculate overall progress percentage
+                double progressPercent = 0;
+                if (currentProgress.TotalItems > 0)
+                {
+                    progressPercent = (double)currentProgress.ItemsProcessed / currentProgress.TotalItems * 100;
+                }
+
+                // Clamp to 0-99 (100 is reported at the end)
+                progressPercent = Math.Min(99, Math.Max(0, progressPercent));
+
+                progress.Report(progressPercent);
+
+                await Task.Delay(500, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected when task is cancelled
+        }
+        catch (Exception)
+        {
+            // Ignore progress monitoring errors
+        }
     }
 
     /// <inheritdoc />
     public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
     {
         var config = Plugin.Instance.Configuration;
+
+        // Check schedule type
+        if (string.Equals(config.SyncScheduleType, "Daily", StringComparison.OrdinalIgnoreCase))
+        {
+            // Daily at specific time
+            int hour = Math.Clamp(config.SyncDailyHour, 0, 23);
+            int minute = Math.Clamp(config.SyncDailyMinute, 0, 59);
+
+            return new[]
+            {
+                new TaskTriggerInfo
+                {
+                    Type = TaskTriggerInfoType.DailyTrigger,
+                    TimeOfDayTicks = TimeSpan.FromHours(hour).Ticks + TimeSpan.FromMinutes(minute).Ticks,
+                },
+            };
+        }
+
+        // Default: Interval-based
         int intervalMinutes = config.SyncIntervalMinutes > 0 ? config.SyncIntervalMinutes : 60;
 
         return new[]

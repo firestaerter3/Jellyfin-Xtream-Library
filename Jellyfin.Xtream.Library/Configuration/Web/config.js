@@ -58,6 +58,12 @@ const XtreamLibraryConfig = {
             // Artwork download for unmatched
             document.getElementById('chkDownloadArtworkForUnmatched').checked = config.DownloadArtworkForUnmatched !== false;
 
+            // Schedule settings
+            document.getElementById('selSyncScheduleType').value = config.SyncScheduleType || 'Interval';
+            document.getElementById('selSyncDailyHour').value = config.SyncDailyHour || 3;
+            document.getElementById('selSyncDailyMinute').value = config.SyncDailyMinute || 0;
+            self.updateScheduleVisibility();
+
             Dashboard.hideLoadingMsg();
 
             // Auto-load categories if credentials are configured
@@ -99,6 +105,11 @@ const XtreamLibraryConfig = {
 
             // Artwork download for unmatched
             config.DownloadArtworkForUnmatched = document.getElementById('chkDownloadArtworkForUnmatched').checked;
+
+            // Schedule settings
+            config.SyncScheduleType = document.getElementById('selSyncScheduleType').value;
+            config.SyncDailyHour = parseInt(document.getElementById('selSyncDailyHour').value) || 3;
+            config.SyncDailyMinute = parseInt(document.getElementById('selSyncDailyMinute').value) || 0;
 
             ApiClient.updatePluginConfiguration(XtreamLibraryConfig.pluginUniqueId, config).then(function () {
                 Dashboard.processPluginConfigurationUpdateResult();
@@ -529,6 +540,20 @@ const XtreamLibraryConfig = {
         return div.innerHTML;
     },
 
+    updateScheduleVisibility: function () {
+        const scheduleType = document.getElementById('selSyncScheduleType').value;
+        const intervalSettings = document.getElementById('intervalSettings');
+        const dailySettings = document.getElementById('dailySettings');
+
+        if (scheduleType === 'Daily') {
+            intervalSettings.style.display = 'none';
+            dailySettings.style.display = 'block';
+        } else {
+            intervalSettings.style.display = 'block';
+            dailySettings.style.display = 'none';
+        }
+    },
+
     clearMetadataCache: function () {
         const statusSpan = document.getElementById('metadataCacheStatus');
         statusSpan.innerHTML = '<span style="color: orange;">Clearing...</span>';
@@ -657,6 +682,13 @@ function initXtreamLibraryConfig() {
         btnCleanLibraries.addEventListener('click', function (e) {
             e.preventDefault();
             XtreamLibraryConfig.cleanLibraries();
+        });
+    }
+
+    var selSyncScheduleType = document.getElementById('selSyncScheduleType');
+    if (selSyncScheduleType) {
+        selSyncScheduleType.addEventListener('change', function () {
+            XtreamLibraryConfig.updateScheduleVisibility();
         });
     }
 

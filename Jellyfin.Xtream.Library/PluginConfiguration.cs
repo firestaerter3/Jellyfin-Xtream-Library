@@ -130,4 +130,22 @@ public class PluginConfiguration : BasePluginConfiguration
     /// This ensures unmatched content still has posters and thumbnails.
     /// </summary>
     public bool DownloadArtworkForUnmatched { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the sync schedule type.
+    /// "Interval" = run every X minutes, "Daily" = run at specific time each day.
+    /// </summary>
+    public string SyncScheduleType { get; set; } = "Interval";
+
+    /// <summary>
+    /// Gets or sets the hour (0-23) to run the daily sync.
+    /// Only used when SyncScheduleType is "Daily".
+    /// </summary>
+    public int SyncDailyHour { get; set; } = 3;
+
+    /// <summary>
+    /// Gets or sets the minute (0-59) to run the daily sync.
+    /// Only used when SyncScheduleType is "Daily".
+    /// </summary>
+    public int SyncDailyMinute { get; set; } = 0;
 }
