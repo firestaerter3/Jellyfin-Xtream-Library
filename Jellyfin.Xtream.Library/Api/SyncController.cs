@@ -84,6 +84,24 @@ public class SyncController : ControllerBase
     }
 
     /// <summary>
+    /// Cancels the currently running sync operation.
+    /// </summary>
+    /// <returns>Success status.</returns>
+    [HttpPost("Cancel")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public ActionResult CancelSync()
+    {
+        var cancelled = _syncService.CancelSync();
+        if (cancelled)
+        {
+            _logger.LogInformation("Sync cancellation requested via API");
+            return Ok(new { Success = true, Message = "Sync cancellation requested." });
+        }
+
+        return Ok(new { Success = false, Message = "No sync is currently running." });
+    }
+
+    /// <summary>
     /// Gets the status of the last sync operation.
     /// </summary>
     /// <returns>The last sync result, or null if no sync has been performed.</returns>

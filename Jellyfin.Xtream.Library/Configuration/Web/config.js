@@ -133,10 +133,17 @@ const XtreamLibraryConfig = {
 
     // Progress polling interval handle
     progressInterval: null,
+    isSyncing: false,
 
     runSync: function () {
         const statusSpan = document.getElementById('syncStatus');
+        const syncBtn = document.getElementById('btnManualSync');
         const self = this;
+
+        // Update button to Cancel state
+        self.isSyncing = true;
+        syncBtn.querySelector('span').textContent = 'Cancel Sync';
+        syncBtn.style.background = '#c0392b';
 
         // Start progress polling
         self.startProgressPolling();
@@ -152,17 +159,51 @@ const XtreamLibraryConfig = {
             return response;
         }).then(function (data) {
             self.stopProgressPolling();
+            self.resetSyncButton();
             if (data.Success) {
                 statusSpan.innerHTML = '<span style="color: green;">Sync completed!</span>';
                 self.displaySyncResult(data);
             } else {
-                statusSpan.innerHTML = '<span style="color: red;">Sync failed: ' + (data.Error || 'Unknown error') + '</span>';
+                const errorMsg = data.Error || 'Unknown error';
+                if (errorMsg.toLowerCase().includes('cancel')) {
+                    statusSpan.innerHTML = '<span style="color: orange;">Sync was cancelled.</span>';
+                } else {
+                    statusSpan.innerHTML = '<span style="color: red;">Sync failed: ' + errorMsg + '</span>';
+                }
             }
         }).catch(function (error) {
             self.stopProgressPolling();
+            self.resetSyncButton();
             console.error('Sync error:', error);
             statusSpan.innerHTML = '<span style="color: red;">Sync failed: ' + (error.message || 'Check console for details') + '</span>';
         });
+    },
+
+    cancelSync: function () {
+        const statusSpan = document.getElementById('syncStatus');
+        const self = this;
+
+        statusSpan.innerHTML = '<span style="color: orange;">Cancelling sync...</span>';
+
+        fetch(ApiClient.getUrl('XtreamLibrary/Cancel'), {
+            method: 'POST',
+            headers: {
+                'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
+            }
+        }).then(function (response) {
+            return response.json();
+        }).then(function (data) {
+            // Button will reset when sync actually finishes
+        }).catch(function (error) {
+            console.error('Cancel error:', error);
+        });
+    },
+
+    resetSyncButton: function () {
+        const syncBtn = document.getElementById('btnManualSync');
+        this.isSyncing = false;
+        syncBtn.querySelector('span').textContent = 'Run Sync Now';
+        syncBtn.style.background = '';
     },
 
     startProgressPolling: function () {
@@ -567,7 +608,11 @@ function initXtreamLibraryConfig() {
     if (btnSync) {
         btnSync.addEventListener('click', function (e) {
             e.preventDefault();
-            XtreamLibraryConfig.runSync();
+            if (XtreamLibraryConfig.isSyncing) {
+                XtreamLibraryConfig.cancelSync();
+            } else {
+                XtreamLibraryConfig.runSync();
+            }
         });
     }
 

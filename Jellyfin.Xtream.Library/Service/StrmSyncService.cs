@@ -37,6 +37,7 @@ public partial class StrmSyncService
     private readonly ILibraryManager _libraryManager;
     private readonly IMetadataLookupService _metadataLookup;
     private readonly ILogger<StrmSyncService> _logger;
+    private CancellationTokenSource? _currentSyncCts;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StrmSyncService"/> class.
@@ -71,6 +72,22 @@ public partial class StrmSyncService
     /// Gets the list of failed items from the last sync that can be retried.
     /// </summary>
     public IReadOnlyList<FailedItem> FailedItems => LastSyncResult?.FailedItems ?? Array.Empty<FailedItem>();
+
+    /// <summary>
+    /// Cancels the currently running sync operation, if any.
+    /// </summary>
+    /// <returns>True if a sync was cancelled, false if no sync was running.</returns>
+    public bool CancelSync()
+    {
+        if (_currentSyncCts != null && !_currentSyncCts.IsCancellationRequested && CurrentProgress.IsRunning)
+        {
+            _logger.LogInformation("Cancelling sync operation...");
+            _currentSyncCts.Cancel();
+            return true;
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Retries syncing all failed items from the last sync.
@@ -290,6 +307,11 @@ public partial class StrmSyncService
         var config = Plugin.Instance.Configuration;
         var result = new SyncResult { StartTime = DateTime.UtcNow };
 
+        // Create linked cancellation token source for cancel support
+        _currentSyncCts?.Dispose();
+        _currentSyncCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var linkedToken = _currentSyncCts.Token;
+
         // Initialize progress tracking
         CurrentProgress.IsRunning = true;
         CurrentProgress.StartTime = DateTime.UtcNow;
@@ -338,7 +360,7 @@ public partial class StrmSyncService
             {
                 _logger.LogInformation("Syncing movies/VOD content...");
                 CurrentProgress.Phase = "Syncing Movies";
-                await SyncMoviesAsync(connectionInfo, moviesPath, syncedFiles, result, cancellationToken).ConfigureAwait(false);
+                await SyncMoviesAsync(connectionInfo, moviesPath, syncedFiles, result, linkedToken).ConfigureAwait(false);
             }
 
             // Sync Series
@@ -348,7 +370,7 @@ public partial class StrmSyncService
                 CurrentProgress.Phase = "Syncing Series";
                 CurrentProgress.CategoriesProcessed = 0;
                 CurrentProgress.TotalCategories = 0;
-                await SyncSeriesAsync(connectionInfo, seriesPath, syncedFiles, result, cancellationToken).ConfigureAwait(false);
+                await SyncSeriesAsync(connectionInfo, seriesPath, syncedFiles, result, linkedToken).ConfigureAwait(false);
             }
 
             // Cleanup orphaned files
@@ -469,6 +491,14 @@ public partial class StrmSyncService
                 await TriggerLibraryScanAsync().ConfigureAwait(false);
             }
         }
+        catch (OperationCanceledException)
+        {
+            _logger.LogInformation("Sync was cancelled");
+            result.Error = "Sync was cancelled by user";
+            result.EndTime = DateTime.UtcNow;
+            result.Success = false;
+            CurrentProgress.Phase = "Cancelled";
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Sync failed with error");
@@ -488,7 +518,14 @@ public partial class StrmSyncService
             }
 
             CurrentProgress.IsRunning = false;
-            CurrentProgress.Phase = "Complete";
+            if (CurrentProgress.Phase != "Cancelled")
+            {
+                CurrentProgress.Phase = "Complete";
+            }
+
+            // Clean up the CTS
+            _currentSyncCts?.Dispose();
+            _currentSyncCts = null;
         }
 
         LastSyncResult = result;
