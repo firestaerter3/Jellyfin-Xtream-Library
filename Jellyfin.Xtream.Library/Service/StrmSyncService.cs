@@ -35,6 +35,7 @@ public partial class StrmSyncService
 {
     private readonly IXtreamClient _client;
     private readonly ILibraryManager _libraryManager;
+    private readonly IMetadataLookupService _metadataLookup;
     private readonly ILogger<StrmSyncService> _logger;
 
     /// <summary>
@@ -42,14 +43,17 @@ public partial class StrmSyncService
     /// </summary>
     /// <param name="client">The Xtream API client.</param>
     /// <param name="libraryManager">The Jellyfin library manager.</param>
+    /// <param name="metadataLookup">The metadata lookup service.</param>
     /// <param name="logger">The logger instance.</param>
     public StrmSyncService(
         IXtreamClient client,
         ILibraryManager libraryManager,
+        IMetadataLookupService metadataLookup,
         ILogger<StrmSyncService> logger)
     {
         _client = client;
         _libraryManager = libraryManager;
+        _metadataLookup = metadataLookup;
         _logger = logger;
     }
 
@@ -410,6 +414,12 @@ public partial class StrmSyncService
                 result.EpisodesSkipped,
                 result.EpisodesDeleted);
 
+            // Flush metadata cache to disk
+            if (config.EnableMetadataLookup)
+            {
+                await _metadataLookup.FlushCacheAsync().ConfigureAwait(false);
+            }
+
             // Trigger library scan if enabled
             if (config.TriggerLibraryScan && (result.MoviesCreated > 0 || result.EpisodesCreated > 0 || result.FilesDeleted > 0))
             {
@@ -425,6 +435,16 @@ public partial class StrmSyncService
         }
         finally
         {
+            // Ensure cache is flushed even on error
+            try
+            {
+                await _metadataLookup.FlushCacheAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                // Ignore flush errors in finally
+            }
+
             CurrentProgress.IsRunning = false;
             CurrentProgress.Phase = "Complete";
         }
@@ -509,7 +529,8 @@ public partial class StrmSyncService
 
         // Process movies in parallel
         var parallelism = Math.Max(1, config.SyncParallelism);
-        _logger.LogInformation("Processing movies with parallelism={Parallelism}", parallelism);
+        var enableMetadataLookup = config.EnableMetadataLookup;
+        _logger.LogInformation("Processing movies with parallelism={Parallelism}, metadataLookup={MetadataLookup}", parallelism, enableMetadataLookup);
 
         await Parallel.ForEachAsync(
             allMovies,
@@ -525,7 +546,15 @@ public partial class StrmSyncService
                     string movieName = SanitizeFileName(stream.Name);
                     int? year = ExtractYear(stream.Name);
 
-                    string folderName = BuildMovieFolderName(movieName, year, tmdbOverrides);
+                    // Look up TMDb ID if enabled and no manual override exists
+                    int? autoLookupTmdbId = null;
+                    string baseName = year.HasValue ? $"{movieName} ({year})" : movieName;
+                    if (enableMetadataLookup && !tmdbOverrides.ContainsKey(baseName))
+                    {
+                        autoLookupTmdbId = await _metadataLookup.LookupMovieTmdbIdAsync(movieName, year, ct).ConfigureAwait(false);
+                    }
+
+                    string folderName = BuildMovieFolderName(movieName, year, tmdbOverrides, autoLookupTmdbId);
                     string movieFolder = Path.Combine(moviesPath, folderName);
                     string strmFileName = $"{folderName}.strm";
                     string strmPath = Path.Combine(movieFolder, strmFileName);
@@ -664,7 +693,8 @@ public partial class StrmSyncService
 
         // Process series in parallel
         var parallelism = Math.Max(1, config.SyncParallelism);
-        _logger.LogInformation("Processing series with parallelism={Parallelism}, smartSkip={SmartSkip}", parallelism, config.SmartSkipExisting);
+        var enableMetadataLookup = config.EnableMetadataLookup;
+        _logger.LogInformation("Processing series with parallelism={Parallelism}, smartSkip={SmartSkip}, metadataLookup={MetadataLookup}", parallelism, config.SmartSkipExisting, enableMetadataLookup);
 
         await Parallel.ForEachAsync(
             allSeries,
@@ -679,7 +709,16 @@ public partial class StrmSyncService
                 {
                     string seriesName = SanitizeFileName(series.Name);
                     int? year = ExtractYear(series.Name);
-                    string seriesFolderName = BuildSeriesFolderName(seriesName, year, tvdbOverrides);
+
+                    // Look up TVDb ID if enabled and no manual override exists
+                    int? autoLookupTvdbId = null;
+                    string baseName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
+                    if (enableMetadataLookup && !tvdbOverrides.ContainsKey(baseName))
+                    {
+                        autoLookupTvdbId = await _metadataLookup.LookupSeriesTvdbIdAsync(seriesName, year, ct).ConfigureAwait(false);
+                    }
+
+                    string seriesFolderName = BuildSeriesFolderName(seriesName, year, tvdbOverrides, autoLookupTvdbId);
                     string seriesFolder = Path.Combine(seriesPath, seriesFolderName);
                     bool isNewSeries = !Directory.Exists(seriesFolder);
 
@@ -1008,14 +1047,21 @@ public partial class StrmSyncService
     /// <param name="sanitizedName">The sanitized movie name.</param>
     /// <param name="year">Optional release year.</param>
     /// <param name="overrides">Dictionary of folder name to TMDb ID overrides.</param>
-    /// <returns>Folder name, with [tmdbid-X] suffix if override exists.</returns>
-    internal static string BuildMovieFolderName(string sanitizedName, int? year, Dictionary<string, int> overrides)
+    /// <param name="autoLookupTmdbId">Optional TMDb ID from automatic lookup.</param>
+    /// <returns>Folder name, with [tmdbid-X] suffix if override or auto-lookup exists.</returns>
+    internal static string BuildMovieFolderName(string sanitizedName, int? year, Dictionary<string, int> overrides, int? autoLookupTmdbId = null)
     {
         string baseName = year.HasValue ? $"{sanitizedName} ({year})" : sanitizedName;
 
+        // Priority: manual override > auto-lookup > no ID
         if (overrides.TryGetValue(baseName, out int tmdbId))
         {
             return $"{baseName} [tmdbid-{tmdbId}]";
+        }
+
+        if (autoLookupTmdbId.HasValue)
+        {
+            return $"{baseName} [tmdbid-{autoLookupTmdbId.Value}]";
         }
 
         return baseName;
@@ -1027,14 +1073,21 @@ public partial class StrmSyncService
     /// <param name="sanitizedName">The sanitized series name.</param>
     /// <param name="year">Optional premiere year.</param>
     /// <param name="overrides">Dictionary of folder name to TVDb ID overrides.</param>
-    /// <returns>Folder name, with [tvdbid-X] suffix if override exists.</returns>
-    internal static string BuildSeriesFolderName(string sanitizedName, int? year, Dictionary<string, int> overrides)
+    /// <param name="autoLookupTvdbId">Optional TVDb ID from automatic lookup.</param>
+    /// <returns>Folder name, with [tvdbid-X] suffix if override or auto-lookup exists.</returns>
+    internal static string BuildSeriesFolderName(string sanitizedName, int? year, Dictionary<string, int> overrides, int? autoLookupTvdbId = null)
     {
         string baseName = year.HasValue ? $"{sanitizedName} ({year})" : sanitizedName;
 
+        // Priority: manual override > auto-lookup > no ID
         if (overrides.TryGetValue(baseName, out int tvdbId))
         {
             return $"{baseName} [tvdbid-{tvdbId}]";
+        }
+
+        if (autoLookupTvdbId.HasValue)
+        {
+            return $"{baseName} [tvdbid-{autoLookupTvdbId.Value}]";
         }
 
         return baseName;
