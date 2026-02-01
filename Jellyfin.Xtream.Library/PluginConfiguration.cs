@@ -150,12 +150,26 @@ public class PluginConfiguration : BasePluginConfiguration
     public int SyncDailyMinute { get; set; } = 0;
 
     /// <summary>
+    /// Gets or sets the movie folder mode.
+    /// "Single" = all movies sync to root Movies folder.
+    /// "Multiple" = movies sync to custom subfolders based on category mappings.
+    /// </summary>
+    public string MovieFolderMode { get; set; } = "Single";
+
+    /// <summary>
     /// Gets or sets the movie folder mappings.
     /// Format: one mapping per line, "FolderName=CategoryId1,CategoryId2,CategoryId3".
     /// Categories can appear in multiple folder mappings (content synced to multiple locations).
     /// Example: "Kids=10,15,20" creates Movies/Kids/ with categories 10, 15, and 20.
     /// </summary>
     public string MovieFolderMappings { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the series folder mode.
+    /// "Single" = all series sync to root Series folder.
+    /// "Multiple" = series sync to custom subfolders based on category mappings.
+    /// </summary>
+    public string SeriesFolderMode { get; set; } = "Single";
 
     /// <summary>
     /// Gets or sets the series folder mappings.

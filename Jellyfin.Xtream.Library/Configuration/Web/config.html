@@ -48,6 +48,26 @@
             background: rgba(255,255,255,0.05);
             border-radius: 4px;
         }
+        .folder-item {
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 10px;
+            background: rgba(255,255,255,0.03);
+        }
+        .folder-item-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .folder-item-header input {
+            flex: 1;
+            max-width: 300px;
+        }
+        .folder-item .category-list {
+            max-height: 200px;
+        }
     </style>
     <div data-role="content">
         <div class="content-primary">
@@ -274,22 +294,23 @@
                         </div>
 
                         <div class="verticalSection">
-                            <h3 class="sectionTitle">Custom Folders</h3>
+                            <h3 class="sectionTitle">Folder Organization</h3>
                             <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtMovieFolderMappings">Folder Mappings (one per line)</label>
-                                <textarea is="emby-textarea" id="txtMovieFolderMappings" rows="4"
-                                    placeholder="Kids=10,15,20&#10;Documentary=30,31" style="width: 100%; font-family: monospace;"></textarea>
+                                <label class="inputLabel inputLabelUnfocused" for="selMovieFolderMode">Folder Mode</label>
+                                <select is="emby-select" id="selMovieFolderMode" name="MovieFolderMode">
+                                    <option value="Single">Single Folder (all movies in Movies/)</option>
+                                    <option value="Multiple">Multiple Folders (organize by category)</option>
+                                </select>
                                 <div class="fieldDescription">
-                                    Create subfolders under Movies for specific categories. Format: FolderName=CategoryId1,CategoryId2
-                                    <br/>A category can appear in multiple folders (content synced to all mapped locations).
-                                    <br/>Categories not mapped to any folder sync to the root Movies folder.
+                                    Single: All movies sync to root Movies folder.<br/>
+                                    Multiple: Create subfolders and assign categories to each.
                                 </div>
                             </div>
                         </div>
 
                         <div class="verticalSection">
                             <h3 class="sectionTitle">Movie Categories</h3>
-                            <div class="fieldDescription">
+                            <div class="fieldDescription" id="vodCategoryDescription">
                                 Select specific categories to sync. Leave all unchecked to sync all categories.
                             </div>
                             <div>
@@ -298,7 +319,9 @@
                                 </button>
                                 <span id="vodCategoryLoadStatus" style="margin-left: 10px;"></span>
                             </div>
-                            <div id="vodCategoriesSection" style="display: none;">
+
+                            <!-- Single folder mode: simple category selection -->
+                            <div id="vodSingleFolderSection" style="display: none;">
                                 <div class="category-actions">
                                     <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.selectAllCategories('vod')">
                                         <span>Select All</span>
@@ -308,6 +331,19 @@
                                     </button>
                                 </div>
                                 <div id="vodCategoryList" class="category-list"></div>
+                            </div>
+
+                            <!-- Multiple folders mode: folder definitions -->
+                            <div id="vodMultiFolderSection" style="display: none;">
+                                <div id="vodFolderList"></div>
+                                <div style="margin-top: 10px;">
+                                    <button is="emby-button" type="button" class="raised button-submit" onclick="XtreamLibraryConfig.addFolder('vod')">
+                                        <span>+ Add Folder</span>
+                                    </button>
+                                </div>
+                                <div class="fieldDescription" style="margin-top: 10px;">
+                                    Categories not assigned to any folder will sync to the root Movies folder.
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -341,22 +377,23 @@
                         </div>
 
                         <div class="verticalSection">
-                            <h3 class="sectionTitle">Custom Folders</h3>
+                            <h3 class="sectionTitle">Folder Organization</h3>
                             <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtSeriesFolderMappings">Folder Mappings (one per line)</label>
-                                <textarea is="emby-textarea" id="txtSeriesFolderMappings" rows="4"
-                                    placeholder="Kids=5,8,12&#10;Anime=25,26" style="width: 100%; font-family: monospace;"></textarea>
+                                <label class="inputLabel inputLabelUnfocused" for="selSeriesFolderMode">Folder Mode</label>
+                                <select is="emby-select" id="selSeriesFolderMode" name="SeriesFolderMode">
+                                    <option value="Single">Single Folder (all series in Series/)</option>
+                                    <option value="Multiple">Multiple Folders (organize by category)</option>
+                                </select>
                                 <div class="fieldDescription">
-                                    Create subfolders under Series for specific categories. Format: FolderName=CategoryId1,CategoryId2
-                                    <br/>A category can appear in multiple folders (content synced to all mapped locations).
-                                    <br/>Categories not mapped to any folder sync to the root Series folder.
+                                    Single: All series sync to root Series folder.<br/>
+                                    Multiple: Create subfolders and assign categories to each.
                                 </div>
                             </div>
                         </div>
 
                         <div class="verticalSection">
                             <h3 class="sectionTitle">Series Categories</h3>
-                            <div class="fieldDescription">
+                            <div class="fieldDescription" id="seriesCategoryDescription">
                                 Select specific categories to sync. Leave all unchecked to sync all categories.
                             </div>
                             <div>
@@ -365,7 +402,9 @@
                                 </button>
                                 <span id="seriesCategoryLoadStatus" style="margin-left: 10px;"></span>
                             </div>
-                            <div id="seriesCategoriesSection" style="display: none;">
+
+                            <!-- Single folder mode: simple category selection -->
+                            <div id="seriesSingleFolderSection" style="display: none;">
                                 <div class="category-actions">
                                     <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.selectAllCategories('series')">
                                         <span>Select All</span>
@@ -375,6 +414,19 @@
                                     </button>
                                 </div>
                                 <div id="seriesCategoryList" class="category-list"></div>
+                            </div>
+
+                            <!-- Multiple folders mode: folder definitions -->
+                            <div id="seriesMultiFolderSection" style="display: none;">
+                                <div id="seriesFolderList"></div>
+                                <div style="margin-top: 10px;">
+                                    <button is="emby-button" type="button" class="raised button-submit" onclick="XtreamLibraryConfig.addFolder('series')">
+                                        <span>+ Add Folder</span>
+                                    </button>
+                                </div>
+                                <div class="fieldDescription" style="margin-top: 10px;">
+                                    Categories not assigned to any folder will sync to the root Series folder.
+                                </div>
                             </div>
                         </div>
                     </div>

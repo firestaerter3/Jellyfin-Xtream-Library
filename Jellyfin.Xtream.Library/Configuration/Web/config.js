@@ -7,20 +7,22 @@ const XtreamLibraryConfig = {
     selectedVodCategoryIds: [],
     selectedSeriesCategoryIds: [],
 
+    // Folder definitions for multi-folder mode
+    // Each entry: { name: 'FolderName', categoryIds: [1, 2, 3] }
+    vodFolderDefinitions: [],
+    seriesFolderDefinitions: [],
+
     // Track last clicked checkbox per category type for shift+click range selection
     lastClickedIndex: { vod: null, series: null },
 
     // Tab switching
     switchTab: function (tabName) {
-        // Update tab buttons
         document.querySelectorAll('.xtream-tab').forEach(function (tab) {
             tab.classList.remove('active');
             if (tab.getAttribute('data-tab') === tabName) {
                 tab.classList.add('active');
             }
         });
-
-        // Update tab content
         document.querySelectorAll('.xtream-tab-content').forEach(function (content) {
             content.classList.remove('active');
         });
@@ -29,7 +31,6 @@ const XtreamLibraryConfig = {
 
     loadConfig: function () {
         Dashboard.showLoadingMsg();
-
         const self = this;
 
         ApiClient.getPluginConfiguration(this.pluginUniqueId).then(function (config) {
@@ -45,16 +46,20 @@ const XtreamLibraryConfig = {
             document.getElementById('chkCleanupOrphans').checked = config.CleanupOrphans !== false;
 
             // Store selected category IDs
-            XtreamLibraryConfig.selectedVodCategoryIds = config.SelectedVodCategoryIds || [];
-            XtreamLibraryConfig.selectedSeriesCategoryIds = config.SelectedSeriesCategoryIds || [];
+            self.selectedVodCategoryIds = config.SelectedVodCategoryIds || [];
+            self.selectedSeriesCategoryIds = config.SelectedSeriesCategoryIds || [];
 
             // Folder ID overrides
             document.getElementById('txtTmdbFolderIdOverrides').value = config.TmdbFolderIdOverrides || '';
             document.getElementById('txtTvdbFolderIdOverrides').value = config.TvdbFolderIdOverrides || '';
 
-            // Folder mappings
-            document.getElementById('txtMovieFolderMappings').value = config.MovieFolderMappings || '';
-            document.getElementById('txtSeriesFolderMappings').value = config.SeriesFolderMappings || '';
+            // Folder mode
+            document.getElementById('selMovieFolderMode').value = config.MovieFolderMode || 'Single';
+            document.getElementById('selSeriesFolderMode').value = config.SeriesFolderMode || 'Single';
+
+            // Parse folder mappings into definitions
+            self.vodFolderDefinitions = self.parseFolderMappings(config.MovieFolderMappings);
+            self.seriesFolderDefinitions = self.parseFolderMappings(config.SeriesFolderMappings);
 
             // Metadata lookup
             document.getElementById('chkEnableMetadataLookup').checked = config.EnableMetadataLookup || false;
@@ -68,6 +73,10 @@ const XtreamLibraryConfig = {
             document.getElementById('selSyncDailyMinute').value = config.SyncDailyMinute || 0;
             self.updateScheduleVisibility();
 
+            // Update folder mode visibility
+            self.updateFolderModeVisibility('vod');
+            self.updateFolderModeVisibility('series');
+
             Dashboard.hideLoadingMsg();
 
             // Auto-load categories if credentials are configured
@@ -77,12 +86,12 @@ const XtreamLibraryConfig = {
             }
         });
 
-        // Load last sync status
         this.loadSyncStatus();
     },
 
     saveConfig: function () {
         Dashboard.showLoadingMsg();
+        const self = this;
 
         ApiClient.getPluginConfiguration(this.pluginUniqueId).then(function (config) {
             config.BaseUrl = document.getElementById('txtBaseUrl').value.trim().replace(/\/$/, '');
@@ -96,17 +105,33 @@ const XtreamLibraryConfig = {
             config.TriggerLibraryScan = document.getElementById('chkTriggerScan').checked;
             config.CleanupOrphans = document.getElementById('chkCleanupOrphans').checked;
 
-            // Get selected category IDs from checkboxes
-            config.SelectedVodCategoryIds = XtreamLibraryConfig.getSelectedCategoryIds('vod');
-            config.SelectedSeriesCategoryIds = XtreamLibraryConfig.getSelectedCategoryIds('series');
+            // Folder mode
+            config.MovieFolderMode = document.getElementById('selMovieFolderMode').value;
+            config.SeriesFolderMode = document.getElementById('selSeriesFolderMode').value;
+
+            // Get selected category IDs based on folder mode
+            if (config.MovieFolderMode === 'Single') {
+                config.SelectedVodCategoryIds = self.getSelectedCategoryIds('vod');
+                config.MovieFolderMappings = '';
+            } else {
+                // In multi-folder mode, collect all categories from folder definitions
+                self.updateFolderDefinitionsFromUI('vod');
+                config.SelectedVodCategoryIds = self.getAllCategoryIdsFromFolders('vod');
+                config.MovieFolderMappings = self.buildFolderMappings(self.vodFolderDefinitions);
+            }
+
+            if (config.SeriesFolderMode === 'Single') {
+                config.SelectedSeriesCategoryIds = self.getSelectedCategoryIds('series');
+                config.SeriesFolderMappings = '';
+            } else {
+                self.updateFolderDefinitionsFromUI('series');
+                config.SelectedSeriesCategoryIds = self.getAllCategoryIdsFromFolders('series');
+                config.SeriesFolderMappings = self.buildFolderMappings(self.seriesFolderDefinitions);
+            }
 
             // Folder ID overrides
             config.TmdbFolderIdOverrides = document.getElementById('txtTmdbFolderIdOverrides').value;
             config.TvdbFolderIdOverrides = document.getElementById('txtTvdbFolderIdOverrides').value;
-
-            // Folder mappings
-            config.MovieFolderMappings = document.getElementById('txtMovieFolderMappings').value;
-            config.SeriesFolderMappings = document.getElementById('txtSeriesFolderMappings').value;
 
             // Metadata lookup
             config.EnableMetadataLookup = document.getElementById('chkEnableMetadataLookup').checked;
@@ -119,9 +144,202 @@ const XtreamLibraryConfig = {
             config.SyncDailyHour = parseInt(document.getElementById('selSyncDailyHour').value) || 3;
             config.SyncDailyMinute = parseInt(document.getElementById('selSyncDailyMinute').value) || 0;
 
-            ApiClient.updatePluginConfiguration(XtreamLibraryConfig.pluginUniqueId, config).then(function () {
+            ApiClient.updatePluginConfiguration(self.pluginUniqueId, config).then(function () {
                 Dashboard.processPluginConfigurationUpdateResult();
             });
+        });
+    },
+
+    // Parse folder mappings string into array of folder definitions
+    parseFolderMappings: function (mappingsStr) {
+        var result = [];
+        if (!mappingsStr) return result;
+
+        var lines = mappingsStr.split('\n');
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+            if (!line) continue;
+
+            var eqIdx = line.indexOf('=');
+            if (eqIdx <= 0) continue;
+
+            var name = line.substring(0, eqIdx).trim();
+            var idsStr = line.substring(eqIdx + 1).trim();
+            var ids = [];
+
+            var idParts = idsStr.split(',');
+            for (var j = 0; j < idParts.length; j++) {
+                var id = parseInt(idParts[j].trim());
+                if (!isNaN(id)) {
+                    ids.push(id);
+                }
+            }
+
+            if (name && ids.length > 0) {
+                result.push({ name: name, categoryIds: ids });
+            }
+        }
+        return result;
+    },
+
+    // Build folder mappings string from folder definitions
+    buildFolderMappings: function (definitions) {
+        var lines = [];
+        for (var i = 0; i < definitions.length; i++) {
+            var def = definitions[i];
+            if (def.name && def.categoryIds.length > 0) {
+                lines.push(def.name + '=' + def.categoryIds.join(','));
+            }
+        }
+        return lines.join('\n');
+    },
+
+    // Get all category IDs from folder definitions
+    getAllCategoryIdsFromFolders: function (type) {
+        var definitions = type === 'vod' ? this.vodFolderDefinitions : this.seriesFolderDefinitions;
+        var allIds = [];
+        for (var i = 0; i < definitions.length; i++) {
+            for (var j = 0; j < definitions[i].categoryIds.length; j++) {
+                var id = definitions[i].categoryIds[j];
+                if (allIds.indexOf(id) === -1) {
+                    allIds.push(id);
+                }
+            }
+        }
+        return allIds;
+    },
+
+    // Update folder definitions from UI checkboxes
+    updateFolderDefinitionsFromUI: function (type) {
+        var definitions = type === 'vod' ? this.vodFolderDefinitions : this.seriesFolderDefinitions;
+        var listId = type === 'vod' ? 'vodFolderList' : 'seriesFolderList';
+        var container = document.getElementById(listId);
+        var folderItems = container.querySelectorAll('.folder-item');
+
+        definitions.length = 0; // Clear array
+
+        folderItems.forEach(function (item, index) {
+            var nameInput = item.querySelector('.folder-name-input');
+            var checkboxes = item.querySelectorAll('input[type="checkbox"]:checked');
+            var categoryIds = [];
+
+            checkboxes.forEach(function (cb) {
+                categoryIds.push(parseInt(cb.getAttribute('data-category-id')));
+            });
+
+            if (nameInput.value.trim()) {
+                definitions.push({
+                    name: nameInput.value.trim(),
+                    categoryIds: categoryIds
+                });
+            }
+        });
+    },
+
+    // Update visibility based on folder mode
+    updateFolderModeVisibility: function (type) {
+        var modeSelect = document.getElementById(type === 'vod' ? 'selMovieFolderMode' : 'selSeriesFolderMode');
+        var singleSection = document.getElementById(type === 'vod' ? 'vodSingleFolderSection' : 'seriesSingleFolderSection');
+        var multiSection = document.getElementById(type === 'vod' ? 'vodMultiFolderSection' : 'seriesMultiFolderSection');
+        var descElem = document.getElementById(type === 'vod' ? 'vodCategoryDescription' : 'seriesCategoryDescription');
+
+        var mode = modeSelect.value;
+
+        if (mode === 'Multiple') {
+            singleSection.style.display = 'none';
+            multiSection.style.display = 'block';
+            descElem.textContent = 'Create folders and assign categories to each. Categories can be in multiple folders.';
+            this.renderFolderList(type);
+        } else {
+            singleSection.style.display = 'block';
+            multiSection.style.display = 'none';
+            descElem.textContent = 'Select specific categories to sync. Leave all unchecked to sync all categories.';
+        }
+    },
+
+    // Add a new folder definition
+    addFolder: function (type) {
+        var definitions = type === 'vod' ? this.vodFolderDefinitions : this.seriesFolderDefinitions;
+        definitions.push({ name: '', categoryIds: [] });
+        this.renderFolderList(type);
+    },
+
+    // Remove a folder definition
+    removeFolder: function (type, index) {
+        var definitions = type === 'vod' ? this.vodFolderDefinitions : this.seriesFolderDefinitions;
+        definitions.splice(index, 1);
+        this.renderFolderList(type);
+    },
+
+    // Render the folder list for multi-folder mode
+    renderFolderList: function (type) {
+        var definitions = type === 'vod' ? this.vodFolderDefinitions : this.seriesFolderDefinitions;
+        var categories = type === 'vod' ? this.vodCategories : this.seriesCategories;
+        var listId = type === 'vod' ? 'vodFolderList' : 'seriesFolderList';
+        var container = document.getElementById(listId);
+
+        if (categories.length === 0) {
+            container.innerHTML = '<div class="fieldDescription">Load categories first to configure folders.</div>';
+            return;
+        }
+
+        var html = '';
+        var self = this;
+
+        definitions.forEach(function (folder, folderIndex) {
+            html += '<div class="folder-item" data-folder-index="' + folderIndex + '">';
+            html += '<div class="folder-item-header">';
+            html += '<input type="text" class="folder-name-input" placeholder="Folder name (e.g., Kids)" value="' + self.escapeHtml(folder.name) + '" style="padding: 8px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.3); color: #fff;"/>';
+            html += '<button type="button" class="raised" onclick="XtreamLibraryConfig.removeFolder(\'' + type + '\', ' + folderIndex + ')" style="background: #c0392b; padding: 8px 12px; border: none; border-radius: 4px; color: #fff; cursor: pointer;">Remove</button>';
+            html += '</div>';
+            html += '<div class="category-list">';
+
+            categories.forEach(function (category, catIndex) {
+                var isChecked = folder.categoryIds.indexOf(category.CategoryId) !== -1 ? 'checked' : '';
+                var checkboxId = type + '_folder' + folderIndex + '_cat' + category.CategoryId;
+                html += '<div class="checkboxContainer">';
+                html += '<label class="emby-checkbox-label">';
+                html += '<input type="checkbox" id="' + checkboxId + '" ';
+                html += 'data-category-id="' + category.CategoryId + '" ';
+                html += 'data-folder-index="' + folderIndex + '" ';
+                html += 'data-category-index="' + catIndex + '" ' + isChecked + '/>';
+                html += '<span>' + self.escapeHtml(category.CategoryName) + ' <small style="opacity:0.5;">(ID: ' + category.CategoryId + ')</small></span>';
+                html += '</label>';
+                html += '</div>';
+            });
+
+            html += '</div>';
+            html += '</div>';
+        });
+
+        if (definitions.length === 0) {
+            html += '<div class="fieldDescription">No folders defined. Click "Add Folder" to create one.</div>';
+        }
+
+        container.innerHTML = html;
+
+        // Add shift+click support for each folder's category list
+        definitions.forEach(function (folder, folderIndex) {
+            var folderItem = container.querySelector('.folder-item[data-folder-index="' + folderIndex + '"]');
+            if (folderItem) {
+                var checkboxes = folderItem.querySelectorAll('input[type="checkbox"]');
+                var lastClickedIdx = null;
+
+                checkboxes.forEach(function (checkbox) {
+                    checkbox.addEventListener('click', function (e) {
+                        var currentIdx = parseInt(checkbox.getAttribute('data-category-index'));
+                        if (e.shiftKey && lastClickedIdx !== null && lastClickedIdx !== currentIdx) {
+                            var start = Math.min(lastClickedIdx, currentIdx);
+                            var end = Math.max(lastClickedIdx, currentIdx);
+                            var newState = checkbox.checked;
+                            for (var i = start; i <= end; i++) {
+                                checkboxes[i].checked = newState;
+                            }
+                        }
+                        lastClickedIdx = currentIdx;
+                    });
+                });
+            }
         });
     },
 
@@ -156,7 +374,6 @@ const XtreamLibraryConfig = {
         });
     },
 
-    // Progress polling interval handle
     progressInterval: null,
     isSyncing: false,
 
@@ -165,12 +382,9 @@ const XtreamLibraryConfig = {
         const syncBtn = document.getElementById('btnManualSync');
         const self = this;
 
-        // Update button to Cancel state
         self.isSyncing = true;
         syncBtn.querySelector('span').textContent = 'Cancel Sync';
         syncBtn.style.background = '#c0392b';
-
-        // Start progress polling
         self.startProgressPolling();
 
         ApiClient.fetch({
@@ -206,8 +420,6 @@ const XtreamLibraryConfig = {
 
     cancelSync: function () {
         const statusSpan = document.getElementById('syncStatus');
-        const self = this;
-
         statusSpan.innerHTML = '<span style="color: orange;">Cancelling sync...</span>';
 
         fetch(ApiClient.getUrl('XtreamLibrary/Cancel'), {
@@ -217,8 +429,6 @@ const XtreamLibraryConfig = {
             }
         }).then(function (response) {
             return response.json();
-        }).then(function (data) {
-            // Button will reset when sync actually finishes
         }).catch(function (error) {
             console.error('Cancel error:', error);
         });
@@ -234,11 +444,8 @@ const XtreamLibraryConfig = {
     startProgressPolling: function () {
         const self = this;
         const statusSpan = document.getElementById('syncStatus');
-
-        // Initial display
         statusSpan.innerHTML = '<span style="color: orange;">Starting sync...</span>';
 
-        // Poll every 500ms
         self.progressInterval = setInterval(function () {
             fetch(ApiClient.getUrl('XtreamLibrary/Progress'), {
                 method: 'GET',
@@ -251,9 +458,7 @@ const XtreamLibraryConfig = {
                 if (progress && progress.IsRunning) {
                     self.displayProgress(progress);
                 }
-            }).catch(function () {
-                // Ignore polling errors
-            });
+            }).catch(function () {});
         }, 500);
     },
 
@@ -267,40 +472,28 @@ const XtreamLibraryConfig = {
     displayProgress: function (progress) {
         const statusSpan = document.getElementById('syncStatus');
         let html = '<span style="color: orange;">';
-
-        // Phase and current category
         html += progress.Phase;
         if (progress.CurrentItem) {
             html += ': ' + this.escapeHtml(progress.CurrentItem);
         }
-
-        // Category progress
         if (progress.TotalCategories > 0) {
             html += '<br/>Categories: ' + progress.CategoriesProcessed + '/' + progress.TotalCategories;
         }
-
-        // Item progress within current category
         if (progress.TotalItems > 0) {
             html += ' | Items: ' + progress.ItemsProcessed + '/' + progress.TotalItems;
         }
-
-        // Created counts
         const created = [];
-        if (progress.MoviesCreated > 0) {
-            created.push(progress.MoviesCreated + ' movies');
-        }
-        if (progress.EpisodesCreated > 0) {
-            created.push(progress.EpisodesCreated + ' episodes');
-        }
+        if (progress.MoviesCreated > 0) created.push(progress.MoviesCreated + ' movies');
+        if (progress.EpisodesCreated > 0) created.push(progress.EpisodesCreated + ' episodes');
         if (created.length > 0) {
             html += '<br/>Created: ' + created.join(', ');
         }
-
         html += '</span>';
         statusSpan.innerHTML = html;
     },
 
     loadSyncStatus: function () {
+        const self = this;
         ApiClient.fetch({
             url: ApiClient.getUrl('XtreamLibrary/Status'),
             type: 'GET',
@@ -312,11 +505,9 @@ const XtreamLibraryConfig = {
             return response;
         }).then(function (data) {
             if (data) {
-                XtreamLibraryConfig.displaySyncResult(data);
+                self.displaySyncResult(data);
             }
-        }).catch(function () {
-            // No previous sync, ignore
-        });
+        }).catch(function () {});
     },
 
     displaySyncResult: function (result) {
@@ -331,29 +522,17 @@ const XtreamLibraryConfig = {
         const status = result.Success ? '<span style="color: green;">Success</span>' : '<span style="color: red;">Failed</span>';
 
         let html = '<strong>Last Sync:</strong> ' + startTime + ' - ' + status + '<br/><br/>';
-
-        // Movies section
         html += '<strong>Movies</strong><br/>';
         html += '&nbsp;&nbsp;Total: ' + (result.TotalMovies || (result.MoviesCreated + result.MoviesSkipped)) + '<br/>';
-        html += '&nbsp;&nbsp;' + result.MoviesCreated + ' added, ' + (result.MoviesDeleted || 0) + ' deleted';
-        html += '<br/><br/>';
-
-        // Series section
+        html += '&nbsp;&nbsp;' + result.MoviesCreated + ' added, ' + (result.MoviesDeleted || 0) + ' deleted<br/><br/>';
         html += '<strong>Series</strong><br/>';
         html += '&nbsp;&nbsp;Total: ' + (result.TotalSeries || (result.SeriesCreated + result.SeriesSkipped) || 0) + '<br/>';
-        html += '&nbsp;&nbsp;' + (result.SeriesCreated || 0) + ' added, ' + (result.SeriesDeleted || 0) + ' deleted';
-        html += '<br/>';
-
-        // Seasons
+        html += '&nbsp;&nbsp;' + (result.SeriesCreated || 0) + ' added, ' + (result.SeriesDeleted || 0) + ' deleted<br/>';
         html += '&nbsp;&nbsp;Seasons: ' + (result.TotalSeasons || (result.SeasonsCreated + result.SeasonsSkipped) || 0) + ' total';
-        html += ', ' + (result.SeasonsCreated || 0) + ' added, ' + (result.SeasonsDeleted || 0) + ' deleted';
-        html += '<br/>';
-
-        // Episodes
+        html += ', ' + (result.SeasonsCreated || 0) + ' added, ' + (result.SeasonsDeleted || 0) + ' deleted<br/>';
         html += '&nbsp;&nbsp;Episodes: ' + (result.TotalEpisodes || (result.EpisodesCreated + result.EpisodesSkipped)) + ' total';
         html += ', ' + result.EpisodesCreated + ' added, ' + (result.EpisodesDeleted || 0) + ' deleted';
 
-        // Errors
         if (result.Errors > 0) {
             html += '<br/><br/><span style="color: orange;"><strong>Errors:</strong> ' + result.Errors + '</span>';
         }
@@ -362,8 +541,6 @@ const XtreamLibraryConfig = {
         }
 
         infoDiv.innerHTML = html;
-
-        // Update failed items display
         this.updateFailedItemsDisplay(result.FailedItems || []);
     },
 
@@ -412,7 +589,6 @@ const XtreamLibraryConfig = {
         }).then(function (data) {
             if (data.Success) {
                 statusSpan.innerHTML = '<span style="color: green;">Retry completed!</span>';
-                // Reload status to get updated results
                 self.loadSyncStatus();
             } else {
                 statusSpan.innerHTML = '<span style="color: red;">Retry failed: ' + (data.Error || 'Unknown error') + '</span>';
@@ -426,7 +602,6 @@ const XtreamLibraryConfig = {
     loadVodCategories: function () {
         const statusSpan = document.getElementById('vodCategoryLoadStatus');
         statusSpan.innerHTML = '<span style="color: orange;">Loading...</span>';
-
         const self = this;
 
         fetch(ApiClient.getUrl('XtreamLibrary/Categories/Vod'), {
@@ -438,8 +613,14 @@ const XtreamLibraryConfig = {
             return r.ok ? r.json() : Promise.reject(r);
         }).then(function (categories) {
             self.vodCategories = categories || [];
-            self.renderCategoryList('vod', self.vodCategories, self.selectedVodCategoryIds);
-            document.getElementById('vodCategoriesSection').style.display = 'block';
+            var mode = document.getElementById('selMovieFolderMode').value;
+            if (mode === 'Single') {
+                self.renderCategoryList('vod', self.vodCategories, self.selectedVodCategoryIds);
+                document.getElementById('vodSingleFolderSection').style.display = 'block';
+            } else {
+                self.renderFolderList('vod');
+                document.getElementById('vodMultiFolderSection').style.display = 'block';
+            }
             statusSpan.innerHTML = '<span style="color: green;">Loaded ' + self.vodCategories.length + ' categories</span>';
         }).catch(function (error) {
             console.error('Failed to load VOD categories:', error);
@@ -450,7 +631,6 @@ const XtreamLibraryConfig = {
     loadSeriesCategories: function () {
         const statusSpan = document.getElementById('seriesCategoryLoadStatus');
         statusSpan.innerHTML = '<span style="color: orange;">Loading...</span>';
-
         const self = this;
 
         fetch(ApiClient.getUrl('XtreamLibrary/Categories/Series'), {
@@ -462,8 +642,14 @@ const XtreamLibraryConfig = {
             return r.ok ? r.json() : Promise.reject(r);
         }).then(function (categories) {
             self.seriesCategories = categories || [];
-            self.renderCategoryList('series', self.seriesCategories, self.selectedSeriesCategoryIds);
-            document.getElementById('seriesCategoriesSection').style.display = 'block';
+            var mode = document.getElementById('selSeriesFolderMode').value;
+            if (mode === 'Single') {
+                self.renderCategoryList('series', self.seriesCategories, self.selectedSeriesCategoryIds);
+                document.getElementById('seriesSingleFolderSection').style.display = 'block';
+            } else {
+                self.renderFolderList('series');
+                document.getElementById('seriesMultiFolderSection').style.display = 'block';
+            }
             statusSpan.innerHTML = '<span style="color: green;">Loaded ' + self.seriesCategories.length + ' categories</span>';
         }).catch(function (error) {
             console.error('Failed to load Series categories:', error);
@@ -481,15 +667,16 @@ const XtreamLibraryConfig = {
         }
 
         let html = '';
+        const self = this;
         categories.forEach(function (category, index) {
-            const isChecked = selectedIds.includes(category.CategoryId) ? 'checked' : '';
+            const isChecked = selectedIds.indexOf(category.CategoryId) !== -1 ? 'checked' : '';
             const checkboxId = type + 'Cat_' + category.CategoryId;
             html += '<div class="checkboxContainer">';
             html += '<label class="emby-checkbox-label">';
             html += '<input is="emby-checkbox" type="checkbox" id="' + checkboxId + '" ';
             html += 'data-category-id="' + category.CategoryId + '" data-category-type="' + type + '" ';
             html += 'data-index="' + index + '" ' + isChecked + '/>';
-            html += '<span>' + XtreamLibraryConfig.escapeHtml(category.CategoryName) + '</span>';
+            html += '<span>' + self.escapeHtml(category.CategoryName) + ' <small style="opacity:0.5;">(ID: ' + category.CategoryId + ')</small></span>';
             html += '</label>';
             html += '</div>';
         });
@@ -497,7 +684,6 @@ const XtreamLibraryConfig = {
         container.innerHTML = html;
 
         // Add shift+click range selection support
-        const self = this;
         const checkboxes = container.querySelectorAll('input[type="checkbox"]');
         checkboxes.forEach(function (checkbox) {
             checkbox.addEventListener('click', function (e) {
@@ -508,12 +694,10 @@ const XtreamLibraryConfig = {
                     const start = Math.min(lastIndex, currentIndex);
                     const end = Math.max(lastIndex, currentIndex);
                     const newState = checkbox.checked;
-
                     for (let i = start; i <= end; i++) {
                         checkboxes[i].checked = newState;
                     }
                 }
-
                 self.lastClickedIndex[type] = currentIndex;
             });
         });
@@ -697,6 +881,21 @@ function initXtreamLibraryConfig() {
     if (selSyncScheduleType) {
         selSyncScheduleType.addEventListener('change', function () {
             XtreamLibraryConfig.updateScheduleVisibility();
+        });
+    }
+
+    // Folder mode change handlers
+    var selMovieFolderMode = document.getElementById('selMovieFolderMode');
+    if (selMovieFolderMode) {
+        selMovieFolderMode.addEventListener('change', function () {
+            XtreamLibraryConfig.updateFolderModeVisibility('vod');
+        });
+    }
+
+    var selSeriesFolderMode = document.getElementById('selSeriesFolderMode');
+    if (selSeriesFolderMode) {
+        selSeriesFolderMode.addEventListener('change', function () {
+            XtreamLibraryConfig.updateFolderModeVisibility('series');
         });
     }
 
