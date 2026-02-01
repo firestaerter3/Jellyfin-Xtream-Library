@@ -913,6 +913,20 @@ public partial class StrmSyncService
                             Interlocked.Increment(ref episodesCreated);
                             seasonHasNewEpisodes = true;
                             seriesHasNewEpisodes = true;
+
+                            // Download episode thumbnail for unmatched series
+                            if (!autoLookupTvdbId.HasValue && !tvdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched)
+                            {
+                                var episodeThumbUrl = episode.Info?.MovieImage;
+                                if (!string.IsNullOrEmpty(episodeThumbUrl))
+                                {
+                                    // Jellyfin expects episode art named same as video file but with image extension
+                                    var episodeThumbName = Path.GetFileNameWithoutExtension(episodeFileName);
+                                    var thumbExt = GetImageExtension(episodeThumbUrl);
+                                    var thumbPath = Path.Combine(seasonFolder, $"{episodeThumbName}-thumb{thumbExt}");
+                                    await DownloadImageAsync(episodeThumbUrl, thumbPath, ct).ConfigureAwait(false);
+                                }
+                            }
                         }
 
                         // Track season created/skipped (only count each season once)
@@ -925,6 +939,19 @@ public partial class StrmSyncService
                             else
                             {
                                 Interlocked.Increment(ref seasonsSkipped);
+                            }
+                        }
+
+                        // Download season poster for unmatched series
+                        if (!autoLookupTvdbId.HasValue && !tvdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched && isNewSeason && seasonHasNewEpisodes)
+                        {
+                            var season = seriesInfo.Seasons.FirstOrDefault(s => s.SeasonNumber == seasonNumber);
+                            var seasonCoverUrl = season?.CoverBig ?? season?.Cover;
+                            if (!string.IsNullOrEmpty(seasonCoverUrl))
+                            {
+                                var seasonPosterExt = GetImageExtension(seasonCoverUrl);
+                                var seasonPosterPath = Path.Combine(seasonFolder, $"poster{seasonPosterExt}");
+                                await DownloadImageAsync(seasonCoverUrl, seasonPosterPath, ct).ConfigureAwait(false);
                             }
                         }
                     }
