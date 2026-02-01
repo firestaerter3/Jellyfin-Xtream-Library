@@ -274,6 +274,20 @@
                         </div>
 
                         <div class="verticalSection">
+                            <h3 class="sectionTitle">Custom Folders</h3>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtMovieFolderMappings">Folder Mappings (one per line)</label>
+                                <textarea is="emby-textarea" id="txtMovieFolderMappings" rows="4"
+                                    placeholder="Kids=10,15,20&#10;Documentary=30,31" style="width: 100%; font-family: monospace;"></textarea>
+                                <div class="fieldDescription">
+                                    Create subfolders under Movies for specific categories. Format: FolderName=CategoryId1,CategoryId2
+                                    <br/>A category can appear in multiple folders (content synced to all mapped locations).
+                                    <br/>Categories not mapped to any folder sync to the root Movies folder.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="verticalSection">
                             <h3 class="sectionTitle">Movie Categories</h3>
                             <div class="fieldDescription">
                                 Select specific categories to sync. Leave all unchecked to sync all categories.
@@ -322,6 +336,20 @@
                                 <div class="fieldDescription">
                                     Force specific TVDb IDs for folders that don't match automatically.
                                     Format: FolderName=TvdbID (one per line). Find IDs at thetvdb.com.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="verticalSection">
+                            <h3 class="sectionTitle">Custom Folders</h3>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtSeriesFolderMappings">Folder Mappings (one per line)</label>
+                                <textarea is="emby-textarea" id="txtSeriesFolderMappings" rows="4"
+                                    placeholder="Kids=5,8,12&#10;Anime=25,26" style="width: 100%; font-family: monospace;"></textarea>
+                                <div class="fieldDescription">
+                                    Create subfolders under Series for specific categories. Format: FolderName=CategoryId1,CategoryId2
+                                    <br/>A category can appear in multiple folders (content synced to all mapped locations).
+                                    <br/>Categories not mapped to any folder sync to the root Series folder.
                                 </div>
                             </div>
                         </div>

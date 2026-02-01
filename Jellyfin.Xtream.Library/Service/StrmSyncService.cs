@@ -569,10 +569,18 @@ public partial class StrmSyncService
             categories = filteredCategories;
         }
 
-        // Collect all unique movies from all categories first
+        // Parse folder mappings (category ID → folder names)
+        var folderMappings = ParseFolderMappings(config.MovieFolderMappings);
+        if (folderMappings.Count > 0)
+        {
+            _logger.LogInformation("Loaded movie folder mappings for {Count} categories", folderMappings.Count);
+        }
+
+        // Collect all unique movies from all categories, tracking category membership
         _logger.LogInformation("Collecting movies from {Count} categories...", categories.Count);
         CurrentProgress.Phase = "Collecting movies";
-        var allMovies = new List<StreamInfo>();
+        var allMovies = new List<(StreamInfo Stream, HashSet<int> CategoryIds)>();
+        var movieCategoryMap = new Dictionary<int, HashSet<int>>(); // streamId → categoryIds
 
         foreach (var category in categories)
         {
@@ -583,7 +591,14 @@ public partial class StrmSyncService
             {
                 if (processedStreamIds.TryAdd(stream.StreamId, true))
                 {
-                    allMovies.Add(stream);
+                    var categorySet = new HashSet<int> { category.CategoryId };
+                    movieCategoryMap[stream.StreamId] = categorySet;
+                    allMovies.Add((stream, categorySet));
+                }
+                else if (movieCategoryMap.TryGetValue(stream.StreamId, out var existingCategories))
+                {
+                    // Movie already exists, add this category to its set
+                    existingCategories.Add(category.CategoryId);
                 }
             }
         }
@@ -623,8 +638,11 @@ public partial class StrmSyncService
                 MaxDegreeOfParallelism = parallelism,
                 CancellationToken = cancellationToken,
             },
-            async (stream, ct) =>
+            async (movieEntry, ct) =>
             {
+                var stream = movieEntry.Stream;
+                var categoryIds = movieEntry.CategoryIds;
+
                 try
                 {
                     string movieName = SanitizeFileName(stream.Name);
@@ -644,44 +662,84 @@ public partial class StrmSyncService
                     }
 
                     string folderName = BuildMovieFolderName(movieName, year, tmdbOverrides, autoLookupTmdbId);
-                    string movieFolder = Path.Combine(moviesPath, folderName);
-                    string strmFileName = $"{folderName}.strm";
-                    string strmPath = Path.Combine(movieFolder, strmFileName);
 
-                    lock (syncedFilesLock)
+                    // Determine target folders based on category mappings
+                    var targetFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var categoryId in categoryIds)
                     {
-                        syncedFiles.Add(strmPath);
-                    }
-
-                    if (File.Exists(strmPath))
-                    {
-                        Interlocked.Increment(ref moviesSkipped);
-                        return;
-                    }
-
-                    // Create movie folder
-                    Directory.CreateDirectory(movieFolder);
-
-                    // Build stream URL
-                    string extension = string.IsNullOrEmpty(stream.ContainerExtension) ? "mp4" : stream.ContainerExtension;
-                    string streamUrl = $"{connectionInfo.BaseUrl}/movie/{connectionInfo.UserName}/{connectionInfo.Password}/{stream.StreamId}.{extension}";
-
-                    // Write STRM file
-                    await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
-                    Interlocked.Increment(ref moviesCreated);
-
-                    // Download artwork for unmatched movies
-                    if (!autoLookupTmdbId.HasValue && !tmdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched)
-                    {
-                        if (!string.IsNullOrEmpty(stream.StreamIcon))
+                        if (folderMappings.TryGetValue(categoryId, out var mappedFolders))
                         {
-                            var posterExt = GetImageExtension(stream.StreamIcon);
-                            var posterPath = Path.Combine(movieFolder, $"poster{posterExt}");
-                            await DownloadImageAsync(stream.StreamIcon, posterPath, ct).ConfigureAwait(false);
+                            foreach (var folder in mappedFolders)
+                            {
+                                targetFolders.Add(folder);
+                            }
                         }
                     }
 
-                    _logger.LogDebug("Created movie STRM: {StrmPath}", strmPath);
+                    // If no folder mappings, sync to root movies folder
+                    if (targetFolders.Count == 0)
+                    {
+                        targetFolders.Add(string.Empty);
+                    }
+
+                    // Build stream URL (same for all copies)
+                    string extension = string.IsNullOrEmpty(stream.ContainerExtension) ? "mp4" : stream.ContainerExtension;
+                    string streamUrl = $"{connectionInfo.BaseUrl}/movie/{connectionInfo.UserName}/{connectionInfo.Password}/{stream.StreamId}.{extension}";
+
+                    bool anyCreated = false;
+                    bool allSkipped = true;
+
+                    // Sync to each target folder
+                    foreach (var targetFolder in targetFolders)
+                    {
+                        string movieBasePath = string.IsNullOrEmpty(targetFolder)
+                            ? moviesPath
+                            : Path.Combine(moviesPath, targetFolder);
+                        string movieFolder = Path.Combine(movieBasePath, folderName);
+                        string strmFileName = $"{folderName}.strm";
+                        string strmPath = Path.Combine(movieFolder, strmFileName);
+
+                        lock (syncedFilesLock)
+                        {
+                            syncedFiles.Add(strmPath);
+                        }
+
+                        if (File.Exists(strmPath))
+                        {
+                            continue;
+                        }
+
+                        allSkipped = false;
+
+                        // Create movie folder
+                        Directory.CreateDirectory(movieFolder);
+
+                        // Write STRM file
+                        await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
+                        anyCreated = true;
+
+                        // Download artwork for unmatched movies
+                        if (!autoLookupTmdbId.HasValue && !tmdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched)
+                        {
+                            if (!string.IsNullOrEmpty(stream.StreamIcon))
+                            {
+                                var posterExt = GetImageExtension(stream.StreamIcon);
+                                var posterPath = Path.Combine(movieFolder, $"poster{posterExt}");
+                                await DownloadImageAsync(stream.StreamIcon, posterPath, ct).ConfigureAwait(false);
+                            }
+                        }
+
+                        _logger.LogDebug("Created movie STRM: {StrmPath}", strmPath);
+                    }
+
+                    if (anyCreated)
+                    {
+                        Interlocked.Increment(ref moviesCreated);
+                    }
+                    else if (allSkipped)
+                    {
+                        Interlocked.Increment(ref moviesSkipped);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -755,10 +813,18 @@ public partial class StrmSyncService
             categories = filteredCategories;
         }
 
-        // Collect all unique series from all categories first
+        // Parse folder mappings (category ID → folder names)
+        var folderMappings = ParseFolderMappings(config.SeriesFolderMappings);
+        if (folderMappings.Count > 0)
+        {
+            _logger.LogInformation("Loaded series folder mappings for {Count} categories", folderMappings.Count);
+        }
+
+        // Collect all unique series from all categories, tracking category membership
         _logger.LogInformation("Collecting series from {Count} categories...", categories.Count);
         CurrentProgress.Phase = "Collecting series";
-        var allSeries = new List<Series>();
+        var allSeries = new List<(Series Series, HashSet<int> CategoryIds)>();
+        var seriesCategoryMap = new Dictionary<int, HashSet<int>>(); // seriesId → categoryIds
 
         foreach (var category in categories)
         {
@@ -769,7 +835,14 @@ public partial class StrmSyncService
             {
                 if (processedSeriesIds.TryAdd(series.SeriesId, true))
                 {
-                    allSeries.Add(series);
+                    var categorySet = new HashSet<int> { category.CategoryId };
+                    seriesCategoryMap[series.SeriesId] = categorySet;
+                    allSeries.Add((series, categorySet));
+                }
+                else if (seriesCategoryMap.TryGetValue(series.SeriesId, out var existingCategories))
+                {
+                    // Series already exists, add this category to its set
+                    existingCategories.Add(category.CategoryId);
                 }
             }
         }
@@ -815,8 +888,11 @@ public partial class StrmSyncService
                 MaxDegreeOfParallelism = parallelism,
                 CancellationToken = cancellationToken,
             },
-            async (series, ct) =>
+            async (seriesEntry, ct) =>
             {
+                var series = seriesEntry.Series;
+                var categoryIds = seriesEntry.CategoryIds;
+
                 try
                 {
                     string seriesName = SanitizeFileName(series.Name);
@@ -836,33 +912,77 @@ public partial class StrmSyncService
                     }
 
                     string seriesFolderName = BuildSeriesFolderName(seriesName, year, tvdbOverrides, autoLookupTvdbId);
-                    string seriesFolder = Path.Combine(seriesPath, seriesFolderName);
-                    bool isNewSeries = !Directory.Exists(seriesFolder);
 
-                    // Smart skip: if series folder exists and has STRM files, skip API call
-                    if (config.SmartSkipExisting && Directory.Exists(seriesFolder))
+                    // Determine target folders based on category mappings
+                    var targetFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var categoryId in categoryIds)
                     {
-                        var existingStrms = Directory.GetFiles(seriesFolder, "*.strm", SearchOption.AllDirectories);
-                        if (existingStrms.Length > 0)
+                        if (folderMappings.TryGetValue(categoryId, out var mappedFolders))
                         {
-                            // Add existing files to synced set (for orphan protection)
-                            lock (syncedFilesLock)
+                            foreach (var folder in mappedFolders)
                             {
-                                foreach (var strm in existingStrms)
-                                {
-                                    syncedFiles.Add(strm);
-                                }
+                                targetFolders.Add(folder);
                             }
-
-                            // Count existing seasons
-                            var existingSeasons = Directory.GetDirectories(seriesFolder, "Season *").Length;
-                            Interlocked.Add(ref seasonsSkipped, existingSeasons);
-                            Interlocked.Add(ref episodesSkipped, existingStrms.Length);
-                            Interlocked.Increment(ref seriesSkipped);
-                            Interlocked.Increment(ref smartSkipped);
-                            CurrentProgress.ItemsProcessed++;
-                            return;
                         }
+                    }
+
+                    // If no folder mappings, sync to root series folder
+                    if (targetFolders.Count == 0)
+                    {
+                        targetFolders.Add(string.Empty);
+                    }
+
+                    // Check smart skip for all target folders
+                    bool anyNeedsSync = false;
+                    foreach (var targetFolder in targetFolders)
+                    {
+                        string seriesBasePath = string.IsNullOrEmpty(targetFolder)
+                            ? seriesPath
+                            : Path.Combine(seriesPath, targetFolder);
+                        string seriesFolderPath = Path.Combine(seriesBasePath, seriesFolderName);
+
+                        if (!config.SmartSkipExisting || !Directory.Exists(seriesFolderPath))
+                        {
+                            anyNeedsSync = true;
+                            break;
+                        }
+
+                        var existingStrms = Directory.GetFiles(seriesFolderPath, "*.strm", SearchOption.AllDirectories);
+                        if (existingStrms.Length == 0)
+                        {
+                            anyNeedsSync = true;
+                            break;
+                        }
+
+                        // Add existing files to synced set (for orphan protection)
+                        lock (syncedFilesLock)
+                        {
+                            foreach (var strm in existingStrms)
+                            {
+                                syncedFiles.Add(strm);
+                            }
+                        }
+                    }
+
+                    if (!anyNeedsSync)
+                    {
+                        // All target folders have existing content - count as smart skipped
+                        foreach (var targetFolder in targetFolders)
+                        {
+                            string seriesBasePath = string.IsNullOrEmpty(targetFolder)
+                                ? seriesPath
+                                : Path.Combine(seriesPath, targetFolder);
+                            string seriesFolderPath = Path.Combine(seriesBasePath, seriesFolderName);
+                            var existingStrms = Directory.GetFiles(seriesFolderPath, "*.strm", SearchOption.AllDirectories);
+                            var existingSeasonsCount = Directory.GetDirectories(seriesFolderPath, "Season *").Length;
+                            Interlocked.Add(ref seasonsSkipped, existingSeasonsCount);
+                            Interlocked.Add(ref episodesSkipped, existingStrms.Length);
+                        }
+
+                        Interlocked.Increment(ref seriesSkipped);
+                        Interlocked.Increment(ref smartSkipped);
+                        CurrentProgress.ItemsProcessed++;
+                        return;
                     }
 
                     // Fetch episode info from API
@@ -876,115 +996,124 @@ public partial class StrmSyncService
 
                     bool seriesHasNewEpisodes = false;
 
-                    foreach (var seasonEntry in seriesInfo.Episodes)
+                    // Sync to each target folder
+                    foreach (var targetFolder in targetFolders)
                     {
-                        int seasonNumber = seasonEntry.Key;
-                        var episodes = seasonEntry.Value;
-                        string seasonFolder = Path.Combine(seriesFolder, $"Season {seasonNumber}");
-                        bool isNewSeason = !Directory.Exists(seasonFolder);
+                        string seriesBasePath = string.IsNullOrEmpty(targetFolder)
+                            ? seriesPath
+                            : Path.Combine(seriesPath, targetFolder);
+                        string seriesFolderPath = Path.Combine(seriesBasePath, seriesFolderName);
+                        bool isNewSeries = !Directory.Exists(seriesFolderPath);
 
-                        bool seasonHasNewEpisodes = false;
-
-                        foreach (var episode in episodes)
+                        foreach (var seasonEntry in seriesInfo.Episodes)
                         {
-                            string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode);
-                            string strmPath = Path.Combine(seasonFolder, episodeFileName);
+                            int seasonNumber = seasonEntry.Key;
+                            var episodes = seasonEntry.Value;
+                            string seasonFolder = Path.Combine(seriesFolderPath, $"Season {seasonNumber}");
+                            bool isNewSeason = !Directory.Exists(seasonFolder);
 
-                            lock (syncedFilesLock)
+                            bool seasonHasNewEpisodes = false;
+
+                            foreach (var episode in episodes)
                             {
-                                syncedFiles.Add(strmPath);
-                            }
+                                string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode);
+                                string strmPath = Path.Combine(seasonFolder, episodeFileName);
 
-                            if (File.Exists(strmPath))
-                            {
-                                Interlocked.Increment(ref episodesSkipped);
-                                continue;
-                            }
-
-                            // Create season folder
-                            Directory.CreateDirectory(seasonFolder);
-
-                            // Build stream URL
-                            string extension = string.IsNullOrEmpty(episode.ContainerExtension) ? "mkv" : episode.ContainerExtension;
-                            string streamUrl = $"{connectionInfo.BaseUrl}/series/{connectionInfo.UserName}/{connectionInfo.Password}/{episode.EpisodeId}.{extension}";
-
-                            // Write STRM file
-                            await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
-                            Interlocked.Increment(ref episodesCreated);
-                            seasonHasNewEpisodes = true;
-                            seriesHasNewEpisodes = true;
-
-                            // Download episode thumbnail for unmatched series
-                            if (!autoLookupTvdbId.HasValue && !tvdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched)
-                            {
-                                var episodeThumbUrl = episode.Info?.MovieImage;
-                                if (!string.IsNullOrEmpty(episodeThumbUrl))
+                                lock (syncedFilesLock)
                                 {
-                                    // Jellyfin expects episode art named same as video file but with image extension
-                                    var episodeThumbName = Path.GetFileNameWithoutExtension(episodeFileName);
-                                    var thumbExt = GetImageExtension(episodeThumbUrl);
-                                    var thumbPath = Path.Combine(seasonFolder, $"{episodeThumbName}-thumb{thumbExt}");
-                                    await DownloadImageAsync(episodeThumbUrl, thumbPath, ct).ConfigureAwait(false);
+                                    syncedFiles.Add(strmPath);
+                                }
+
+                                if (File.Exists(strmPath))
+                                {
+                                    Interlocked.Increment(ref episodesSkipped);
+                                    continue;
+                                }
+
+                                // Create season folder
+                                Directory.CreateDirectory(seasonFolder);
+
+                                // Build stream URL
+                                string extension = string.IsNullOrEmpty(episode.ContainerExtension) ? "mkv" : episode.ContainerExtension;
+                                string streamUrl = $"{connectionInfo.BaseUrl}/series/{connectionInfo.UserName}/{connectionInfo.Password}/{episode.EpisodeId}.{extension}";
+
+                                // Write STRM file
+                                await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
+                                Interlocked.Increment(ref episodesCreated);
+                                seasonHasNewEpisodes = true;
+                                seriesHasNewEpisodes = true;
+
+                                // Download episode thumbnail for unmatched series
+                                if (!autoLookupTvdbId.HasValue && !tvdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched)
+                                {
+                                    var episodeThumbUrl = episode.Info?.MovieImage;
+                                    if (!string.IsNullOrEmpty(episodeThumbUrl))
+                                    {
+                                        var episodeThumbName = Path.GetFileNameWithoutExtension(episodeFileName);
+                                        var thumbExt = GetImageExtension(episodeThumbUrl);
+                                        var thumbPath = Path.Combine(seasonFolder, $"{episodeThumbName}-thumb{thumbExt}");
+                                        await DownloadImageAsync(episodeThumbUrl, thumbPath, ct).ConfigureAwait(false);
+                                    }
+                                }
+                            }
+
+                            // Track season created/skipped (only count each season once)
+                            if (processedSeasons.TryAdd(seasonFolder, true))
+                            {
+                                if (isNewSeason && seasonHasNewEpisodes)
+                                {
+                                    Interlocked.Increment(ref seasonsCreated);
+                                }
+                                else
+                                {
+                                    Interlocked.Increment(ref seasonsSkipped);
+                                }
+                            }
+
+                            // Download season poster for unmatched series
+                            if (!autoLookupTvdbId.HasValue && !tvdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched && isNewSeason && seasonHasNewEpisodes)
+                            {
+                                var season = seriesInfo.Seasons.FirstOrDefault(s => s.SeasonNumber == seasonNumber);
+                                var seasonCoverUrl = season?.CoverBig ?? season?.Cover;
+                                if (!string.IsNullOrEmpty(seasonCoverUrl))
+                                {
+                                    var seasonPosterExt = GetImageExtension(seasonCoverUrl);
+                                    var seasonPosterPath = Path.Combine(seasonFolder, $"poster{seasonPosterExt}");
+                                    await DownloadImageAsync(seasonCoverUrl, seasonPosterPath, ct).ConfigureAwait(false);
                                 }
                             }
                         }
 
-                        // Track season created/skipped (only count each season once)
-                        if (processedSeasons.TryAdd(seasonFolder, true))
+                        // Download artwork for unmatched series in this folder
+                        if (!autoLookupTvdbId.HasValue && !tvdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched && seriesHasNewEpisodes && isNewSeries)
                         {
-                            if (isNewSeason && seasonHasNewEpisodes)
+                            // Download series poster
+                            if (!string.IsNullOrEmpty(series.Cover))
                             {
-                                Interlocked.Increment(ref seasonsCreated);
+                                var posterExt = GetImageExtension(series.Cover);
+                                var posterPath = Path.Combine(seriesFolderPath, $"poster{posterExt}");
+                                await DownloadImageAsync(series.Cover, posterPath, ct).ConfigureAwait(false);
                             }
-                            else
-                            {
-                                Interlocked.Increment(ref seasonsSkipped);
-                            }
-                        }
 
-                        // Download season poster for unmatched series
-                        if (!autoLookupTvdbId.HasValue && !tvdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched && isNewSeason && seasonHasNewEpisodes)
-                        {
-                            var season = seriesInfo.Seasons.FirstOrDefault(s => s.SeasonNumber == seasonNumber);
-                            var seasonCoverUrl = season?.CoverBig ?? season?.Cover;
-                            if (!string.IsNullOrEmpty(seasonCoverUrl))
+                            // Download series backdrop/fanart
+                            if (series.BackdropPaths.Count > 0)
                             {
-                                var seasonPosterExt = GetImageExtension(seasonCoverUrl);
-                                var seasonPosterPath = Path.Combine(seasonFolder, $"poster{seasonPosterExt}");
-                                await DownloadImageAsync(seasonCoverUrl, seasonPosterPath, ct).ConfigureAwait(false);
+                                var backdropUrl = series.BackdropPaths.First();
+                                var fanartExt = GetImageExtension(backdropUrl);
+                                var fanartPath = Path.Combine(seriesFolderPath, $"fanart{fanartExt}");
+                                await DownloadImageAsync(backdropUrl, fanartPath, ct).ConfigureAwait(false);
                             }
                         }
                     }
 
-                    // Track series created/skipped
-                    if (isNewSeries && seriesHasNewEpisodes)
+                    // Track series created/skipped (once per series, not per folder)
+                    if (seriesHasNewEpisodes)
                     {
                         Interlocked.Increment(ref seriesCreated);
                     }
                     else
                     {
                         Interlocked.Increment(ref seriesSkipped);
-                    }
-
-                    // Download artwork for unmatched series
-                    if (!autoLookupTvdbId.HasValue && !tvdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched && seriesHasNewEpisodes)
-                    {
-                        // Download series poster
-                        if (!string.IsNullOrEmpty(series.Cover))
-                        {
-                            var posterExt = GetImageExtension(series.Cover);
-                            var posterPath = Path.Combine(seriesFolder, $"poster{posterExt}");
-                            await DownloadImageAsync(series.Cover, posterPath, ct).ConfigureAwait(false);
-                        }
-
-                        // Download series backdrop/fanart
-                        if (series.BackdropPaths.Count > 0)
-                        {
-                            var backdropUrl = series.BackdropPaths.First();
-                            var fanartExt = GetImageExtension(backdropUrl);
-                            var fanartPath = Path.Combine(seriesFolder, $"fanart{fanartExt}");
-                            await DownloadImageAsync(backdropUrl, fanartPath, ct).ConfigureAwait(false);
-                        }
                     }
                 }
                 catch (Exception ex)
@@ -1184,6 +1313,54 @@ public partial class StrmSyncService
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Parses folder mapping configuration into a reverse lookup (category ID → folder names).
+    /// </summary>
+    /// <param name="config">The configuration string with one mapping per line.</param>
+    /// <returns>Dictionary mapping category IDs to list of folder names.</returns>
+    internal static Dictionary<int, List<string>> ParseFolderMappings(string? config)
+    {
+        var result = new Dictionary<int, List<string>>();
+        if (string.IsNullOrWhiteSpace(config))
+        {
+            return result;
+        }
+
+        foreach (string line in config.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            int equalsIndex = line.IndexOf('=', StringComparison.Ordinal);
+            if (equalsIndex > 0 && equalsIndex < line.Length - 1)
+            {
+                string folderName = line[..equalsIndex].Trim();
+                string categoryIdsStr = line[(equalsIndex + 1)..].Trim();
+
+                if (string.IsNullOrEmpty(folderName))
+                {
+                    continue;
+                }
+
+                foreach (string idStr in categoryIdsStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    if (int.TryParse(idStr, out int categoryId))
+                    {
+                        if (!result.TryGetValue(categoryId, out var folders))
+                        {
+                            folders = new List<string>();
+                            result[categoryId] = folders;
+                        }
+
+                        if (!folders.Contains(folderName, StringComparer.OrdinalIgnoreCase))
+                        {
+                            folders.Add(folderName);
+                        }
+                    }
+                }
+            }
+        }
+
+        return result;
     }
 
     /// <summary>

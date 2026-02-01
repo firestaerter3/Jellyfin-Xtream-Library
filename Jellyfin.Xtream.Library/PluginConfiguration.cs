@@ -148,4 +148,20 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Only used when SyncScheduleType is "Daily".
     /// </summary>
     public int SyncDailyMinute { get; set; } = 0;
+
+    /// <summary>
+    /// Gets or sets the movie folder mappings.
+    /// Format: one mapping per line, "FolderName=CategoryId1,CategoryId2,CategoryId3".
+    /// Categories can appear in multiple folder mappings (content synced to multiple locations).
+    /// Example: "Kids=10,15,20" creates Movies/Kids/ with categories 10, 15, and 20.
+    /// </summary>
+    public string MovieFolderMappings { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the series folder mappings.
+    /// Format: one mapping per line, "FolderName=CategoryId1,CategoryId2,CategoryId3".
+    /// Categories can appear in multiple folder mappings (content synced to multiple locations).
+    /// Example: "Kids=5,8" creates Series/Kids/ with categories 5 and 8.
+    /// </summary>
+    public string SeriesFolderMappings { get; set; } = string.Empty;
 }

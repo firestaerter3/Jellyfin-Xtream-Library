@@ -539,4 +539,88 @@ public class StrmSyncServiceTests
     }
 
     #endregion
+
+    #region ParseFolderMappings Tests
+
+    [Fact]
+    public void ParseFolderMappings_NullInput_ReturnsEmptyDictionary()
+    {
+        var result = StrmSyncService.ParseFolderMappings(null);
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ParseFolderMappings_EmptyInput_ReturnsEmptyDictionary()
+    {
+        var result = StrmSyncService.ParseFolderMappings(string.Empty);
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ParseFolderMappings_SingleMapping_ParsesCorrectly()
+    {
+        var result = StrmSyncService.ParseFolderMappings("Kids=10,15,20");
+
+        result.Should().ContainKey(10);
+        result.Should().ContainKey(15);
+        result.Should().ContainKey(20);
+        result[10].Should().Contain("Kids");
+        result[15].Should().Contain("Kids");
+        result[20].Should().Contain("Kids");
+    }
+
+    [Fact]
+    public void ParseFolderMappings_MultipleLines_ParsesAll()
+    {
+        var result = StrmSyncService.ParseFolderMappings("Kids=10,15\nDocumentary=30");
+
+        result.Should().HaveCount(3);
+        result[10].Should().Contain("Kids");
+        result[15].Should().Contain("Kids");
+        result[30].Should().Contain("Documentary");
+    }
+
+    [Fact]
+    public void ParseFolderMappings_CategoryInMultipleFolders_TracksAllFolders()
+    {
+        var result = StrmSyncService.ParseFolderMappings("Kids=10\nFamily=10");
+
+        result.Should().ContainKey(10);
+        result[10].Should().HaveCount(2);
+        result[10].Should().Contain("Kids");
+        result[10].Should().Contain("Family");
+    }
+
+    [Fact]
+    public void ParseFolderMappings_WhitespaceHandling_TrimsCorrectly()
+    {
+        var result = StrmSyncService.ParseFolderMappings("  Kids  =  10 , 15  ");
+
+        result.Should().ContainKey(10);
+        result.Should().ContainKey(15);
+        result[10].Should().Contain("Kids");
+    }
+
+    [Fact]
+    public void ParseFolderMappings_InvalidLine_SkipsIt()
+    {
+        var result = StrmSyncService.ParseFolderMappings("Kids=10\nInvalidLine\nDocumentary=20");
+
+        result.Should().HaveCount(2);
+        result.Should().ContainKey(10);
+        result.Should().ContainKey(20);
+    }
+
+    [Fact]
+    public void ParseFolderMappings_NonNumericCategoryId_SkipsIt()
+    {
+        var result = StrmSyncService.ParseFolderMappings("Kids=abc,10,xyz");
+
+        result.Should().HaveCount(1);
+        result.Should().ContainKey(10);
+    }
+
+    #endregion
 }
