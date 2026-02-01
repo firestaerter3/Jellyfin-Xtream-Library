@@ -280,6 +280,62 @@ public class SyncController : ControllerBase
         await _metadataLookup.ClearCacheAsync().ConfigureAwait(false);
         return Ok(new { Success = true, Message = "Metadata cache cleared." });
     }
+
+    /// <summary>
+    /// Deletes all content from the Movies and Series library folders.
+    /// </summary>
+    /// <returns>Result with counts of deleted items.</returns>
+    [HttpPost("CleanLibraries")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public ActionResult CleanLibraries()
+    {
+        var config = Plugin.Instance.Configuration;
+        if (string.IsNullOrEmpty(config.LibraryPath))
+        {
+            return BadRequest(new { Success = false, Message = "Library path not configured." });
+        }
+
+        var moviesPath = System.IO.Path.Combine(config.LibraryPath, "Movies");
+        var seriesPath = System.IO.Path.Combine(config.LibraryPath, "Series");
+
+        int moviesDeleted = 0;
+        int seriesDeleted = 0;
+
+        try
+        {
+            if (System.IO.Directory.Exists(moviesPath))
+            {
+                var movieDirs = System.IO.Directory.GetDirectories(moviesPath);
+                moviesDeleted = movieDirs.Length;
+                System.IO.Directory.Delete(moviesPath, recursive: true);
+                System.IO.Directory.CreateDirectory(moviesPath);
+                _logger.LogInformation("Deleted {Count} movie folders from {Path}", moviesDeleted, moviesPath);
+            }
+
+            if (System.IO.Directory.Exists(seriesPath))
+            {
+                var seriesDirs = System.IO.Directory.GetDirectories(seriesPath);
+                seriesDeleted = seriesDirs.Length;
+                System.IO.Directory.Delete(seriesPath, recursive: true);
+                System.IO.Directory.CreateDirectory(seriesPath);
+                _logger.LogInformation("Deleted {Count} series folders from {Path}", seriesDeleted, seriesPath);
+            }
+
+            return Ok(new
+            {
+                Success = true,
+                Message = $"Deleted {moviesDeleted} movies and {seriesDeleted} series.",
+                MoviesDeleted = moviesDeleted,
+                SeriesDeleted = seriesDeleted,
+            });
+        }
+        catch (System.Exception ex)
+        {
+            _logger.LogError(ex, "Failed to clean libraries");
+            return BadRequest(new { Success = false, Message = $"Failed to clean libraries: {ex.Message}" });
+        }
+    }
 }
 
 /// <summary>

@@ -503,6 +503,33 @@ const XtreamLibraryConfig = {
             console.error('ClearMetadataCache error:', error);
             statusSpan.innerHTML = '<span style="color: red;">Failed: ' + (error.message || 'Check console for details') + '</span>';
         });
+    },
+
+    cleanLibraries: function () {
+        if (!confirm('Are you sure you want to delete ALL Movies and Series content?\n\nThis action cannot be undone.')) {
+            return;
+        }
+
+        const statusSpan = document.getElementById('cleanLibrariesStatus');
+        statusSpan.innerHTML = '<span style="color: orange;">Deleting...</span>';
+
+        fetch(ApiClient.getUrl('XtreamLibrary/CleanLibraries'), {
+            method: 'POST',
+            headers: {
+                'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
+            }
+        }).then(function (response) {
+            return response.json();
+        }).then(function (data) {
+            if (data.Success) {
+                statusSpan.innerHTML = '<span style="color: green;">' + data.Message + '</span>';
+            } else {
+                statusSpan.innerHTML = '<span style="color: red;">' + (data.Message || 'Failed to clean libraries.') + '</span>';
+            }
+        }).catch(function (error) {
+            console.error('CleanLibraries error:', error);
+            statusSpan.innerHTML = '<span style="color: red;">Failed: ' + (error.message || 'Check console for details') + '</span>';
+        });
     }
 };
 
@@ -571,6 +598,14 @@ function initXtreamLibraryConfig() {
         btnClearMetadataCache.addEventListener('click', function (e) {
             e.preventDefault();
             XtreamLibraryConfig.clearMetadataCache();
+        });
+    }
+
+    var btnCleanLibraries = document.getElementById('btnCleanLibraries');
+    if (btnCleanLibraries) {
+        btnCleanLibraries.addEventListener('click', function (e) {
+            e.preventDefault();
+            XtreamLibraryConfig.cleanLibraries();
         });
     }
 
