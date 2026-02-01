@@ -52,6 +52,10 @@ const XtreamLibraryConfig = {
             document.getElementById('txtTmdbFolderIdOverrides').value = config.TmdbFolderIdOverrides || '';
             document.getElementById('txtTvdbFolderIdOverrides').value = config.TvdbFolderIdOverrides || '';
 
+            // Folder mappings
+            document.getElementById('txtMovieFolderMappings').value = config.MovieFolderMappings || '';
+            document.getElementById('txtSeriesFolderMappings').value = config.SeriesFolderMappings || '';
+
             // Metadata lookup
             document.getElementById('chkEnableMetadataLookup').checked = config.EnableMetadataLookup || false;
 
@@ -99,6 +103,10 @@ const XtreamLibraryConfig = {
             // Folder ID overrides
             config.TmdbFolderIdOverrides = document.getElementById('txtTmdbFolderIdOverrides').value;
             config.TvdbFolderIdOverrides = document.getElementById('txtTvdbFolderIdOverrides').value;
+
+            // Folder mappings
+            config.MovieFolderMappings = document.getElementById('txtMovieFolderMappings').value;
+            config.SeriesFolderMappings = document.getElementById('txtSeriesFolderMappings').value;
 
             // Metadata lookup
             config.EnableMetadataLookup = document.getElementById('chkEnableMetadataLookup').checked;
