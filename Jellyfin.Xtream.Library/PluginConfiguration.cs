@@ -185,4 +185,86 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Example: "Kids=5,8" creates Series/Kids/ with categories 5 and 8.
     /// </summary>
     public string SeriesFolderMappings { get; set; } = string.Empty;
+
+    // =====================
+    // Live TV Settings
+    // =====================
+
+    /// <summary>
+    /// Gets or sets a value indicating whether Live TV support is enabled.
+    /// When enabled, M3U and EPG endpoints become available.
+    /// </summary>
+    public bool EnableLiveTv { get; set; }
+
+    /// <summary>
+    /// Gets or sets the array of selected Live TV category IDs.
+    /// Empty array means include all Live TV categories.
+    /// </summary>
+    public int[] SelectedLiveCategoryIds { get; set; } = Array.Empty<int>();
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to generate EPG data.
+    /// </summary>
+    public bool EnableEpg { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the M3U playlist cache duration in minutes.
+    /// </summary>
+    public int M3UCacheMinutes { get; set; } = 15;
+
+    /// <summary>
+    /// Gets or sets the EPG cache duration in minutes.
+    /// </summary>
+    public int EpgCacheMinutes { get; set; } = 30;
+
+    /// <summary>
+    /// Gets or sets the number of days of EPG data to fetch.
+    /// </summary>
+    public int EpgDaysToFetch { get; set; } = 2;
+
+    /// <summary>
+    /// Gets or sets the Live TV output format (m3u8 or ts).
+    /// </summary>
+    public string LiveTvOutputFormat { get; set; } = "m3u8";
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to include adult channels.
+    /// </summary>
+    public bool IncludeAdultChannels { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of parallel EPG fetch requests.
+    /// </summary>
+    public int EpgParallelism { get; set; } = 5;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether channel name cleaning is enabled.
+    /// Removes country prefixes, quality tags, codec info from channel names.
+    /// </summary>
+    public bool EnableChannelNameCleaning { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets custom terms to remove from channel names.
+    /// One term per line.
+    /// </summary>
+    public string ChannelRemoveTerms { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets channel overrides.
+    /// Format: StreamId=Name|Number|LogoUrl (one per line, fields optional).
+    /// Example: "123=BBC One|1|http://logo.png".
+    /// </summary>
+    public string ChannelOverrides { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether catch-up/timeshift is enabled.
+    /// Only channels with tv_archive=1 support catch-up.
+    /// </summary>
+    public bool EnableCatchup { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of catch-up days to show.
+    /// Limited by the channel's tv_archive_duration.
+    /// </summary>
+    public int CatchupDays { get; set; } = 7;
 }
