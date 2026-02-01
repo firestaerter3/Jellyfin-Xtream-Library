@@ -599,8 +599,11 @@ public partial class StrmSyncService
             return "Unknown";
         }
 
+        // Remove language/country tags like "| NL |", "┃NL┃", "[NL]", "| EN |", etc.
+        string cleanName = LanguageTagPattern().Replace(name, string.Empty);
+
         // Remove year from name if present (we'll add it back in folder name format)
-        string cleanName = YearPattern().Replace(name, string.Empty).Trim();
+        cleanName = YearPattern().Replace(cleanName, string.Empty).Trim();
 
         // Remove invalid file name characters
         char[] invalidChars = Path.GetInvalidFileNameChars();
@@ -686,6 +689,10 @@ public partial class StrmSyncService
 
     [GeneratedRegex(@"_+")]
     private static partial Regex MultipleUnderscoresPattern();
+
+    // Matches language tags like "| NL |", "┃NL┃", "[NL]", "| EN |", "| DE |", etc.
+    [GeneratedRegex(@"[\|\┃\[]\s*[A-Z]{2,3}\s*[\|\┃\]]")]
+    private static partial Regex LanguageTagPattern();
 }
 
 /// <summary>
