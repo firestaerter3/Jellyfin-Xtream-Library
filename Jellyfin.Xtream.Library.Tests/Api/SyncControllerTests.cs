@@ -31,6 +31,7 @@ public class SyncControllerTests
 {
     private readonly Mock<IXtreamClient> _mockClient;
     private readonly Mock<ILibraryManager> _mockLibraryManager;
+    private readonly Mock<IMetadataLookupService> _mockMetadataLookup;
     private readonly Mock<ILogger<StrmSyncService>> _mockSyncServiceLogger;
     private readonly Mock<ILogger<SyncController>> _mockControllerLogger;
     private readonly StrmSyncService _syncService;
@@ -40,17 +41,20 @@ public class SyncControllerTests
     {
         _mockClient = new Mock<IXtreamClient>();
         _mockLibraryManager = new Mock<ILibraryManager>();
+        _mockMetadataLookup = new Mock<IMetadataLookupService>();
         _mockSyncServiceLogger = new Mock<ILogger<StrmSyncService>>();
         _mockControllerLogger = new Mock<ILogger<SyncController>>();
 
         _syncService = new StrmSyncService(
             _mockClient.Object,
             _mockLibraryManager.Object,
+            _mockMetadataLookup.Object,
             _mockSyncServiceLogger.Object);
 
         _controller = new SyncController(
             _syncService,
             _mockClient.Object,
+            _mockMetadataLookup.Object,
             _mockControllerLogger.Object);
     }
 

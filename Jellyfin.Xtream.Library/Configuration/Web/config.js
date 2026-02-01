@@ -52,6 +52,9 @@ const XtreamLibraryConfig = {
             document.getElementById('txtTmdbFolderIdOverrides').value = config.TmdbFolderIdOverrides || '';
             document.getElementById('txtTvdbFolderIdOverrides').value = config.TvdbFolderIdOverrides || '';
 
+            // Metadata lookup
+            document.getElementById('chkEnableMetadataLookup').checked = config.EnableMetadataLookup || false;
+
             Dashboard.hideLoadingMsg();
 
             // Auto-load categories if credentials are configured
@@ -87,6 +90,9 @@ const XtreamLibraryConfig = {
             // Folder ID overrides
             config.TmdbFolderIdOverrides = document.getElementById('txtTmdbFolderIdOverrides').value;
             config.TvdbFolderIdOverrides = document.getElementById('txtTvdbFolderIdOverrides').value;
+
+            // Metadata lookup
+            config.EnableMetadataLookup = document.getElementById('chkEnableMetadataLookup').checked;
 
             ApiClient.updatePluginConfiguration(XtreamLibraryConfig.pluginUniqueId, config).then(function () {
                 Dashboard.processPluginConfigurationUpdateResult();
@@ -474,6 +480,29 @@ const XtreamLibraryConfig = {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    },
+
+    clearMetadataCache: function () {
+        const statusSpan = document.getElementById('metadataCacheStatus');
+        statusSpan.innerHTML = '<span style="color: orange;">Clearing...</span>';
+
+        fetch(ApiClient.getUrl('XtreamLibrary/ClearMetadataCache'), {
+            method: 'POST',
+            headers: {
+                'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
+            }
+        }).then(function (response) {
+            return response.json();
+        }).then(function (data) {
+            if (data.Success) {
+                statusSpan.innerHTML = '<span style="color: green;">' + data.Message + '</span>';
+            } else {
+                statusSpan.innerHTML = '<span style="color: red;">Failed to clear cache.</span>';
+            }
+        }).catch(function (error) {
+            console.error('ClearMetadataCache error:', error);
+            statusSpan.innerHTML = '<span style="color: red;">Failed: ' + (error.message || 'Check console for details') + '</span>';
+        });
     }
 };
 
@@ -534,6 +563,14 @@ function initXtreamLibraryConfig() {
         btnLoadSeriesCategories.addEventListener('click', function (e) {
             e.preventDefault();
             XtreamLibraryConfig.loadSeriesCategories();
+        });
+    }
+
+    var btnClearMetadataCache = document.getElementById('btnClearMetadataCache');
+    if (btnClearMetadataCache) {
+        btnClearMetadataCache.addEventListener('click', function (e) {
+            e.preventDefault();
+            XtreamLibraryConfig.clearMetadataCache();
         });
     }
 

@@ -134,6 +134,22 @@
                                     Remove STRM files for content that no longer exists on the provider.
                                 </div>
                             </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkEnableMetadataLookup" name="EnableMetadataLookup" />
+                                    <span>Enable Automatic Metadata ID Lookup</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Automatically look up TMDb/TVDb IDs using Jellyfin's configured metadata providers.
+                                    Requires metadata plugins (TMDb, TVDb) to be installed and configured in Jellyfin.
+                                </div>
+                            </div>
+                            <div style="margin-top: 10px;">
+                                <button is="emby-button" type="button" id="btnClearMetadataCache" class="raised">
+                                    <span>Clear Metadata Cache</span>
+                                </button>
+                                <span id="metadataCacheStatus" style="margin-left: 10px;"></span>
+                            </div>
                         </div>
 
                         <div class="verticalSection">

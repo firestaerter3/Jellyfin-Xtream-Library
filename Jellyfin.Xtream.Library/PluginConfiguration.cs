@@ -110,4 +110,17 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Example: "Breaking Bad (2008)=81189" forces TVDb ID 81189 for that folder.
     /// </summary>
     public string TvdbFolderIdOverrides { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether automatic metadata ID lookup is enabled.
+    /// When enabled, uses Jellyfin's configured metadata providers to automatically
+    /// look up TMDb/TVDb IDs during sync.
+    /// </summary>
+    public bool EnableMetadataLookup { get; set; }
+
+    /// <summary>
+    /// Gets or sets the metadata cache age in days before refresh.
+    /// Cached lookup results older than this will be re-fetched.
+    /// </summary>
+    public int MetadataCacheAgeDays { get; set; } = 30;
 }

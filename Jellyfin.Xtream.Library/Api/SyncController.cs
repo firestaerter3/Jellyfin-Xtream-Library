@@ -39,6 +39,7 @@ public class SyncController : ControllerBase
 {
     private readonly StrmSyncService _syncService;
     private readonly IXtreamClient _client;
+    private readonly IMetadataLookupService _metadataLookup;
     private readonly ILogger<SyncController> _logger;
 
     /// <summary>
@@ -46,14 +47,17 @@ public class SyncController : ControllerBase
     /// </summary>
     /// <param name="syncService">The STRM sync service.</param>
     /// <param name="client">The Xtream API client.</param>
+    /// <param name="metadataLookup">The metadata lookup service.</param>
     /// <param name="logger">The logger instance.</param>
     public SyncController(
         StrmSyncService syncService,
         IXtreamClient client,
+        IMetadataLookupService metadataLookup,
         ILogger<SyncController> logger)
     {
         _syncService = syncService;
         _client = client;
+        _metadataLookup = metadataLookup;
         _logger = logger;
     }
 
@@ -262,6 +266,19 @@ public class SyncController : ControllerBase
             _logger.LogError(ex, "Failed to fetch Series categories");
             return BadRequest($"Failed to fetch categories: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Clears the metadata lookup cache.
+    /// </summary>
+    /// <returns>Success status.</returns>
+    [HttpPost("ClearMetadataCache")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult> ClearMetadataCache()
+    {
+        _logger.LogInformation("Clearing metadata cache via API");
+        await _metadataLookup.ClearCacheAsync().ConfigureAwait(false);
+        return Ok(new { Success = true, Message = "Metadata cache cleared." });
     }
 }
 
