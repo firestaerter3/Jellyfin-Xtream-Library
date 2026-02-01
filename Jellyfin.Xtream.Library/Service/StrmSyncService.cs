@@ -569,11 +569,15 @@ public partial class StrmSyncService
             categories = filteredCategories;
         }
 
-        // Parse folder mappings (category ID → folder names)
-        var folderMappings = ParseFolderMappings(config.MovieFolderMappings);
-        if (folderMappings.Count > 0)
+        // Parse folder mappings (category ID → folder names) - only in Multiple folder mode
+        var folderMappings = new Dictionary<int, List<string>>();
+        if (string.Equals(config.MovieFolderMode, "Multiple", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogInformation("Loaded movie folder mappings for {Count} categories", folderMappings.Count);
+            folderMappings = ParseFolderMappings(config.MovieFolderMappings);
+            if (folderMappings.Count > 0)
+            {
+                _logger.LogInformation("Multiple folder mode: loaded movie folder mappings for {Count} categories", folderMappings.Count);
+            }
         }
 
         // Collect all unique movies from all categories, tracking category membership
@@ -813,11 +817,15 @@ public partial class StrmSyncService
             categories = filteredCategories;
         }
 
-        // Parse folder mappings (category ID → folder names)
-        var folderMappings = ParseFolderMappings(config.SeriesFolderMappings);
-        if (folderMappings.Count > 0)
+        // Parse folder mappings (category ID → folder names) - only in Multiple folder mode
+        var folderMappings = new Dictionary<int, List<string>>();
+        if (string.Equals(config.SeriesFolderMode, "Multiple", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogInformation("Loaded series folder mappings for {Count} categories", folderMappings.Count);
+            folderMappings = ParseFolderMappings(config.SeriesFolderMappings);
+            if (folderMappings.Count > 0)
+            {
+                _logger.LogInformation("Multiple folder mode: loaded series folder mappings for {Count} categories", folderMappings.Count);
+            }
         }
 
         // Collect all unique series from all categories, tracking category membership
