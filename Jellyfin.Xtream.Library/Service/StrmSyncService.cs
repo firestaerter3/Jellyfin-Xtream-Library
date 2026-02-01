@@ -357,9 +357,51 @@ public partial class StrmSyncService
                 CurrentProgress.Phase = "Cleaning up orphans";
                 CurrentProgress.CurrentItem = string.Empty;
                 var orphanedFiles = existingStrmFiles.Except(syncedFiles, StringComparer.OrdinalIgnoreCase).ToList();
-                CurrentProgress.TotalItems = orphanedFiles.Count;
+
+                // Protection: Check if deletion would exceed safety threshold (provider glitch protection)
+                const double SafetyThreshold = 0.20; // 20%
+                int orphanedMovies = orphanedFiles.Count(f => f.StartsWith(moviesPath, StringComparison.OrdinalIgnoreCase));
+                int orphanedEpisodes = orphanedFiles.Count(f => f.StartsWith(seriesPath, StringComparison.OrdinalIgnoreCase));
+                int existingMovieCount = existingStrmFiles.Count(f => f.StartsWith(moviesPath, StringComparison.OrdinalIgnoreCase));
+                int existingEpisodeCount = existingStrmFiles.Count(f => f.StartsWith(seriesPath, StringComparison.OrdinalIgnoreCase));
+
+                double movieDeletionRatio = existingMovieCount > 0 ? (double)orphanedMovies / existingMovieCount : 0;
+                double episodeDeletionRatio = existingEpisodeCount > 0 ? (double)orphanedEpisodes / existingEpisodeCount : 0;
+
+                bool skipMovieCleanup = existingMovieCount > 10 && movieDeletionRatio > SafetyThreshold;
+                bool skipEpisodeCleanup = existingEpisodeCount > 10 && episodeDeletionRatio > SafetyThreshold;
+
+                if (skipMovieCleanup)
+                {
+                    _logger.LogWarning(
+                        "Skipping movie orphan cleanup: {OrphanCount}/{ExistingCount} ({Percent:P0}) exceeds {Threshold:P0} safety threshold - possible provider issue",
+                        orphanedMovies,
+                        existingMovieCount,
+                        movieDeletionRatio,
+                        SafetyThreshold);
+                }
+
+                if (skipEpisodeCleanup)
+                {
+                    _logger.LogWarning(
+                        "Skipping episode orphan cleanup: {OrphanCount}/{ExistingCount} ({Percent:P0}) exceeds {Threshold:P0} safety threshold - possible provider issue",
+                        orphanedEpisodes,
+                        existingEpisodeCount,
+                        episodeDeletionRatio,
+                        SafetyThreshold);
+                }
+
+                // Filter orphans based on safety checks
+                var safeOrphans = orphanedFiles
+                    .Where(f =>
+                        !(skipMovieCleanup && f.StartsWith(moviesPath, StringComparison.OrdinalIgnoreCase)) &&
+                        !(skipEpisodeCleanup && f.StartsWith(seriesPath, StringComparison.OrdinalIgnoreCase)))
+                    .ToList();
+
+                CurrentProgress.TotalItems = safeOrphans.Count;
                 CurrentProgress.ItemsProcessed = 0;
-                foreach (var orphan in orphanedFiles)
+
+                foreach (var orphan in safeOrphans)
                 {
                     try
                     {
@@ -388,11 +430,11 @@ public partial class StrmSyncService
                     }
                 }
 
-                if (orphanedFiles.Count > 0)
+                if (safeOrphans.Count > 0)
                 {
                     _logger.LogInformation(
                         "Cleaned up {Count} orphaned STRM files ({Movies} movies, {Episodes} episodes) and {Series} series, {Seasons} seasons",
-                        orphanedFiles.Count,
+                        safeOrphans.Count,
                         result.MoviesDeleted,
                         result.EpisodesDeleted,
                         result.SeriesDeleted,
