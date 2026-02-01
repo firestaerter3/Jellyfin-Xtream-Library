@@ -105,6 +105,127 @@ public class StrmSyncServiceTests
         result.Should().Be("Unknown");
     }
 
+    [Theory]
+    [InlineData("Alpha and Omega (NL GESPROKEN)", "Alpha and Omega")]
+    [InlineData("Movie (EN SPOKEN)", "Movie")]
+    [InlineData("Film (NL DUBBED)", "Film")]
+    [InlineData("Show [NL Gesproken]", "Show")]
+    [InlineData("Title (DE AUDIO)", "Title")]
+    public void SanitizeFileName_LanguagePhrases_RemovesThem(string input, string expected)
+    {
+        var result = StrmSyncService.SanitizeFileName(input);
+
+        result.Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("Movie HEVC", "Movie")]
+    [InlineData("Movie x264", "Movie")]
+    [InlineData("Movie x265", "Movie")]
+    [InlineData("Movie H.264", "Movie")]
+    [InlineData("Movie H265", "Movie")]
+    [InlineData("Movie 10bit", "Movie")]
+    public void SanitizeFileName_CodecTags_RemovesThem(string input, string expected)
+    {
+        var result = StrmSyncService.SanitizeFileName(input);
+
+        result.Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("Movie 4K", "Movie")]
+    [InlineData("Movie 1080p", "Movie")]
+    [InlineData("Movie 720p", "Movie")]
+    [InlineData("Movie 2160p", "Movie")]
+    [InlineData("Movie HDR", "Movie")]
+    [InlineData("Movie HDR10", "Movie")]
+    [InlineData("Movie UHD", "Movie")]
+    public void SanitizeFileName_QualityTags_RemovesThem(string input, string expected)
+    {
+        var result = StrmSyncService.SanitizeFileName(input);
+
+        result.Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("Movie BluRay", "Movie")]
+    [InlineData("Movie Blu-Ray", "Movie")]
+    [InlineData("Movie WEBRip", "Movie")]
+    [InlineData("Movie WEB-DL", "Movie")]
+    [InlineData("Movie HDTV", "Movie")]
+    [InlineData("Movie DVDRip", "Movie")]
+    [InlineData("Movie REMUX", "Movie")]
+    public void SanitizeFileName_SourceTags_RemovesThem(string input, string expected)
+    {
+        var result = StrmSyncService.SanitizeFileName(input);
+
+        result.Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("Angela'\\'s Christmas", "Angela's Christmas")]
+    [InlineData("A Witches'\\'' Ball", "A Witches' Ball")]
+    public void SanitizeFileName_MalformedQuotes_FixesThem(string input, string expected)
+    {
+        var result = StrmSyncService.SanitizeFileName(input);
+
+        result.Should().Be(expected);
+    }
+
+    [Fact]
+    public void SanitizeFileName_CombinedTags_RemovesAll()
+    {
+        var result = StrmSyncService.SanitizeFileName("Baas In Eigen Bos 2 HEVC 1080p BluRay (NL GESPROKEN) (2020)");
+
+        result.Should().Be("Baas In Eigen Bos 2");
+    }
+
+    [Fact]
+    public void SanitizeFileName_MultipleSpaces_CollapsesToSingle()
+    {
+        var result = StrmSyncService.SanitizeFileName("Movie    With    Spaces");
+
+        result.Should().Be("Movie With Spaces");
+    }
+
+    [Theory]
+    [InlineData("┃NL┃ Ascendance of a Bookworm", "Ascendance of a Bookworm")]
+    [InlineData("┃NL┃Campfire Cooking", "Campfire Cooking")]
+    [InlineData("| NL | Some Show", "Some Show")]
+    public void SanitizeFileName_PrefixLanguageTags_RemovesThem(string input, string expected)
+    {
+        var result = StrmSyncService.SanitizeFileName(input);
+
+        result.Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("Ascendance of a Bookworm[本好きの下剋上]", "Ascendance of a Bookworm")]
+    [InlineData("Show Name [日本語タイトル]", "Show Name")]
+    [InlineData("Anime (韓国語)", "Anime")]
+    public void SanitizeFileName_AsianBracketedText_RemovesThem(string input, string expected)
+    {
+        var result = StrmSyncService.SanitizeFileName(input);
+
+        result.Should().Be(expected);
+    }
+
+    [Fact]
+    public void SanitizeFileName_MisspelledGesproken_RemovesIt()
+    {
+        var result = StrmSyncService.SanitizeFileName("Barbie: Dreamtopia Special [NL Gepsroken]");
+
+        result.Should().Be("Barbie: Dreamtopia Special");
+    }
+
+    [Fact]
+    public void SanitizeFileName_ComplexAnimeTitle_CleansAll()
+    {
+        var result = StrmSyncService.SanitizeFileName("┃NL┃ Ascendance of a Bookworm[本好きの下剋上 司書になるためには手段を選んでいられません]");
+
+        result.Should().Be("Ascendance of a Bookworm");
+    }
+
     #endregion
 
     #region ExtractYear Tests
@@ -303,8 +424,9 @@ public class StrmSyncServiceTests
         var tempDir = GetResolvedTempPath();
         var subDir = Path.Combine(tempDir, "sub");
         Directory.CreateDirectory(subDir);
+        var result = new SyncResult();
 
-        StrmSyncService.CleanupEmptyDirectories(subDir, tempDir);
+        StrmSyncService.CleanupEmptyDirectories(subDir, tempDir, tempDir, result);
 
         Directory.Exists(subDir).Should().BeFalse();
         Directory.Exists(tempDir).Should().BeTrue();
@@ -317,8 +439,9 @@ public class StrmSyncServiceTests
     public void CleanupEmptyDirectories_StopsAtBasePath()
     {
         var tempDir = GetResolvedTempPath();
+        var result = new SyncResult();
 
-        StrmSyncService.CleanupEmptyDirectories(tempDir, tempDir);
+        StrmSyncService.CleanupEmptyDirectories(tempDir, tempDir, tempDir, result);
 
         Directory.Exists(tempDir).Should().BeTrue();
 
@@ -333,8 +456,9 @@ public class StrmSyncServiceTests
         var subDir = Path.Combine(tempDir, "sub");
         Directory.CreateDirectory(subDir);
         File.WriteAllText(Path.Combine(subDir, "test.txt"), "content");
+        var result = new SyncResult();
 
-        StrmSyncService.CleanupEmptyDirectories(subDir, tempDir);
+        StrmSyncService.CleanupEmptyDirectories(subDir, tempDir, tempDir, result);
 
         Directory.Exists(subDir).Should().BeTrue();
 
@@ -350,8 +474,9 @@ public class StrmSyncServiceTests
         var level2 = Path.Combine(level1, "level2");
         var level3 = Path.Combine(level2, "level3");
         Directory.CreateDirectory(level3);
+        var result = new SyncResult();
 
-        StrmSyncService.CleanupEmptyDirectories(level3, tempDir);
+        StrmSyncService.CleanupEmptyDirectories(level3, tempDir, tempDir, result);
 
         Directory.Exists(level3).Should().BeFalse();
         Directory.Exists(level2).Should().BeFalse();
@@ -360,6 +485,57 @@ public class StrmSyncServiceTests
 
         // Cleanup
         Directory.Delete(tempDir);
+    }
+
+    [Fact]
+    public void CleanupEmptyDirectories_TracksSeriesDeleted()
+    {
+        var tempDir = GetResolvedTempPath();
+        var seriesDir = Path.Combine(tempDir, "Series");
+        var showDir = Path.Combine(seriesDir, "Test Show (2024)");
+        var seasonDir = Path.Combine(showDir, "Season 1");
+        Directory.CreateDirectory(seasonDir);
+        // Keep a file in seriesDir so it doesn't get deleted
+        File.WriteAllText(Path.Combine(seriesDir, ".keep"), string.Empty);
+        var result = new SyncResult();
+
+        // Clean up from season folder (simulating last episode deleted)
+        StrmSyncService.CleanupEmptyDirectories(seasonDir, tempDir, seriesDir, result);
+
+        Directory.Exists(seasonDir).Should().BeFalse();
+        Directory.Exists(showDir).Should().BeFalse();
+        Directory.Exists(seriesDir).Should().BeTrue();
+        result.SeasonsDeleted.Should().Be(1);
+        result.SeriesDeleted.Should().Be(1);
+
+        // Cleanup
+        Directory.Delete(tempDir, true);
+    }
+
+    [Fact]
+    public void CleanupEmptyDirectories_TracksOnlySeasonDeleted_WhenSeriesNotEmpty()
+    {
+        var tempDir = GetResolvedTempPath();
+        var seriesDir = Path.Combine(tempDir, "Series");
+        var showDir = Path.Combine(seriesDir, "Test Show (2024)");
+        var season1Dir = Path.Combine(showDir, "Season 1");
+        var season2Dir = Path.Combine(showDir, "Season 2");
+        Directory.CreateDirectory(season1Dir);
+        Directory.CreateDirectory(season2Dir);
+        // Put a file in Season 2 so the series folder won't be empty
+        File.WriteAllText(Path.Combine(season2Dir, "episode.strm"), "url");
+        var result = new SyncResult();
+
+        // Clean up Season 1 (empty)
+        StrmSyncService.CleanupEmptyDirectories(season1Dir, tempDir, seriesDir, result);
+
+        Directory.Exists(season1Dir).Should().BeFalse();
+        Directory.Exists(showDir).Should().BeTrue();
+        result.SeasonsDeleted.Should().Be(1);
+        result.SeriesDeleted.Should().Be(0);
+
+        // Cleanup
+        Directory.Delete(tempDir, true);
     }
 
     #endregion

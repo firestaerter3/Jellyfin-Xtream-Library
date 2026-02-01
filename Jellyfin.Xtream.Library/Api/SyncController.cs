@@ -109,6 +109,39 @@ public class SyncController : ControllerBase
     }
 
     /// <summary>
+    /// Gets the list of failed items from the last sync.
+    /// </summary>
+    /// <returns>List of failed items.</returns>
+    [HttpGet("FailedItems")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public ActionResult<IEnumerable<FailedItem>> GetFailedItems()
+    {
+        return Ok(_syncService.FailedItems);
+    }
+
+    /// <summary>
+    /// Retries syncing all failed items from the last sync.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The retry result.</returns>
+    [HttpPost("RetryFailed")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<SyncResult>> RetryFailed(CancellationToken cancellationToken)
+    {
+        if (_syncService.FailedItems.Count == 0)
+        {
+            return BadRequest("No failed items to retry.");
+        }
+
+        _logger.LogInformation("Retry failed items triggered via API");
+
+        var result = await _syncService.RetryFailedAsync(cancellationToken).ConfigureAwait(false);
+
+        return Ok(result);
+    }
+
+    /// <summary>
     /// Tests the connection to the Xtream provider.
     /// </summary>
     /// <param name="request">Optional connection test request with credentials.</param>
