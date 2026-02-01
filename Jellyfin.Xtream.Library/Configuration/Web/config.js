@@ -55,6 +55,9 @@ const XtreamLibraryConfig = {
             // Metadata lookup
             document.getElementById('chkEnableMetadataLookup').checked = config.EnableMetadataLookup || false;
 
+            // Artwork download for unmatched
+            document.getElementById('chkDownloadArtworkForUnmatched').checked = config.DownloadArtworkForUnmatched !== false;
+
             Dashboard.hideLoadingMsg();
 
             // Auto-load categories if credentials are configured
@@ -93,6 +96,9 @@ const XtreamLibraryConfig = {
 
             // Metadata lookup
             config.EnableMetadataLookup = document.getElementById('chkEnableMetadataLookup').checked;
+
+            // Artwork download for unmatched
+            config.DownloadArtworkForUnmatched = document.getElementById('chkDownloadArtworkForUnmatched').checked;
 
             ApiClient.updatePluginConfiguration(XtreamLibraryConfig.pluginUniqueId, config).then(function () {
                 Dashboard.processPluginConfigurationUpdateResult();

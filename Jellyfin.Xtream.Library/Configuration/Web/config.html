@@ -144,6 +144,16 @@
                                     Requires metadata plugins (TMDb, TVDb) to be installed and configured in Jellyfin.
                                 </div>
                             </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkDownloadArtworkForUnmatched" name="DownloadArtworkForUnmatched" />
+                                    <span>Download Artwork for Unmatched Content</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Download posters and fanart from the provider for content that couldn't be matched to TMDb/TVDb.
+                                    Ensures unmatched movies and series still have artwork in Jellyfin.
+                                </div>
+                            </div>
                             <div style="margin-top: 10px;">
                                 <button is="emby-button" type="button" id="btnClearMetadataCache" class="raised">
                                     <span>Clear Metadata Cache</span>

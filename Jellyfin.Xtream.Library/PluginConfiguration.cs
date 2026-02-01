@@ -123,4 +123,11 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Cached lookup results older than this will be re-fetched.
     /// </summary>
     public int MetadataCacheAgeDays { get; set; } = 30;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to download artwork from the provider
+    /// for content that could not be matched to TMDb/TVDb.
+    /// This ensures unmatched content still has posters and thumbnails.
+    /// </summary>
+    public bool DownloadArtworkForUnmatched { get; set; } = true;
 }

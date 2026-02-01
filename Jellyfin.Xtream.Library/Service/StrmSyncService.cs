@@ -18,6 +18,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -33,6 +34,8 @@ namespace Jellyfin.Xtream.Library.Service;
 /// </summary>
 public partial class StrmSyncService
 {
+    private static readonly HttpClient ImageHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+
     private readonly IXtreamClient _client;
     private readonly ILibraryManager _libraryManager;
     private readonly IMetadataLookupService _metadataLookup;
@@ -667,6 +670,17 @@ public partial class StrmSyncService
                     await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
                     Interlocked.Increment(ref moviesCreated);
 
+                    // Download artwork for unmatched movies
+                    if (!autoLookupTmdbId.HasValue && !tmdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched)
+                    {
+                        if (!string.IsNullOrEmpty(stream.StreamIcon))
+                        {
+                            var posterExt = GetImageExtension(stream.StreamIcon);
+                            var posterPath = Path.Combine(movieFolder, $"poster{posterExt}");
+                            await DownloadImageAsync(stream.StreamIcon, posterPath, ct).ConfigureAwait(false);
+                        }
+                    }
+
                     _logger.LogDebug("Created movie STRM: {StrmPath}", strmPath);
                 }
                 catch (Exception ex)
@@ -923,6 +937,27 @@ public partial class StrmSyncService
                     else
                     {
                         Interlocked.Increment(ref seriesSkipped);
+                    }
+
+                    // Download artwork for unmatched series
+                    if (!autoLookupTvdbId.HasValue && !tvdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched && seriesHasNewEpisodes)
+                    {
+                        // Download series poster
+                        if (!string.IsNullOrEmpty(series.Cover))
+                        {
+                            var posterExt = GetImageExtension(series.Cover);
+                            var posterPath = Path.Combine(seriesFolder, $"poster{posterExt}");
+                            await DownloadImageAsync(series.Cover, posterPath, ct).ConfigureAwait(false);
+                        }
+
+                        // Download series backdrop/fanart
+                        if (series.BackdropPaths.Count > 0)
+                        {
+                            var backdropUrl = series.BackdropPaths.First();
+                            var fanartExt = GetImageExtension(backdropUrl);
+                            var fanartPath = Path.Combine(seriesFolder, $"fanart{fanartExt}");
+                            await DownloadImageAsync(backdropUrl, fanartPath, ct).ConfigureAwait(false);
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -1267,6 +1302,77 @@ public partial class StrmSyncService
         // This triggers an async scan of all libraries
         _libraryManager.QueueLibraryScan();
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Downloads an image from a URL and saves it to the specified path.
+    /// </summary>
+    /// <param name="imageUrl">The URL of the image to download.</param>
+    /// <param name="destinationPath">The local path to save the image.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if download was successful, false otherwise.</returns>
+    private async Task<bool> DownloadImageAsync(string? imageUrl, string destinationPath, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(imageUrl))
+        {
+            return false;
+        }
+
+        // Skip if file already exists
+        if (File.Exists(destinationPath))
+        {
+            return true;
+        }
+
+        try
+        {
+            using var response = await ImageHttpClient.GetAsync(imageUrl, cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                return false;
+            }
+
+            // Ensure directory exists
+            var directory = Path.GetDirectoryName(destinationPath);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            // Save image
+            var imageBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+            await File.WriteAllBytesAsync(destinationPath, imageBytes, cancellationToken).ConfigureAwait(false);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to download image from {Url}", imageUrl);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Gets the file extension from an image URL, defaulting to .jpg.
+    /// </summary>
+    private static string GetImageExtension(string? imageUrl)
+    {
+        if (string.IsNullOrEmpty(imageUrl))
+        {
+            return ".jpg";
+        }
+
+        var uri = new Uri(imageUrl, UriKind.RelativeOrAbsolute);
+        var path = uri.IsAbsoluteUri ? uri.AbsolutePath : imageUrl;
+        var ext = Path.GetExtension(path)?.ToLowerInvariant();
+
+        return ext switch
+        {
+            ".png" => ".png",
+            ".webp" => ".webp",
+            ".gif" => ".gif",
+            _ => ".jpg"
+        };
     }
 
     [GeneratedRegex(@"\s*\((\d{4})\)\s*$")]
