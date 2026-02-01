@@ -559,8 +559,10 @@ public partial class StrmSyncService
         int moviesCreated = 0;
         int moviesSkipped = 0;
         int errors = 0;
+        int unmatchedCount = 0;
         var syncedFilesLock = new object();
         var failedItems = new ConcurrentBag<FailedItem>();
+        var unmatchedMovies = new ConcurrentBag<string>();
 
         // Parse folder ID overrides
         var tmdbOverrides = ParseFolderIdOverrides(config.TmdbFolderIdOverrides);
@@ -594,6 +596,11 @@ public partial class StrmSyncService
                     if (enableMetadataLookup && !tmdbOverrides.ContainsKey(baseName))
                     {
                         autoLookupTmdbId = await _metadataLookup.LookupMovieTmdbIdAsync(movieName, year, ct).ConfigureAwait(false);
+                        if (!autoLookupTmdbId.HasValue)
+                        {
+                            Interlocked.Increment(ref unmatchedCount);
+                            unmatchedMovies.Add(baseName);
+                        }
                     }
 
                     string folderName = BuildMovieFolderName(movieName, year, tmdbOverrides, autoLookupTmdbId);
@@ -649,6 +656,16 @@ public partial class StrmSyncService
         result.MoviesSkipped += moviesSkipped;
         result.Errors += errors;
         result.AddFailedItems(failedItems);
+
+        // Log unmatched movies
+        if (unmatchedCount > 0)
+        {
+            _logger.LogInformation("Movies without TMDb match: {Count} items", unmatchedCount);
+            foreach (var movie in unmatchedMovies.OrderBy(m => m))
+            {
+                _logger.LogInformation("  Unmatched movie: {MovieName}", movie);
+            }
+        }
 
         CurrentProgress.CategoriesProcessed = 1;
     }
@@ -722,9 +739,11 @@ public partial class StrmSyncService
         int episodesSkipped = 0;
         int errors = 0;
         int smartSkipped = 0;
+        int unmatchedCount = 0;
         var syncedFilesLock = new object();
         var processedSeasons = new ConcurrentDictionary<string, bool>();
         var failedItems = new ConcurrentBag<FailedItem>();
+        var unmatchedSeries = new ConcurrentBag<string>();
 
         // Parse folder ID overrides
         var tvdbOverrides = ParseFolderIdOverrides(config.TvdbFolderIdOverrides);
@@ -758,6 +777,11 @@ public partial class StrmSyncService
                     if (enableMetadataLookup && !tvdbOverrides.ContainsKey(baseName))
                     {
                         autoLookupTvdbId = await _metadataLookup.LookupSeriesTvdbIdAsync(seriesName, year, ct).ConfigureAwait(false);
+                        if (!autoLookupTvdbId.HasValue)
+                        {
+                            Interlocked.Increment(ref unmatchedCount);
+                            unmatchedSeries.Add(baseName);
+                        }
                     }
 
                     string seriesFolderName = BuildSeriesFolderName(seriesName, year, tvdbOverrides, autoLookupTvdbId);
@@ -896,6 +920,16 @@ public partial class StrmSyncService
         if (smartSkipped > 0)
         {
             _logger.LogInformation("Smart-skipped {Count} series (already had STRM files)", smartSkipped);
+        }
+
+        // Log unmatched series
+        if (unmatchedCount > 0)
+        {
+            _logger.LogInformation("Series without TVDb match: {Count} items", unmatchedCount);
+            foreach (var series in unmatchedSeries.OrderBy(s => s))
+            {
+                _logger.LogInformation("  Unmatched series: {SeriesName}", series);
+            }
         }
 
         CurrentProgress.CategoriesProcessed = 1;
@@ -1235,8 +1269,8 @@ public partial class StrmSyncService
     [GeneratedRegex(@"\b(?:Blu-?Ray|BRRip|BDRip|WEB-?(?:Rip|DL)?|HDTV|DVDRip|DVD|REMUX|CAM|TS|HC|PROPER|REPACK)\b", RegexOptions.IgnoreCase)]
     private static partial Regex SourceTagPattern();
 
-    // Fixes malformed quotes like "'\'" "\''" "'\''" to just "'"
-    [GeneratedRegex(@"'(?:[\\']+')*|(?:[\\'])+(?='|\s|$)")]
+    // Fixes malformed quotes like "'\'" "\''" "'\''" "Bob'\''s" to just "'"
+    [GeneratedRegex(@"'\\''|'\\'|\\''|''+")]
     private static partial Regex MalformedQuotePattern();
 }
 
