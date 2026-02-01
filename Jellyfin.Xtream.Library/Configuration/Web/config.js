@@ -4,8 +4,10 @@ const XtreamLibraryConfig = {
     // Cache for loaded categories
     vodCategories: [],
     seriesCategories: [],
+    liveCategories: [],
     selectedVodCategoryIds: [],
     selectedSeriesCategoryIds: [],
+    selectedLiveCategoryIds: [],
 
     // Folder definitions for multi-folder mode
     // Each entry: { name: 'FolderName', categoryIds: [1, 2, 3] }
@@ -13,7 +15,7 @@ const XtreamLibraryConfig = {
     seriesFolderDefinitions: [],
 
     // Track last clicked checkbox per category type for shift+click range selection
-    lastClickedIndex: { vod: null, series: null },
+    lastClickedIndex: { vod: null, series: null, live: null },
 
     // Tab switching
     switchTab: function (tabName) {
@@ -80,12 +82,38 @@ const XtreamLibraryConfig = {
             self.updateFolderModeVisibility('vod');
             self.updateFolderModeVisibility('series');
 
+            // Live TV settings
+            document.getElementById('chkEnableLiveTv').checked = config.EnableLiveTv || false;
+            document.getElementById('chkEnableEpg').checked = config.EnableEpg !== false;
+            document.getElementById('selLiveTvOutputFormat').value = config.LiveTvOutputFormat || 'm3u8';
+            document.getElementById('chkIncludeAdultChannels').checked = config.IncludeAdultChannels || false;
+            document.getElementById('txtM3UCacheMinutes').value = config.M3UCacheMinutes || 15;
+            document.getElementById('txtEpgCacheMinutes').value = config.EpgCacheMinutes || 30;
+            document.getElementById('txtEpgDaysToFetch').value = config.EpgDaysToFetch || 2;
+            document.getElementById('txtEpgParallelism').value = config.EpgParallelism || 5;
+            self.selectedLiveCategoryIds = config.SelectedLiveCategoryIds || [];
+
+            // Title cleaning
+            document.getElementById('chkEnableChannelNameCleaning').checked = config.EnableChannelNameCleaning !== false;
+            document.getElementById('txtChannelRemoveTerms').value = config.ChannelRemoveTerms || '';
+
+            // Channel overrides
+            document.getElementById('txtChannelOverrides').value = config.ChannelOverrides || '';
+
+            // Catch-up
+            document.getElementById('chkEnableCatchup').checked = config.EnableCatchup || false;
+            document.getElementById('txtCatchupDays').value = config.CatchupDays || 7;
+
+            // Update Live TV URLs
+            self.updateLiveTvUrls();
+
             Dashboard.hideLoadingMsg();
 
             // Auto-load categories if credentials are configured
             if (config.BaseUrl && config.Username) {
                 self.loadVodCategories();
                 self.loadSeriesCategories();
+                self.loadLiveCategories();
             }
         });
 
@@ -149,6 +177,28 @@ const XtreamLibraryConfig = {
             config.SyncScheduleType = document.getElementById('selSyncScheduleType').value;
             config.SyncDailyHour = parseInt(document.getElementById('selSyncDailyHour').value) || 3;
             config.SyncDailyMinute = parseInt(document.getElementById('selSyncDailyMinute').value) || 0;
+
+            // Live TV settings
+            config.EnableLiveTv = document.getElementById('chkEnableLiveTv').checked;
+            config.EnableEpg = document.getElementById('chkEnableEpg').checked;
+            config.LiveTvOutputFormat = document.getElementById('selLiveTvOutputFormat').value;
+            config.IncludeAdultChannels = document.getElementById('chkIncludeAdultChannels').checked;
+            config.M3UCacheMinutes = parseInt(document.getElementById('txtM3UCacheMinutes').value) || 15;
+            config.EpgCacheMinutes = parseInt(document.getElementById('txtEpgCacheMinutes').value) || 30;
+            config.EpgDaysToFetch = parseInt(document.getElementById('txtEpgDaysToFetch').value) || 2;
+            config.EpgParallelism = parseInt(document.getElementById('txtEpgParallelism').value) || 5;
+            config.SelectedLiveCategoryIds = self.getSelectedCategoryIds('live');
+
+            // Title cleaning
+            config.EnableChannelNameCleaning = document.getElementById('chkEnableChannelNameCleaning').checked;
+            config.ChannelRemoveTerms = document.getElementById('txtChannelRemoveTerms').value;
+
+            // Channel overrides
+            config.ChannelOverrides = document.getElementById('txtChannelOverrides').value;
+
+            // Catch-up
+            config.EnableCatchup = document.getElementById('chkEnableCatchup').checked;
+            config.CatchupDays = parseInt(document.getElementById('txtCatchupDays').value) || 7;
 
             ApiClient.updatePluginConfiguration(self.pluginUniqueId, config).then(function () {
                 Dashboard.processPluginConfigurationUpdateResult();
@@ -664,7 +714,14 @@ const XtreamLibraryConfig = {
     },
 
     renderCategoryList: function (type, categories, selectedIds) {
-        const listId = type === 'vod' ? 'vodCategoryList' : 'seriesCategoryList';
+        var listId;
+        if (type === 'vod') {
+            listId = 'vodCategoryList';
+        } else if (type === 'series') {
+            listId = 'seriesCategoryList';
+        } else {
+            listId = 'liveCategoryList';
+        }
         const container = document.getElementById(listId);
 
         if (!categories || categories.length === 0) {
@@ -800,6 +857,76 @@ const XtreamLibraryConfig = {
             console.error('CleanLibraries error:', error);
             statusSpan.innerHTML = '<span style="color: red;">Failed: ' + (error.message || 'Check console for details') + '</span>';
         });
+    },
+
+    // Live TV functions
+    loadLiveCategories: function () {
+        const statusSpan = document.getElementById('liveCategoryLoadStatus');
+        statusSpan.innerHTML = '<span style="color: orange;">Loading...</span>';
+        const self = this;
+
+        fetch(ApiClient.getUrl('XtreamLibrary/Categories/Live'), {
+            method: 'GET',
+            headers: {
+                'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
+            }
+        }).then(function (r) {
+            return r.ok ? r.json() : Promise.reject(r);
+        }).then(function (categories) {
+            self.liveCategories = categories || [];
+            self.renderCategoryList('live', self.liveCategories, self.selectedLiveCategoryIds);
+            document.getElementById('liveSingleFolderSection').style.display = 'block';
+            statusSpan.innerHTML = '<span style="color: green;">Loaded ' + self.liveCategories.length + ' categories</span>';
+        }).catch(function (error) {
+            console.error('Failed to load Live TV categories:', error);
+            statusSpan.innerHTML = '<span style="color: red;">Failed to load. Check credentials.</span>';
+        });
+    },
+
+    updateLiveTvUrls: function () {
+        var baseUrl = window.location.origin;
+        document.getElementById('txtM3UUrl').value = baseUrl + '/XtreamLibrary/LiveTv.m3u';
+        document.getElementById('txtEpgUrl').value = baseUrl + '/XtreamLibrary/Epg.xml';
+        document.getElementById('txtCatchupUrl').value = baseUrl + '/XtreamLibrary/Catchup.m3u';
+    },
+
+    copyToClipboard: function (elementId) {
+        var input = document.getElementById(elementId);
+        input.select();
+        input.setSelectionRange(0, 99999);
+        navigator.clipboard.writeText(input.value).then(function () {
+            // Brief visual feedback
+            var originalBg = input.style.background;
+            input.style.background = 'rgba(0, 200, 0, 0.3)';
+            setTimeout(function () {
+                input.style.background = originalBg;
+            }, 500);
+        }).catch(function (err) {
+            console.error('Failed to copy:', err);
+        });
+    },
+
+    refreshLiveTvCache: function () {
+        const statusSpan = document.getElementById('liveTvCacheStatus');
+        statusSpan.innerHTML = '<span style="color: orange;">Refreshing...</span>';
+
+        fetch(ApiClient.getUrl('XtreamLibrary/LiveTv/RefreshCache'), {
+            method: 'POST',
+            headers: {
+                'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
+            }
+        }).then(function (response) {
+            return response.json();
+        }).then(function (data) {
+            if (data.Success) {
+                statusSpan.innerHTML = '<span style="color: green;">' + data.Message + '</span>';
+            } else {
+                statusSpan.innerHTML = '<span style="color: red;">Failed to refresh cache.</span>';
+            }
+        }).catch(function (error) {
+            console.error('RefreshLiveTvCache error:', error);
+            statusSpan.innerHTML = '<span style="color: red;">Failed: ' + (error.message || 'Check console for details') + '</span>';
+        });
     }
 };
 
@@ -902,6 +1029,23 @@ function initXtreamLibraryConfig() {
     if (selSeriesFolderMode) {
         selSeriesFolderMode.addEventListener('change', function () {
             XtreamLibraryConfig.updateFolderModeVisibility('series');
+        });
+    }
+
+    // Live TV event handlers
+    var btnLoadLiveCategories = document.getElementById('btnLoadLiveCategories');
+    if (btnLoadLiveCategories) {
+        btnLoadLiveCategories.addEventListener('click', function (e) {
+            e.preventDefault();
+            XtreamLibraryConfig.loadLiveCategories();
+        });
+    }
+
+    var btnRefreshLiveTvCache = document.getElementById('btnRefreshLiveTvCache');
+    if (btnRefreshLiveTvCache) {
+        btnRefreshLiveTvCache.addEventListener('click', function (e) {
+            e.preventDefault();
+            XtreamLibraryConfig.refreshLiveTvCache();
         });
     }
 

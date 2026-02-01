@@ -178,6 +178,56 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IDi
         }
     }
 
+    public Task<List<Category>> GetLiveCategoryAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken) =>
+        QueryApi<List<Category>>(
+            connectionInfo,
+            $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}&action=get_live_categories",
+            cancellationToken);
+
+    public Task<List<LiveStreamInfo>> GetLiveStreamsByCategoryAsync(ConnectionInfo connectionInfo, int categoryId, CancellationToken cancellationToken) =>
+        QueryApi<List<LiveStreamInfo>>(
+            connectionInfo,
+            $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}&action=get_live_streams&category_id={categoryId}",
+            cancellationToken);
+
+    public Task<List<LiveStreamInfo>> GetAllLiveStreamsAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken) =>
+        QueryApi<List<LiveStreamInfo>>(
+            connectionInfo,
+            $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}&action=get_live_streams",
+            cancellationToken);
+
+    public async Task<EpgListings?> GetShortEpgAsync(ConnectionInfo connectionInfo, int streamId, int limit, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await QueryApi<EpgListings>(
+                connectionInfo,
+                $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}&action=get_short_epg&stream_id={streamId}&limit={limit}",
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to fetch short EPG for stream ID {StreamId}", streamId);
+            return null;
+        }
+    }
+
+    public async Task<EpgListings?> GetSimpleDataTableAsync(ConnectionInfo connectionInfo, int streamId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await QueryApi<EpgListings>(
+                connectionInfo,
+                $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}&action=get_simple_data_table&stream_id={streamId}",
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to fetch EPG data table for stream ID {StreamId}", streamId);
+            return null;
+        }
+    }
+
     /// <summary>
     /// Dispose the HTTP client.
     /// </summary>

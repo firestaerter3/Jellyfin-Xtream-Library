@@ -35,6 +35,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<MetadataCache>();
         serviceCollection.AddSingleton<IMetadataLookupService, MetadataLookupService>();
         serviceCollection.AddSingleton<StrmSyncService>();
+        serviceCollection.AddSingleton<LiveTvService>();
         serviceCollection.AddSingleton<IScheduledTask, SyncLibraryTask>();
     }
 }

@@ -68,6 +68,11 @@
         .folder-item .category-list {
             max-height: 200px;
         }
+        .url-display {
+            background: rgba(0,0,0,0.3);
+            font-family: monospace;
+            font-size: 0.9em;
+        }
     </style>
     <div data-role="content">
         <div class="content-primary">
@@ -81,6 +86,7 @@
                         <button type="button" class="xtream-tab active" data-tab="general">General</button>
                         <button type="button" class="xtream-tab" data-tab="movies">Movies</button>
                         <button type="button" class="xtream-tab" data-tab="series">Series</button>
+                        <button type="button" class="xtream-tab" data-tab="livetv">Live TV</button>
                     </div>
 
                     <!-- General Tab -->
@@ -437,6 +443,213 @@
                                 <div class="fieldDescription" style="margin-top: 10px;">
                                     Categories not assigned to any folder will sync to the root Series folder.
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live TV Tab -->
+                    <div id="tab-livetv" class="xtream-tab-content">
+                        <div class="verticalSection">
+                            <h3 class="sectionTitle">Live TV Settings</h3>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkEnableLiveTv" name="EnableLiveTv" />
+                                    <span>Enable Live TV</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Enable M3U and EPG endpoints for Jellyfin's Live TV tuner.
+                                </div>
+                            </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkEnableEpg" name="EnableEpg" />
+                                    <span>Enable EPG</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Generate XMLTV EPG data for program guide.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="selLiveTvOutputFormat">Stream Format</label>
+                                <select is="emby-select" id="selLiveTvOutputFormat" name="LiveTvOutputFormat">
+                                    <option value="m3u8">HLS (m3u8)</option>
+                                    <option value="ts">MPEG-TS (ts)</option>
+                                </select>
+                                <div class="fieldDescription">
+                                    Output format for live streams. HLS is recommended for most setups.
+                                </div>
+                            </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkIncludeAdultChannels" name="IncludeAdultChannels" />
+                                    <span>Include Adult Channels</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Include channels marked as adult content.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="verticalSection">
+                            <h3 class="sectionTitle">Cache Settings</h3>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtM3UCacheMinutes">M3U Cache (minutes)</label>
+                                <input is="emby-input" type="number" id="txtM3UCacheMinutes" name="M3UCacheMinutes"
+                                       min="1" max="60" step="1" />
+                                <div class="fieldDescription">
+                                    How long to cache the M3U playlist (1-60 minutes).
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtEpgCacheMinutes">EPG Cache (minutes)</label>
+                                <input is="emby-input" type="number" id="txtEpgCacheMinutes" name="EpgCacheMinutes"
+                                       min="5" max="120" step="1" />
+                                <div class="fieldDescription">
+                                    How long to cache the EPG data (5-120 minutes).
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtEpgDaysToFetch">EPG Days to Fetch</label>
+                                <input is="emby-input" type="number" id="txtEpgDaysToFetch" name="EpgDaysToFetch"
+                                       min="1" max="7" step="1" />
+                                <div class="fieldDescription">
+                                    Number of days of EPG data to fetch (1-7).
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtEpgParallelism">EPG Parallelism</label>
+                                <input is="emby-input" type="number" id="txtEpgParallelism" name="EpgParallelism"
+                                       min="1" max="10" step="1" />
+                                <div class="fieldDescription">
+                                    Number of parallel EPG fetch requests (1-10). Higher = faster but more load on provider.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="verticalSection">
+                            <h3 class="sectionTitle">Live TV Categories</h3>
+                            <div class="fieldDescription">
+                                Select specific categories to include. Leave all unchecked to include all categories.
+                            </div>
+                            <div>
+                                <button is="emby-button" type="button" id="btnLoadLiveCategories" class="raised button-submit">
+                                    <span>Load Categories</span>
+                                </button>
+                                <span id="liveCategoryLoadStatus" style="margin-left: 10px;"></span>
+                            </div>
+                            <div id="liveSingleFolderSection" style="display: none;">
+                                <div class="category-actions">
+                                    <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.selectAllCategories('live')">
+                                        <span>Select All</span>
+                                    </button>
+                                    <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.deselectAllCategories('live')">
+                                        <span>Deselect All</span>
+                                    </button>
+                                </div>
+                                <div id="liveCategoryList" class="category-list"></div>
+                            </div>
+                        </div>
+
+                        <div class="verticalSection">
+                            <h3 class="sectionTitle">Title Cleaning</h3>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkEnableChannelNameCleaning" name="EnableChannelNameCleaning" />
+                                    <span>Enable Channel Name Cleaning</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Remove country prefixes, quality tags, and codec info from channel names.
+                                    E.g., "UK: BBC One | HD | HEVC" becomes "BBC One".
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtChannelRemoveTerms">Custom Removal Terms (one per line)</label>
+                                <textarea is="emby-textarea" id="txtChannelRemoveTerms" rows="4"
+                                    placeholder="| NL |&#10;FHD |&#10;HEVC" style="width: 100%; font-family: monospace;"></textarea>
+                                <div class="fieldDescription">
+                                    Additional terms to remove from channel names. One term per line.
+                                    Built-in patterns: Country prefixes (UK:, US:, etc.), Quality tags (HD, FHD, 4K),
+                                    Codecs (HEVC, H.264), Resolutions (1080p, 720p).
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="verticalSection">
+                            <h3 class="sectionTitle">Channel Overrides</h3>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtChannelOverrides">Channel Overrides (one per line)</label>
+                                <textarea is="emby-textarea" id="txtChannelOverrides" rows="6"
+                                    placeholder="123=BBC One&#10;456=CNN|2&#10;789=Sky News|5|http://logo.png&#10;101=|10|" style="width: 100%; font-family: monospace;"></textarea>
+                                <div class="fieldDescription">
+                                    Override channel name, number, or logo. Format: StreamId=Name|Number|LogoUrl<br/>
+                                    Examples:<br/>
+                                    <code>123=BBC One</code> - Just rename<br/>
+                                    <code>456=CNN|2</code> - Rename and set channel number<br/>
+                                    <code>789=Sky News|5|http://logo.png</code> - All fields<br/>
+                                    <code>101=|10|</code> - Just channel number (keep original name)
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="verticalSection">
+                            <h3 class="sectionTitle">Catch-up / Timeshift</h3>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkEnableCatchup" name="EnableCatchup" />
+                                    <span>Enable Catch-up</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Enable catch-up attributes for channels that support timeshift.
+                                    Only channels with tv_archive=1 on the provider support this feature.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtCatchupDays">Catch-up Days</label>
+                                <input is="emby-input" type="number" id="txtCatchupDays" name="CatchupDays"
+                                       min="1" max="14" step="1" />
+                                <div class="fieldDescription">
+                                    Number of days of catch-up to show (1-14). Limited by channel's archive duration.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="verticalSection">
+                            <h3 class="sectionTitle">Setup URLs</h3>
+                            <div class="fieldDescription">
+                                Add these URLs to Jellyfin's Live TV settings (Dashboard → Live TV → Add Tuner).
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtM3UUrl">M3U Playlist URL</label>
+                                <div style="display: flex; gap: 10px;">
+                                    <input is="emby-input" type="text" id="txtM3UUrl" readonly style="flex: 1;" />
+                                    <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.copyToClipboard('txtM3UUrl')">
+                                        <span>Copy</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtEpgUrl">EPG (XMLTV) URL</label>
+                                <div style="display: flex; gap: 10px;">
+                                    <input is="emby-input" type="text" id="txtEpgUrl" readonly style="flex: 1;" />
+                                    <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.copyToClipboard('txtEpgUrl')">
+                                        <span>Copy</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtCatchupUrl">Catch-up M3U URL</label>
+                                <div style="display: flex; gap: 10px;">
+                                    <input is="emby-input" type="text" id="txtCatchupUrl" readonly style="flex: 1;" />
+                                    <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.copyToClipboard('txtCatchupUrl')">
+                                        <span>Copy</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div style="margin-top: 10px;">
+                                <button is="emby-button" type="button" id="btnRefreshLiveTvCache" class="raised">
+                                    <span>Refresh Cache</span>
+                                </button>
+                                <span id="liveTvCacheStatus" style="margin-left: 10px;"></span>
                             </div>
                         </div>
                     </div>

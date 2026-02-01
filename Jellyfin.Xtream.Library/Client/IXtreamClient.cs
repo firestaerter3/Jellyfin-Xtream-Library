@@ -18,6 +18,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Xtream.Library.Client.Models;
 
+#pragma warning disable CA1002
+
 #pragma warning disable CS1591
 namespace Jellyfin.Xtream.Library.Client;
 
@@ -36,4 +38,14 @@ public interface IXtreamClient
     Task<SeriesStreamInfo> GetSeriesStreamsBySeriesAsync(ConnectionInfo connectionInfo, int seriesId, CancellationToken cancellationToken);
 
     Task<VodInfoResponse?> GetVodInfoAsync(ConnectionInfo connectionInfo, int vodId, CancellationToken cancellationToken);
+
+    Task<List<Category>> GetLiveCategoryAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken);
+
+    Task<List<LiveStreamInfo>> GetLiveStreamsByCategoryAsync(ConnectionInfo connectionInfo, int categoryId, CancellationToken cancellationToken);
+
+    Task<List<LiveStreamInfo>> GetAllLiveStreamsAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken);
+
+    Task<EpgListings?> GetShortEpgAsync(ConnectionInfo connectionInfo, int streamId, int limit, CancellationToken cancellationToken);
+
+    Task<EpgListings?> GetSimpleDataTableAsync(ConnectionInfo connectionInfo, int streamId, CancellationToken cancellationToken);
 }
