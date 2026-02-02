@@ -712,39 +712,6 @@ public partial class StrmSyncService
                     int? year = ExtractYear(stream.Name);
                     string baseName = year.HasValue ? $"{movieName} ({year})" : movieName;
 
-                    // Fetch VOD info to get provider TMDB ID (if metadata lookup enabled)
-                    VodInfoResponse? vodInfo = null;
-                    int? providerTmdbId = null;
-                    if (enableMetadataLookup && !tmdbOverrides.ContainsKey(baseName))
-                    {
-                        try
-                        {
-                            vodInfo = await _client.GetVodInfoAsync(connectionInfo, stream.StreamId, ct).ConfigureAwait(false);
-                            if (!string.IsNullOrEmpty(vodInfo?.Info?.TmdbId) && int.TryParse(vodInfo.Info.TmdbId, out int tmdbParsed))
-                            {
-                                providerTmdbId = tmdbParsed;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogDebug(ex, "Failed to fetch VOD info for provider TMDB: {StreamId}", stream.StreamId);
-                        }
-                    }
-
-                    // Only do metadata lookup if provider doesn't have TMDB ID
-                    int? autoLookupTmdbId = null;
-                    if (!providerTmdbId.HasValue && enableMetadataLookup && !tmdbOverrides.ContainsKey(baseName))
-                    {
-                        autoLookupTmdbId = await _metadataLookup.LookupMovieTmdbIdAsync(movieName, year, ct).ConfigureAwait(false);
-                        if (!autoLookupTmdbId.HasValue)
-                        {
-                            Interlocked.Increment(ref unmatchedCount);
-                            unmatchedMovies.Add(baseName);
-                        }
-                    }
-
-                    string folderName = BuildMovieFolderName(movieName, year, tmdbOverrides, providerTmdbId, autoLookupTmdbId);
-
                     // Determine target folders based on category mappings
                     var targetFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     foreach (var categoryId in categoryIds)
@@ -758,10 +725,72 @@ public partial class StrmSyncService
                         }
                     }
 
-                    // If no folder mappings, sync to root movies folder
                     if (targetFolders.Count == 0)
                     {
                         targetFolders.Add(string.Empty);
+                    }
+
+                    // Quick check: does a folder for this movie already exist? If so, skip API calls
+                    string? existingFolderName = null;
+                    foreach (var targetFolder in targetFolders)
+                    {
+                        string movieBasePath = string.IsNullOrEmpty(targetFolder)
+                            ? moviesPath
+                            : Path.Combine(moviesPath, targetFolder);
+
+                        if (Directory.Exists(movieBasePath))
+                        {
+                            // Look for folder starting with baseName
+                            var matchingFolders = Directory.GetDirectories(movieBasePath, $"{baseName}*");
+                            if (matchingFolders.Length > 0)
+                            {
+                                existingFolderName = Path.GetFileName(matchingFolders[0]);
+                                break;
+                            }
+                        }
+                    }
+
+                    // If folder exists, use existing name and skip API calls
+                    VodInfoResponse? vodInfo = null;
+                    int? providerTmdbId = null;
+                    int? autoLookupTmdbId = null;
+                    string folderName;
+
+                    if (existingFolderName != null)
+                    {
+                        folderName = existingFolderName;
+                    }
+                    else
+                    {
+                        // New movie - fetch provider TMDB ID
+                        if (enableMetadataLookup && !tmdbOverrides.ContainsKey(baseName))
+                        {
+                            try
+                            {
+                                vodInfo = await _client.GetVodInfoAsync(connectionInfo, stream.StreamId, ct).ConfigureAwait(false);
+                                if (!string.IsNullOrEmpty(vodInfo?.Info?.TmdbId) && int.TryParse(vodInfo.Info.TmdbId, out int tmdbParsed))
+                                {
+                                    providerTmdbId = tmdbParsed;
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogDebug(ex, "Failed to fetch VOD info for provider TMDB: {StreamId}", stream.StreamId);
+                            }
+                        }
+
+                        // Only do metadata lookup if provider doesn't have TMDB ID
+                        if (!providerTmdbId.HasValue && enableMetadataLookup && !tmdbOverrides.ContainsKey(baseName))
+                        {
+                            autoLookupTmdbId = await _metadataLookup.LookupMovieTmdbIdAsync(movieName, year, ct).ConfigureAwait(false);
+                            if (!autoLookupTmdbId.HasValue)
+                            {
+                                Interlocked.Increment(ref unmatchedCount);
+                                unmatchedMovies.Add(baseName);
+                            }
+                        }
+
+                        folderName = BuildMovieFolderName(movieName, year, tmdbOverrides, providerTmdbId, autoLookupTmdbId);
                     }
 
                     // Build stream URL (same for all copies)
