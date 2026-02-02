@@ -636,6 +636,9 @@ public partial class StrmSyncService
         {
             _logger.LogInformation("Pre-fetching media info for {Count} movies (parallelism={Parallelism})...", allMovies.Count, config.SyncParallelism);
             CurrentProgress.Phase = "Fetching media info";
+            CurrentProgress.TotalItems = allMovies.Count;
+            CurrentProgress.ItemsProcessed = 0;
+            int mediaInfoFetched = 0;
 
             await Parallel.ForEachAsync(
                 allMovies,
@@ -656,6 +659,11 @@ public partial class StrmSyncService
                     {
                         _logger.LogDebug(ex, "Failed to pre-fetch VOD info for {StreamId}", movieEntry.Stream.StreamId);
                         vodInfoCache[movieEntry.Stream.StreamId] = null;
+                    }
+                    finally
+                    {
+                        Interlocked.Increment(ref mediaInfoFetched);
+                        CurrentProgress.ItemsProcessed = mediaInfoFetched;
                     }
                 }).ConfigureAwait(false);
 
