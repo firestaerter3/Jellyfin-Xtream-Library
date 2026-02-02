@@ -337,7 +337,12 @@ public partial class StrmSyncService
 
         var connectionInfo = Plugin.Instance.Creds;
 
-        _logger.LogInformation("Starting Xtream library sync to {LibraryPath}", config.LibraryPath);
+        // Configure rate limiting settings
+        _client.RequestDelayMs = config.RequestDelayMs;
+        _client.MaxRetries = config.MaxRetries;
+        _client.RetryDelayMs = config.RetryDelayMs;
+
+        _logger.LogInformation("Starting Xtream library sync to {LibraryPath} (requestDelay={DelayMs}ms, maxRetries={MaxRetries})", config.LibraryPath, config.RequestDelayMs, config.MaxRetries);
 
         var existingStrmFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 

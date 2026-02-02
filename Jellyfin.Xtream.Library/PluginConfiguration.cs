@@ -280,4 +280,27 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Limited by the channel's tv_archive_duration.
     /// </summary>
     public int CatchupDays { get; set; } = 7;
+
+    // =====================
+    // Rate Limiting Settings
+    // =====================
+
+    /// <summary>
+    /// Gets or sets the delay in milliseconds between API requests.
+    /// Helps prevent rate limiting (429 errors) from the provider.
+    /// Set to 0 for no delay. Default: 100ms.
+    /// </summary>
+    public int RequestDelayMs { get; set; } = 100;
+
+    /// <summary>
+    /// Gets or sets the maximum number of retries for rate-limited requests.
+    /// When a 429 response is received, the request will be retried after a delay.
+    /// </summary>
+    public int MaxRetries { get; set; } = 3;
+
+    /// <summary>
+    /// Gets or sets the initial retry delay in milliseconds after a 429 response.
+    /// Each subsequent retry doubles this delay (exponential backoff).
+    /// </summary>
+    public int RetryDelayMs { get; set; } = 1000;
 }

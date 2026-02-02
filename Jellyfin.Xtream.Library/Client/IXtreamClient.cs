@@ -25,6 +25,21 @@ namespace Jellyfin.Xtream.Library.Client;
 
 public interface IXtreamClient
 {
+    /// <summary>
+    /// Gets or sets the delay in milliseconds between API requests.
+    /// </summary>
+    int RequestDelayMs { get; set; }
+
+    /// <summary>
+    /// Gets or sets the maximum number of retries for rate-limited requests.
+    /// </summary>
+    int MaxRetries { get; set; }
+
+    /// <summary>
+    /// Gets or sets the initial retry delay in milliseconds after a 429 response.
+    /// </summary>
+    int RetryDelayMs { get; set; }
+
     Task<PlayerApi> GetUserAndServerInfoAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken);
 
     Task<List<Category>> GetVodCategoryAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken);

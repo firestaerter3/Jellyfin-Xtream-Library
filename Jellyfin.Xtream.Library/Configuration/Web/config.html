@@ -239,6 +239,33 @@
                                     usage for large libraries. Set to 0 to disable batching. Default: 10.
                                 </div>
                             </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtRequestDelayMs">Request Delay (ms)</label>
+                                <input is="emby-input" type="number" id="txtRequestDelayMs" name="RequestDelayMs"
+                                       min="0" max="5000" step="50" />
+                                <div class="fieldDescription">
+                                    Delay in milliseconds between API requests (0-5000). Helps prevent rate limiting (429 errors)
+                                    from providers that limit request frequency. Default: 100ms. Set to 0 for no delay.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtMaxRetries">Max Retries for Rate Limits</label>
+                                <input is="emby-input" type="number" id="txtMaxRetries" name="MaxRetries"
+                                       min="0" max="10" step="1" />
+                                <div class="fieldDescription">
+                                    Maximum number of retries when rate limited (429 response). Each retry waits longer
+                                    (exponential backoff). Default: 3.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtRetryDelayMs">Initial Retry Delay (ms)</label>
+                                <input is="emby-input" type="number" id="txtRetryDelayMs" name="RetryDelayMs"
+                                       min="100" max="30000" step="100" />
+                                <div class="fieldDescription">
+                                    Initial delay after a 429 response before retrying (100-30000ms). Each subsequent retry
+                                    doubles this delay. Default: 1000ms (1 second).
+                                </div>
+                            </div>
                             <div class="checkboxContainer checkboxContainer-withDescription">
                                 <label class="emby-checkbox-label">
                                     <input is="emby-checkbox" type="checkbox" id="chkDownloadArtworkForUnmatched" name="DownloadArtworkForUnmatched" />

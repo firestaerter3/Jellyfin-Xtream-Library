@@ -16,6 +16,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
@@ -44,6 +45,21 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
     {
         Error = NullableEventHandler(logger),
     };
+
+    /// <summary>
+    /// Gets or sets the delay in milliseconds between API requests.
+    /// </summary>
+    public int RequestDelayMs { get; set; }
+
+    /// <summary>
+    /// Gets or sets the maximum number of retries for rate-limited requests.
+    /// </summary>
+    public int MaxRetries { get; set; } = 3;
+
+    /// <summary>
+    /// Gets or sets the initial retry delay in milliseconds after a 429 response.
+    /// </summary>
+    public int RetryDelayMs { get; set; } = 1000;
 
     /// <summary>
     /// Updates the User-Agent header based on plugin configuration.
@@ -106,7 +122,7 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
     private async Task<T> QueryApi<T>(ConnectionInfo connectionInfo, string urlPath, CancellationToken cancellationToken)
     {
         Uri uri = new Uri(connectionInfo.BaseUrl + urlPath);
-        string jsonContent = await client.GetStringAsync(uri, cancellationToken).ConfigureAwait(false);
+        string jsonContent = await GetStringWithRetryAsync(uri, cancellationToken).ConfigureAwait(false);
 
         try
         {
@@ -124,6 +140,59 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
             string jsonSample = jsonContent.Length > 500 ? string.Concat(jsonContent.AsSpan(0, 500), "...") : jsonContent;
             logger.LogError(ex, "Failed to deserialize response from Xtream API (URL: {Url}). JSON content: {Json}", uri, jsonSample);
             throw;
+        }
+    }
+
+    private async Task<string> GetStringWithRetryAsync(Uri uri, CancellationToken cancellationToken)
+    {
+        int retryCount = 0;
+        int currentDelay = RetryDelayMs;
+
+        while (true)
+        {
+            try
+            {
+                using var response = await client.GetAsync(uri, cancellationToken).ConfigureAwait(false);
+
+                if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                {
+                    if (retryCount >= MaxRetries)
+                    {
+                        logger.LogError("Rate limited (429) after {Retries} retries for URL: {Url}", retryCount, uri);
+                        response.EnsureSuccessStatusCode(); // Throws HttpRequestException
+                    }
+
+                    // Check for Retry-After header
+                    if (response.Headers.RetryAfter?.Delta is TimeSpan retryAfter)
+                    {
+                        currentDelay = (int)retryAfter.TotalMilliseconds;
+                    }
+
+                    logger.LogWarning("Rate limited (429) for URL: {Url}. Retry {Retry}/{MaxRetries} after {Delay}ms", uri, retryCount + 1, MaxRetries, currentDelay);
+                    await Task.Delay(currentDelay, cancellationToken).ConfigureAwait(false);
+                    retryCount++;
+                    currentDelay *= 2; // Exponential backoff
+                    continue;
+                }
+
+                response.EnsureSuccessStatusCode();
+                var content = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+                // Apply request delay to prevent rate limiting
+                if (RequestDelayMs > 0)
+                {
+                    await Task.Delay(RequestDelayMs, cancellationToken).ConfigureAwait(false);
+                }
+
+                return content;
+            }
+            catch (HttpRequestException ex) when (retryCount < MaxRetries && ex.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                logger.LogWarning("Rate limited (429) for URL: {Url}. Retry {Retry}/{MaxRetries} after {Delay}ms", uri, retryCount + 1, MaxRetries, currentDelay);
+                await Task.Delay(currentDelay, cancellationToken).ConfigureAwait(false);
+                retryCount++;
+                currentDelay *= 2; // Exponential backoff
+            }
         }
     }
 
