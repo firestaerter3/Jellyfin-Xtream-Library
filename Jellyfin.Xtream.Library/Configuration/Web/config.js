@@ -443,37 +443,85 @@ const XtreamLibraryConfig = {
         self.isSyncing = true;
         syncBtn.querySelector('span').textContent = 'Cancel Sync';
         syncBtn.style.background = '#c0392b';
-        self.startProgressPolling();
 
-        ApiClient.fetch({
-            url: ApiClient.getUrl('XtreamLibrary/Sync'),
-            type: 'POST',
-            dataType: 'json'
-        }).then(function (response) {
-            if (response && typeof response.json === 'function') {
-                return response.json();
+        // Start sync in background
+        fetch(ApiClient.getUrl('XtreamLibrary/Sync'), {
+            method: 'POST',
+            headers: {
+                'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
             }
-            return response;
+        }).then(function (response) {
+            return response.json();
         }).then(function (data) {
-            self.stopProgressPolling();
-            self.resetSyncButton();
             if (data.Success) {
-                statusSpan.innerHTML = '<span style="color: green;">Sync completed!</span>';
-                self.displaySyncResult(data);
+                // Sync started successfully, begin polling for progress and completion
+                statusSpan.innerHTML = '<span style="color: orange;">Sync started...</span>';
+                self.startProgressPolling();
+                self.pollForCompletion();
+            } else if (data.Message && data.Message.includes('already in progress')) {
+                // Sync already running, just start polling
+                statusSpan.innerHTML = '<span style="color: orange;">Sync already in progress...</span>';
+                self.startProgressPolling();
+                self.pollForCompletion();
             } else {
-                const errorMsg = data.Error || 'Unknown error';
-                if (errorMsg.toLowerCase().includes('cancel')) {
-                    statusSpan.innerHTML = '<span style="color: orange;">Sync was cancelled.</span>';
-                } else {
-                    statusSpan.innerHTML = '<span style="color: red;">Sync failed: ' + errorMsg + '</span>';
-                }
+                self.resetSyncButton();
+                statusSpan.innerHTML = '<span style="color: red;">Failed to start sync: ' + (data.Message || 'Unknown error') + '</span>';
             }
         }).catch(function (error) {
-            self.stopProgressPolling();
             self.resetSyncButton();
             console.error('Sync error:', error);
             statusSpan.innerHTML = '<span style="color: red;">Sync failed: ' + (error.message || 'Check console for details') + '</span>';
         });
+    },
+
+    pollForCompletion: function () {
+        const self = this;
+        const statusSpan = document.getElementById('syncStatus');
+
+        self.completionInterval = setInterval(function () {
+            fetch(ApiClient.getUrl('XtreamLibrary/Progress'), {
+                method: 'GET',
+                headers: {
+                    'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
+                }
+            }).then(function (r) {
+                return r.ok ? r.json() : null;
+            }).then(function (progress) {
+                if (!progress || !progress.IsRunning) {
+                    // Sync finished, stop polling and fetch final status
+                    self.stopCompletionPolling();
+                    self.stopProgressPolling();
+                    self.resetSyncButton();
+                    self.loadSyncStatus();
+                    // Check if it was success or failure
+                    fetch(ApiClient.getUrl('XtreamLibrary/Status'), {
+                        method: 'GET',
+                        headers: {
+                            'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
+                        }
+                    }).then(function (r) {
+                        return r.ok ? r.json() : null;
+                    }).then(function (result) {
+                        if (result) {
+                            if (result.Success) {
+                                statusSpan.innerHTML = '<span style="color: green;">Sync completed!</span>';
+                            } else if (result.Error && result.Error.toLowerCase().includes('cancel')) {
+                                statusSpan.innerHTML = '<span style="color: orange;">Sync was cancelled.</span>';
+                            } else {
+                                statusSpan.innerHTML = '<span style="color: red;">Sync failed: ' + (result.Error || 'Unknown error') + '</span>';
+                            }
+                        }
+                    });
+                }
+            }).catch(function () {});
+        }, 1000);
+    },
+
+    stopCompletionPolling: function () {
+        if (this.completionInterval) {
+            clearInterval(this.completionInterval);
+            this.completionInterval = null;
+        }
     },
 
     cancelSync: function () {
