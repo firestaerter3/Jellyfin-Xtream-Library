@@ -37,7 +37,8 @@ public class XtreamClientTests : IDisposable
 
     public void Dispose()
     {
-        _client.Dispose();
+        // HttpClient is managed by factory in production; dispose directly in tests
+        _httpClient.Dispose();
         GC.SuppressFinalize(this);
     }
 

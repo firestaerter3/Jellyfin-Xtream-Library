@@ -34,10 +34,11 @@ namespace Jellyfin.Xtream.Library.Client;
 /// </summary>
 /// <remarks>
 /// Initializes a new instance of the <see cref="XtreamClient"/> class.
+/// Note: HttpClient is managed by IHttpClientFactory - do not dispose manually.
 /// </remarks>
-/// <param name="client">The HTTP client used.</param>
+/// <param name="client">The HTTP client used (managed by IHttpClientFactory).</param>
 /// <param name="logger">Instance of the <see cref="ILogger"/> interface.</param>
-public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IDisposable, IXtreamClient
+public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXtreamClient
 {
     private readonly JsonSerializerSettings _serializerSettings = new()
     {
@@ -226,21 +227,5 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IDi
             logger.LogDebug(ex, "Failed to fetch EPG data table for stream ID {StreamId}", streamId);
             return null;
         }
-    }
-
-    /// <summary>
-    /// Dispose the HTTP client.
-    /// </summary>
-    /// <param name="b">Unused.</param>
-    protected virtual void Dispose(bool b)
-    {
-        client?.Dispose();
-    }
-
-    /// <inheritdoc />
-    public void Dispose()
-    {
-        Dispose(true);
-        GC.SuppressFinalize(this);
     }
 }
