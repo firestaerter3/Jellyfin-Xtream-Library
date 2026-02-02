@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Mime;
@@ -64,23 +65,36 @@ public class SyncController : ControllerBase
     /// <summary>
     /// Triggers a manual sync of Xtream content.
     /// </summary>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The sync result.</returns>
+    /// <returns>Status indicating sync was started.</returns>
     [HttpPost("Sync")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<ActionResult<SyncResult>> TriggerSync(CancellationToken cancellationToken)
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public ActionResult TriggerSync()
     {
-        _logger.LogInformation("Manual sync triggered via API");
-
-        var result = await _syncService.SyncAsync(cancellationToken).ConfigureAwait(false);
-
-        if (result.Success)
+        // Check if sync is already running
+        if (_syncService.CurrentProgress.IsRunning)
         {
-            return Ok(result);
+            return Conflict(new { Success = false, Message = "A sync is already in progress." });
         }
 
-        return StatusCode(StatusCodes.Status500InternalServerError, result);
+        _logger.LogInformation("Manual sync triggered via API");
+
+        // Start sync in background - NOT tied to HTTP request
+        // Use CancellationToken.None so browser disconnect won't cancel the sync
+        // The sync can still be cancelled via the Cancel endpoint
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _syncService.SyncAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Background sync failed with unhandled exception");
+            }
+        });
+
+        return Ok(new { Success = true, Message = "Sync started in background. Use /Status or /Progress to monitor." });
     }
 
     /// <summary>
