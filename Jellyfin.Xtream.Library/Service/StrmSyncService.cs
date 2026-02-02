@@ -580,58 +580,22 @@ public partial class StrmSyncService
             }
         }
 
-        // Collect all unique movies from all categories, tracking category membership
-        _logger.LogInformation("Collecting movies from {Count} categories (parallelism={Parallelism})...", categories.Count, config.SyncParallelism);
-        CurrentProgress.Phase = "Collecting movies";
-        var allMovies = new List<(StreamInfo Stream, HashSet<int> CategoryIds)>();
-        var movieCategoryMap = new ConcurrentDictionary<int, HashSet<int>>(); // streamId → categoryIds
-        var streamBag = new ConcurrentBag<(StreamInfo Stream, int CategoryId)>();
+        // Determine batch size - 0 means process all at once (legacy behavior)
+        var batchSize = config.CategoryBatchSize > 0 ? config.CategoryBatchSize : categories.Count;
+        var totalBatches = (int)Math.Ceiling((double)categories.Count / batchSize);
 
-        // Fetch streams from all categories in parallel
-        await Parallel.ForEachAsync(
-            categories,
-            new ParallelOptions
-            {
-                MaxDegreeOfParallelism = Math.Max(1, config.SyncParallelism),
-                CancellationToken = cancellationToken,
-            },
-            async (category, ct) =>
-            {
-                var streams = await _client.GetVodStreamsByCategoryAsync(connectionInfo, category.CategoryId, ct)
-                    .ConfigureAwait(false);
-                foreach (var stream in streams)
-                {
-                    streamBag.Add((stream, category.CategoryId));
-                }
-            }).ConfigureAwait(false);
+        _logger.LogInformation(
+            "Processing movies from {Count} categories in {Batches} batch(es) of {BatchSize} (parallelism={Parallelism})...",
+            categories.Count,
+            totalBatches,
+            batchSize,
+            config.SyncParallelism);
 
-        // Process collected streams sequentially to build category membership
-        foreach (var (stream, categoryId) in streamBag)
-        {
-            if (processedStreamIds.TryAdd(stream.StreamId, true))
-            {
-                var categorySet = new HashSet<int> { categoryId };
-                movieCategoryMap[stream.StreamId] = categorySet;
-                allMovies.Add((stream, categorySet));
-            }
-            else if (movieCategoryMap.TryGetValue(stream.StreamId, out var existingCategories))
-            {
-                // Movie already exists, add this category to its set
-                lock (existingCategories)
-                {
-                    existingCategories.Add(categoryId);
-                }
-            }
-        }
-
-        _logger.LogInformation("Found {Count} unique movies to process", allMovies.Count);
-        CurrentProgress.TotalCategories = 1;
+        CurrentProgress.TotalCategories = totalBatches;
         CurrentProgress.CategoriesProcessed = 0;
-        CurrentProgress.TotalItems = allMovies.Count;
-        CurrentProgress.ItemsProcessed = 0;
         CurrentProgress.Phase = "Syncing Movies";
 
-        // Thread-safe counters and collections
+        // Thread-safe counters and collections (shared across batches)
         int moviesCreated = 0;
         int moviesSkipped = 0;
         int errors = 0;
@@ -646,21 +610,83 @@ public partial class StrmSyncService
             _logger.LogInformation("Loaded {Count} TMDb folder ID overrides", tmdbOverrides.Count);
         }
 
-        // Process movies in parallel
         var parallelism = Math.Max(1, config.SyncParallelism);
         var enableMetadataLookup = config.EnableMetadataLookup;
         var enableProactiveMediaInfo = config.EnableProactiveMediaInfo;
         _logger.LogInformation("Processing movies with parallelism={Parallelism}, metadataLookup={MetadataLookup}, proactiveMediaInfo={ProactiveMediaInfo}", parallelism, enableMetadataLookup, enableProactiveMediaInfo);
 
-        await Parallel.ForEachAsync(
-            allMovies,
-            new ParallelOptions
+        // Process categories in batches to reduce memory usage
+        for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var batchCategories = categories
+                .Skip(batchIndex * batchSize)
+                .Take(batchSize)
+                .ToList();
+
+            _logger.LogInformation(
+                "Processing movie batch {Batch}/{Total} ({Count} categories)...",
+                batchIndex + 1,
+                totalBatches,
+                batchCategories.Count);
+
+            CurrentProgress.Phase = $"Collecting movies (batch {batchIndex + 1}/{totalBatches})";
+
+            // Collect movies from this batch of categories
+            var batchMovies = new List<(StreamInfo Stream, HashSet<int> CategoryIds)>();
+            var batchCategoryMap = new ConcurrentDictionary<int, HashSet<int>>();
+            var streamBag = new ConcurrentBag<(StreamInfo Stream, int CategoryId)>();
+
+            await Parallel.ForEachAsync(
+                batchCategories,
+                new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = parallelism,
+                    CancellationToken = cancellationToken,
+                },
+                async (category, ct) =>
+                {
+                    var streams = await _client.GetVodStreamsByCategoryAsync(connectionInfo, category.CategoryId, ct)
+                        .ConfigureAwait(false);
+                    foreach (var stream in streams)
+                    {
+                        streamBag.Add((stream, category.CategoryId));
+                    }
+                }).ConfigureAwait(false);
+
+            // Process collected streams to build category membership
+            foreach (var (stream, categoryId) in streamBag)
             {
-                MaxDegreeOfParallelism = parallelism,
-                CancellationToken = cancellationToken,
-            },
-            async (movieEntry, ct) =>
-            {
+                if (processedStreamIds.TryAdd(stream.StreamId, true))
+                {
+                    var categorySet = new HashSet<int> { categoryId };
+                    batchCategoryMap[stream.StreamId] = categorySet;
+                    batchMovies.Add((stream, categorySet));
+                }
+                else if (batchCategoryMap.TryGetValue(stream.StreamId, out var existingCategories))
+                {
+                    lock (existingCategories)
+                    {
+                        existingCategories.Add(categoryId);
+                    }
+                }
+            }
+
+            _logger.LogInformation("Batch {Batch}: Found {Count} unique movies", batchIndex + 1, batchMovies.Count);
+            CurrentProgress.Phase = $"Syncing Movies (batch {batchIndex + 1}/{totalBatches})";
+            CurrentProgress.TotalItems += batchMovies.Count;
+
+            // Process movies in this batch
+            await Parallel.ForEachAsync(
+                batchMovies,
+                new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = parallelism,
+                    CancellationToken = cancellationToken,
+                },
+                async (movieEntry, ct) =>
+                {
                 var stream = movieEntry.Stream;
                 var categoryIds = movieEntry.CategoryIds;
 
@@ -803,6 +829,14 @@ public partial class StrmSyncService
                 }
             }).ConfigureAwait(false);
 
+            // Update batch progress
+            CurrentProgress.CategoriesProcessed = batchIndex + 1;
+
+            // Allow GC to reclaim batch memory
+            batchMovies.Clear();
+            streamBag = null!;
+        } // End of batch loop
+
         // Update result with thread-safe counters
         result.MoviesCreated += moviesCreated;
         result.MoviesSkipped += moviesSkipped;
@@ -867,58 +901,24 @@ public partial class StrmSyncService
             }
         }
 
-        // Collect all unique series from all categories, tracking category membership
-        _logger.LogInformation("Collecting series from {Count} categories (parallelism={Parallelism})...", categories.Count, config.SyncParallelism);
-        CurrentProgress.Phase = "Collecting series";
-        var allSeries = new List<(Series Series, HashSet<int> CategoryIds)>();
-        var seriesCategoryMap = new ConcurrentDictionary<int, HashSet<int>>(); // seriesId → categoryIds
-        var seriesBag = new ConcurrentBag<(Series Series, int CategoryId)>();
+        // Determine batch size - 0 means process all at once (legacy behavior)
+        var batchSize = config.CategoryBatchSize > 0 ? config.CategoryBatchSize : categories.Count;
+        var totalBatches = (int)Math.Ceiling((double)categories.Count / batchSize);
 
-        // Fetch series from all categories in parallel
-        await Parallel.ForEachAsync(
-            categories,
-            new ParallelOptions
-            {
-                MaxDegreeOfParallelism = Math.Max(1, config.SyncParallelism),
-                CancellationToken = cancellationToken,
-            },
-            async (category, ct) =>
-            {
-                var seriesList = await _client.GetSeriesByCategoryAsync(connectionInfo, category.CategoryId, ct)
-                    .ConfigureAwait(false);
-                foreach (var series in seriesList)
-                {
-                    seriesBag.Add((series, category.CategoryId));
-                }
-            }).ConfigureAwait(false);
+        _logger.LogInformation(
+            "Processing series from {Count} categories in {Batches} batch(es) of {BatchSize} (parallelism={Parallelism})...",
+            categories.Count,
+            totalBatches,
+            batchSize,
+            config.SyncParallelism);
 
-        // Process collected series sequentially to build category membership
-        foreach (var (series, categoryId) in seriesBag)
-        {
-            if (processedSeriesIds.TryAdd(series.SeriesId, true))
-            {
-                var categorySet = new HashSet<int> { categoryId };
-                seriesCategoryMap[series.SeriesId] = categorySet;
-                allSeries.Add((series, categorySet));
-            }
-            else if (seriesCategoryMap.TryGetValue(series.SeriesId, out var existingCategories))
-            {
-                // Series already exists, add this category to its set
-                lock (existingCategories)
-                {
-                    existingCategories.Add(categoryId);
-                }
-            }
-        }
-
-        _logger.LogInformation("Found {Count} unique series to process", allSeries.Count);
         CurrentProgress.Phase = "Syncing Series";
-        CurrentProgress.TotalCategories = 1; // Treat all series as one batch
+        CurrentProgress.TotalCategories = totalBatches;
         CurrentProgress.CategoriesProcessed = 0;
-        CurrentProgress.TotalItems = allSeries.Count;
+        CurrentProgress.TotalItems = 0;
         CurrentProgress.ItemsProcessed = 0;
 
-        // Thread-safe counters
+        // Thread-safe counters (shared across batches)
         int seriesCreated = 0;
         int seriesSkipped = 0;
         int seasonsCreated = 0;
@@ -932,9 +932,6 @@ public partial class StrmSyncService
         var failedItems = new ConcurrentBag<FailedItem>();
         var unmatchedSeries = new ConcurrentBag<string>();
 
-        // Cache for directory scans to avoid redundant I/O
-        var directoryCache = new ConcurrentDictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
-
         // Parse folder ID overrides
         var tvdbOverrides = ParseFolderIdOverrides(config.TvdbFolderIdOverrides);
         if (tvdbOverrides.Count > 0)
@@ -942,21 +939,86 @@ public partial class StrmSyncService
             _logger.LogInformation("Loaded {Count} TVDb folder ID overrides", tvdbOverrides.Count);
         }
 
-        // Process series in parallel
         var parallelism = Math.Max(1, config.SyncParallelism);
         var enableMetadataLookup = config.EnableMetadataLookup;
         var enableProactiveMediaInfo = config.EnableProactiveMediaInfo;
         _logger.LogInformation("Processing series with parallelism={Parallelism}, smartSkip={SmartSkip}, metadataLookup={MetadataLookup}, proactiveMediaInfo={ProactiveMediaInfo}", parallelism, config.SmartSkipExisting, enableMetadataLookup, enableProactiveMediaInfo);
 
-        await Parallel.ForEachAsync(
-            allSeries,
-            new ParallelOptions
+        // Process categories in batches to reduce memory usage
+        for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var batchCategories = categories
+                .Skip(batchIndex * batchSize)
+                .Take(batchSize)
+                .ToList();
+
+            _logger.LogInformation(
+                "Processing series batch {Batch}/{Total} ({Count} categories)...",
+                batchIndex + 1,
+                totalBatches,
+                batchCategories.Count);
+
+            CurrentProgress.Phase = $"Collecting series (batch {batchIndex + 1}/{totalBatches})";
+
+            // Cache for directory scans (per batch to limit memory)
+            var directoryCache = new ConcurrentDictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+
+            // Collect series from this batch of categories
+            var batchSeries = new List<(Series Series, HashSet<int> CategoryIds)>();
+            var batchCategoryMap = new ConcurrentDictionary<int, HashSet<int>>();
+            var seriesBag = new ConcurrentBag<(Series Series, int CategoryId)>();
+
+            await Parallel.ForEachAsync(
+                batchCategories,
+                new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = parallelism,
+                    CancellationToken = cancellationToken,
+                },
+                async (category, ct) =>
+                {
+                    var seriesList = await _client.GetSeriesByCategoryAsync(connectionInfo, category.CategoryId, ct)
+                        .ConfigureAwait(false);
+                    foreach (var series in seriesList)
+                    {
+                        seriesBag.Add((series, category.CategoryId));
+                    }
+                }).ConfigureAwait(false);
+
+            // Process collected series to build category membership
+            foreach (var (series, categoryId) in seriesBag)
             {
-                MaxDegreeOfParallelism = parallelism,
-                CancellationToken = cancellationToken,
-            },
-            async (seriesEntry, ct) =>
-            {
+                if (processedSeriesIds.TryAdd(series.SeriesId, true))
+                {
+                    var categorySet = new HashSet<int> { categoryId };
+                    batchCategoryMap[series.SeriesId] = categorySet;
+                    batchSeries.Add((series, categorySet));
+                }
+                else if (batchCategoryMap.TryGetValue(series.SeriesId, out var existingCategories))
+                {
+                    lock (existingCategories)
+                    {
+                        existingCategories.Add(categoryId);
+                    }
+                }
+            }
+
+            _logger.LogInformation("Batch {Batch}: Found {Count} unique series", batchIndex + 1, batchSeries.Count);
+            CurrentProgress.Phase = $"Syncing Series (batch {batchIndex + 1}/{totalBatches})";
+            CurrentProgress.TotalItems += batchSeries.Count;
+
+            // Process series in this batch
+            await Parallel.ForEachAsync(
+                batchSeries,
+                new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = parallelism,
+                    CancellationToken = cancellationToken,
+                },
+                async (seriesEntry, ct) =>
+                {
                 var series = seriesEntry.Series;
                 var categoryIds = seriesEntry.CategoryIds;
 
@@ -1220,6 +1282,15 @@ public partial class StrmSyncService
                     CurrentProgress.EpisodesCreated = episodesCreated;
                 }
             }).ConfigureAwait(false);
+
+            // Update batch progress
+            CurrentProgress.CategoriesProcessed = batchIndex + 1;
+
+            // Allow GC to reclaim batch memory
+            batchSeries.Clear();
+            directoryCache.Clear();
+            seriesBag = null!;
+        } // End of batch loop
 
         // Update result with thread-safe counters
         result.SeriesCreated += seriesCreated;

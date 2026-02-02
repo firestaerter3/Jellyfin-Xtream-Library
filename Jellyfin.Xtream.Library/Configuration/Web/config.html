@@ -230,6 +230,15 @@
                                     trigger API rate limits on TMDb/TVDb. Default: 3.
                                 </div>
                             </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtCategoryBatchSize">Category Batch Size</label>
+                                <input is="emby-input" type="number" id="txtCategoryBatchSize" name="CategoryBatchSize"
+                                       min="0" max="100" step="1" />
+                                <div class="fieldDescription">
+                                    Number of categories to process per batch during sync (1-100). Lower values reduce memory
+                                    usage for large libraries. Set to 0 to disable batching. Default: 10.
+                                </div>
+                            </div>
                             <div class="checkboxContainer checkboxContainer-withDescription">
                                 <label class="emby-checkbox-label">
                                     <input is="emby-checkbox" type="checkbox" id="chkDownloadArtworkForUnmatched" name="DownloadArtworkForUnmatched" />

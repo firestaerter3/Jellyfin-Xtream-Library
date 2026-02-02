@@ -145,6 +145,13 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool EnableProactiveMediaInfo { get; set; }
 
     /// <summary>
+    /// Gets or sets the number of categories to process per batch during sync.
+    /// Lower values reduce memory usage but may increase sync duration.
+    /// Set to 0 to disable batching (process all categories at once).
+    /// </summary>
+    public int CategoryBatchSize { get; set; } = 10;
+
+    /// <summary>
     /// Gets or sets the sync schedule type.
     /// "Interval" = run every X minutes, "Daily" = run at specific time each day.
     /// </summary>
