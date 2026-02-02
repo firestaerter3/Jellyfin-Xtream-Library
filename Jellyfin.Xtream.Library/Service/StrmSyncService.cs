@@ -631,6 +631,53 @@ public partial class StrmSyncService
         var enableProactiveMediaInfo = config.EnableProactiveMediaInfo;
         _logger.LogInformation("Processing movies with parallelism={Parallelism}, metadataLookup={MetadataLookup}, proactiveMediaInfo={ProactiveMediaInfo}", parallelism, enableMetadataLookup, enableProactiveMediaInfo);
 
+        // Pre-scan existing movie folders for faster skip detection
+        var existingMovieFolders = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        if (Directory.Exists(moviesPath))
+        {
+            _logger.LogInformation("Pre-scanning existing movie folders...");
+            CurrentProgress.Phase = "Scanning existing movies";
+
+            // Scan root movie folder
+            var rootFolders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var folder in Directory.GetDirectories(moviesPath))
+            {
+                var folderName = Path.GetFileName(folder);
+                // Extract base name (remove [tmdbid-X] suffix if present)
+                var bracketIndex = folderName.LastIndexOf(" [", StringComparison.Ordinal);
+                var baseKey = bracketIndex > 0 ? folderName[..bracketIndex] : folderName;
+                rootFolders.TryAdd(baseKey, folderName);
+            }
+
+            existingMovieFolders[string.Empty] = rootFolders;
+
+            // Scan category subfolders if using Multiple folder mode
+            if (folderMappings.Count > 0)
+            {
+                var subfolderNames = folderMappings.Values.SelectMany(v => v).Distinct();
+                foreach (var subfolder in subfolderNames)
+                {
+                    var subPath = Path.Combine(moviesPath, subfolder);
+                    if (Directory.Exists(subPath))
+                    {
+                        var subFolders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var folder in Directory.GetDirectories(subPath))
+                        {
+                            var folderName = Path.GetFileName(folder);
+                            var bracketIndex = folderName.LastIndexOf(" [", StringComparison.Ordinal);
+                            var baseKey = bracketIndex > 0 ? folderName[..bracketIndex] : folderName;
+                            subFolders.TryAdd(baseKey, folderName);
+                        }
+
+                        existingMovieFolders[subfolder] = subFolders;
+                    }
+                }
+            }
+
+            var totalFolders = existingMovieFolders.Values.Sum(d => d.Count);
+            _logger.LogInformation("Found {Count} existing movie folders", totalFolders);
+        }
+
         // Process categories in batches to reduce memory usage
         for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
         {
@@ -731,22 +778,15 @@ public partial class StrmSyncService
                     }
 
                     // Quick check: does a folder for this movie already exist? If so, skip API calls
+                    // Uses pre-scanned cache for O(1) lookup instead of filesystem scan
                     string? existingFolderName = null;
                     foreach (var targetFolder in targetFolders)
                     {
-                        string movieBasePath = string.IsNullOrEmpty(targetFolder)
-                            ? moviesPath
-                            : Path.Combine(moviesPath, targetFolder);
-
-                        if (Directory.Exists(movieBasePath))
+                        if (existingMovieFolders.TryGetValue(targetFolder, out var folderCache) &&
+                            folderCache.TryGetValue(baseName, out var cachedFolder))
                         {
-                            // Look for folder starting with baseName
-                            var matchingFolders = Directory.GetDirectories(movieBasePath, $"{baseName}*");
-                            if (matchingFolders.Length > 0)
-                            {
-                                existingFolderName = Path.GetFileName(matchingFolders[0]);
-                                break;
-                            }
+                            existingFolderName = cachedFolder;
+                            break;
                         }
                     }
 
@@ -1013,6 +1053,53 @@ public partial class StrmSyncService
         var enableProactiveMediaInfo = config.EnableProactiveMediaInfo;
         _logger.LogInformation("Processing series with parallelism={Parallelism}, smartSkip={SmartSkip}, metadataLookup={MetadataLookup}, proactiveMediaInfo={ProactiveMediaInfo}", parallelism, config.SmartSkipExisting, enableMetadataLookup, enableProactiveMediaInfo);
 
+        // Pre-scan existing series folders for faster skip detection
+        var existingSeriesFolders = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        if (Directory.Exists(seriesPath))
+        {
+            _logger.LogInformation("Pre-scanning existing series folders...");
+            CurrentProgress.Phase = "Scanning existing series";
+
+            // Scan root series folder
+            var rootFolders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var folder in Directory.GetDirectories(seriesPath))
+            {
+                var folderName = Path.GetFileName(folder);
+                // Extract base name (remove [tmdbid-X] or [tvdbid-X] suffix if present)
+                var bracketIndex = folderName.LastIndexOf(" [", StringComparison.Ordinal);
+                var baseKey = bracketIndex > 0 ? folderName[..bracketIndex] : folderName;
+                rootFolders.TryAdd(baseKey, folderName);
+            }
+
+            existingSeriesFolders[string.Empty] = rootFolders;
+
+            // Scan category subfolders if using Multiple folder mode
+            if (folderMappings.Count > 0)
+            {
+                var subfolderNames = folderMappings.Values.SelectMany(v => v).Distinct();
+                foreach (var subfolder in subfolderNames)
+                {
+                    var subPath = Path.Combine(seriesPath, subfolder);
+                    if (Directory.Exists(subPath))
+                    {
+                        var subFolders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var folder in Directory.GetDirectories(subPath))
+                        {
+                            var folderName = Path.GetFileName(folder);
+                            var bracketIndex = folderName.LastIndexOf(" [", StringComparison.Ordinal);
+                            var baseKey = bracketIndex > 0 ? folderName[..bracketIndex] : folderName;
+                            subFolders.TryAdd(baseKey, folderName);
+                        }
+
+                        existingSeriesFolders[subfolder] = subFolders;
+                    }
+                }
+            }
+
+            var totalFolders = existingSeriesFolders.Values.Sum(d => d.Count);
+            _logger.LogInformation("Found {Count} existing series folders", totalFolders);
+        }
+
         // Process categories in batches to reduce memory usage
         for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
         {
@@ -1097,7 +1184,80 @@ public partial class StrmSyncService
                     int? year = ExtractYear(series.Name);
                     string baseName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
 
-                    // Fetch series info first to get provider TMDB ID and episodes
+                    // Determine target folders based on category mappings FIRST (before any API call)
+                    var targetFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var categoryId in categoryIds)
+                    {
+                        if (folderMappings.TryGetValue(categoryId, out var mappedFolders))
+                        {
+                            foreach (var folder in mappedFolders)
+                            {
+                                targetFolders.Add(folder);
+                            }
+                        }
+                    }
+
+                    // If no folder mappings, sync to root series folder
+                    if (targetFolders.Count == 0)
+                    {
+                        targetFolders.Add(string.Empty);
+                    }
+
+                    // Quick check: does a folder for this series already exist? If so, skip API calls
+                    // Uses pre-scanned cache for O(1) lookup instead of filesystem scan
+                    string? existingFolderName = null;
+                    bool existsInAllTargets = true;
+                    foreach (var targetFolder in targetFolders)
+                    {
+                        if (existingSeriesFolders.TryGetValue(targetFolder, out var folderCache) &&
+                            folderCache.TryGetValue(baseName, out var cachedFolder))
+                        {
+                            existingFolderName ??= cachedFolder;
+                        }
+                        else
+                        {
+                            existsInAllTargets = false;
+                        }
+                    }
+
+                    if (existingFolderName != null && existsInAllTargets && config.SmartSkipExisting)
+                    {
+                        // Series already exists in all target folders - skip API call entirely
+                        foreach (var targetFolder in targetFolders)
+                        {
+                            string seriesBasePath = string.IsNullOrEmpty(targetFolder)
+                                ? seriesPath
+                                : Path.Combine(seriesPath, targetFolder);
+
+                            // Get cached folder name for this target
+                            var cachedName = existingSeriesFolders[targetFolder][baseName];
+                            string seriesFolderPath = Path.Combine(seriesBasePath, cachedName);
+
+                            var existingStrms = directoryCache.GetOrAdd(
+                                seriesFolderPath,
+                                path => Directory.GetFiles(path, "*.strm", SearchOption.AllDirectories));
+
+                            if (existingStrms.Length > 0)
+                            {
+                                var existingSeasonsCount = Directory.GetDirectories(seriesFolderPath, "Season *").Length;
+                                Interlocked.Add(ref seasonsSkipped, existingSeasonsCount);
+                                Interlocked.Add(ref episodesSkipped, existingStrms.Length);
+
+                                // Add existing files to synced set (for orphan protection)
+                                foreach (var strm in existingStrms)
+                                {
+                                    syncedFiles.TryAdd(strm, 0);
+                                }
+                            }
+                        }
+
+                        Interlocked.Increment(ref seriesSkipped);
+                        Interlocked.Increment(ref smartSkipped);
+                        CurrentProgress.ItemsProcessed++;
+                        return;
+                    }
+
+                    // Need to fetch series info - either new series or partial existence
                     var seriesInfo = await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, series.SeriesId, ct).ConfigureAwait(false);
 
                     // Early return if no episodes
@@ -1127,83 +1287,6 @@ public partial class StrmSyncService
                     }
 
                     string seriesFolderName = BuildSeriesFolderName(seriesName, year, tvdbOverrides, providerTmdbId, autoLookupTvdbId);
-
-                    // Determine target folders based on category mappings
-                    var targetFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    foreach (var categoryId in categoryIds)
-                    {
-                        if (folderMappings.TryGetValue(categoryId, out var mappedFolders))
-                        {
-                            foreach (var folder in mappedFolders)
-                            {
-                                targetFolders.Add(folder);
-                            }
-                        }
-                    }
-
-                    // If no folder mappings, sync to root series folder
-                    if (targetFolders.Count == 0)
-                    {
-                        targetFolders.Add(string.Empty);
-                    }
-
-                    // Check smart skip for all target folders
-                    bool anyNeedsSync = false;
-                    foreach (var targetFolder in targetFolders)
-                    {
-                        string seriesBasePath = string.IsNullOrEmpty(targetFolder)
-                            ? seriesPath
-                            : Path.Combine(seriesPath, targetFolder);
-                        string seriesFolderPath = Path.Combine(seriesBasePath, seriesFolderName);
-
-                        if (!config.SmartSkipExisting || !Directory.Exists(seriesFolderPath))
-                        {
-                            anyNeedsSync = true;
-                            break;
-                        }
-
-                        // Use cached directory scan to avoid redundant I/O
-                        var existingStrms = directoryCache.GetOrAdd(
-                            seriesFolderPath,
-                            path => Directory.GetFiles(path, "*.strm", SearchOption.AllDirectories));
-
-                        if (existingStrms.Length == 0)
-                        {
-                            anyNeedsSync = true;
-                            break;
-                        }
-
-                        // Add existing files to synced set (for orphan protection) - lock-free
-                        foreach (var strm in existingStrms)
-                        {
-                            syncedFiles.TryAdd(strm, 0);
-                        }
-                    }
-
-                    if (!anyNeedsSync)
-                    {
-                        // All target folders have existing content - count as smart skipped
-                        foreach (var targetFolder in targetFolders)
-                        {
-                            string seriesBasePath = string.IsNullOrEmpty(targetFolder)
-                                ? seriesPath
-                                : Path.Combine(seriesPath, targetFolder);
-                            string seriesFolderPath = Path.Combine(seriesBasePath, seriesFolderName);
-
-                            // Use cached directory scan (already populated above)
-                            var existingStrms = directoryCache.GetOrAdd(
-                                seriesFolderPath,
-                                path => Directory.GetFiles(path, "*.strm", SearchOption.AllDirectories));
-                            var existingSeasonsCount = Directory.GetDirectories(seriesFolderPath, "Season *").Length;
-                            Interlocked.Add(ref seasonsSkipped, existingSeasonsCount);
-                            Interlocked.Add(ref episodesSkipped, existingStrms.Length);
-                        }
-
-                        Interlocked.Increment(ref seriesSkipped);
-                        Interlocked.Increment(ref smartSkipped);
-                        CurrentProgress.ItemsProcessed++;
-                        return;
-                    }
 
                     bool seriesHasNewEpisodes = false;
 
