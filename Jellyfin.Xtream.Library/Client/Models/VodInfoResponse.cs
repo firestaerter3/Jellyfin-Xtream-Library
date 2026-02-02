@@ -24,6 +24,7 @@ namespace Jellyfin.Xtream.Library.Client.Models;
 public class VodInfoResponse
 {
     [JsonProperty("info")]
+    [JsonConverter(typeof(OnlyObjectConverter<VodInfoDetails>))]
     public VodInfoDetails? Info { get; set; }
 
     [JsonProperty("movie_data")]
