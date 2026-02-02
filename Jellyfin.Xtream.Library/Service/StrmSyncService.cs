@@ -629,47 +629,6 @@ public partial class StrmSyncService
         CurrentProgress.CategoriesProcessed = 0;
         CurrentProgress.TotalItems = allMovies.Count;
         CurrentProgress.ItemsProcessed = 0;
-
-        // Pre-fetch VOD info if proactive media info is enabled
-        var vodInfoCache = new ConcurrentDictionary<int, VodInfoResponse?>();
-        if (config.EnableProactiveMediaInfo)
-        {
-            _logger.LogInformation("Pre-fetching media info for {Count} movies (parallelism={Parallelism})...", allMovies.Count, config.SyncParallelism);
-            CurrentProgress.Phase = "Fetching media info";
-            CurrentProgress.TotalItems = allMovies.Count;
-            CurrentProgress.ItemsProcessed = 0;
-            int mediaInfoFetched = 0;
-
-            await Parallel.ForEachAsync(
-                allMovies,
-                new ParallelOptions
-                {
-                    MaxDegreeOfParallelism = Math.Max(1, config.SyncParallelism),
-                    CancellationToken = cancellationToken,
-                },
-                async (movieEntry, ct) =>
-                {
-                    try
-                    {
-                        var vodInfo = await _client.GetVodInfoAsync(connectionInfo, movieEntry.Stream.StreamId, ct)
-                            .ConfigureAwait(false);
-                        vodInfoCache[movieEntry.Stream.StreamId] = vodInfo;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogDebug(ex, "Failed to pre-fetch VOD info for {StreamId}", movieEntry.Stream.StreamId);
-                        vodInfoCache[movieEntry.Stream.StreamId] = null;
-                    }
-                    finally
-                    {
-                        Interlocked.Increment(ref mediaInfoFetched);
-                        CurrentProgress.ItemsProcessed = mediaInfoFetched;
-                    }
-                }).ConfigureAwait(false);
-
-            _logger.LogInformation("Pre-fetched media info for {Count} movies", vodInfoCache.Count);
-        }
-
         CurrentProgress.Phase = "Syncing Movies";
 
         // Thread-safe counters and collections
@@ -777,21 +736,28 @@ public partial class StrmSyncService
                         await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
                         anyCreated = true;
 
-                        // Write NFO with media info if enabled (only for first target folder)
+                        // Fetch VOD info and write NFO if enabled (only for first target folder)
                         if (enableProactiveMediaInfo && targetFolders.First() == targetFolder)
                         {
-                            // Use pre-fetched VOD info from cache
-                            vodInfoCache.TryGetValue(stream.StreamId, out var vodInfo);
-                            if (vodInfo?.Info != null)
+                            try
                             {
-                                var nfoPath = Path.Combine(movieFolder, $"{folderName}.nfo");
-                                await NfoWriter.WriteMovieNfoAsync(
-                                    nfoPath,
-                                    stream.Name,
-                                    vodInfo.Info.Video,
-                                    vodInfo.Info.Audio,
-                                    vodInfo.Info.DurationSecs,
-                                    ct).ConfigureAwait(false);
+                                var vodInfo = await _client.GetVodInfoAsync(connectionInfo, stream.StreamId, ct)
+                                    .ConfigureAwait(false);
+                                if (vodInfo?.Info != null)
+                                {
+                                    var nfoPath = Path.Combine(movieFolder, $"{folderName}.nfo");
+                                    await NfoWriter.WriteMovieNfoAsync(
+                                        nfoPath,
+                                        stream.Name,
+                                        vodInfo.Info.Video,
+                                        vodInfo.Info.Audio,
+                                        vodInfo.Info.DurationSecs,
+                                        ct).ConfigureAwait(false);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogDebug(ex, "Failed to fetch VOD info for NFO: {StreamId}", stream.StreamId);
                             }
                         }
 
