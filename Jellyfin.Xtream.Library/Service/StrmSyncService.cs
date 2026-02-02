@@ -502,6 +502,22 @@ public partial class StrmSyncService
             result.Success = false;
             CurrentProgress.Phase = "Cancelled";
         }
+        catch (OutOfMemoryException ex)
+        {
+            _logger.LogError(ex, "Sync failed due to out of memory - try reducing Category Batch Size");
+            result.Error = "Out of memory - reduce Category Batch Size in settings (current batches may be too large for available memory)";
+            result.EndTime = DateTime.UtcNow;
+            result.Success = false;
+            CurrentProgress.Phase = "Failed - Out of Memory";
+        }
+        catch (ObjectDisposedException ex)
+        {
+            _logger.LogError(ex, "Sync failed - server may have restarted due to memory pressure");
+            result.Error = "Server restarted during sync - possible memory issue. Try reducing Category Batch Size.";
+            result.EndTime = DateTime.UtcNow;
+            result.Success = false;
+            CurrentProgress.Phase = "Failed - Server Restarted";
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Sync failed with error");
