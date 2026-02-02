@@ -710,11 +710,30 @@ public partial class StrmSyncService
                 {
                     string movieName = SanitizeFileName(stream.Name);
                     int? year = ExtractYear(stream.Name);
-
-                    // Look up TMDb ID if enabled and no manual override exists
-                    int? autoLookupTmdbId = null;
                     string baseName = year.HasValue ? $"{movieName} ({year})" : movieName;
+
+                    // Fetch VOD info to get provider TMDB ID (if metadata lookup enabled)
+                    VodInfoResponse? vodInfo = null;
+                    int? providerTmdbId = null;
                     if (enableMetadataLookup && !tmdbOverrides.ContainsKey(baseName))
+                    {
+                        try
+                        {
+                            vodInfo = await _client.GetVodInfoAsync(connectionInfo, stream.StreamId, ct).ConfigureAwait(false);
+                            if (!string.IsNullOrEmpty(vodInfo?.Info?.TmdbId) && int.TryParse(vodInfo.Info.TmdbId, out int tmdbParsed))
+                            {
+                                providerTmdbId = tmdbParsed;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogDebug(ex, "Failed to fetch VOD info for provider TMDB: {StreamId}", stream.StreamId);
+                        }
+                    }
+
+                    // Only do metadata lookup if provider doesn't have TMDB ID
+                    int? autoLookupTmdbId = null;
+                    if (!providerTmdbId.HasValue && enableMetadataLookup && !tmdbOverrides.ContainsKey(baseName))
                     {
                         autoLookupTmdbId = await _metadataLookup.LookupMovieTmdbIdAsync(movieName, year, ct).ConfigureAwait(false);
                         if (!autoLookupTmdbId.HasValue)
@@ -724,7 +743,7 @@ public partial class StrmSyncService
                         }
                     }
 
-                    string folderName = BuildMovieFolderName(movieName, year, tmdbOverrides, autoLookupTmdbId);
+                    string folderName = BuildMovieFolderName(movieName, year, tmdbOverrides, providerTmdbId, autoLookupTmdbId);
 
                     // Determine target folders based on category mappings
                     var targetFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -778,13 +797,18 @@ public partial class StrmSyncService
                         await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
                         anyCreated = true;
 
-                        // Fetch VOD info and write NFO if enabled (only for first target folder)
+                        // Write NFO if proactive media info enabled (only for first target folder)
                         if (enableProactiveMediaInfo && targetFolders.First() == targetFolder)
                         {
                             try
                             {
-                                var vodInfo = await _client.GetVodInfoAsync(connectionInfo, stream.StreamId, ct)
-                                    .ConfigureAwait(false);
+                                // Reuse vodInfo if already fetched, otherwise fetch now
+                                if (vodInfo == null)
+                                {
+                                    vodInfo = await _client.GetVodInfoAsync(connectionInfo, stream.StreamId, ct)
+                                        .ConfigureAwait(false);
+                                }
+
                                 if (vodInfo?.Info != null)
                                 {
                                     var nfoPath = Path.Combine(movieFolder, $"{folderName}.nfo");
@@ -804,7 +828,7 @@ public partial class StrmSyncService
                         }
 
                         // Download artwork for unmatched movies
-                        if (!autoLookupTmdbId.HasValue && !tmdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched)
+                        if (!providerTmdbId.HasValue && !autoLookupTmdbId.HasValue && !tmdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched)
                         {
                             if (!string.IsNullOrEmpty(stream.StreamIcon))
                             {
@@ -1042,11 +1066,28 @@ public partial class StrmSyncService
                 {
                     string seriesName = SanitizeFileName(series.Name);
                     int? year = ExtractYear(series.Name);
-
-                    // Look up TVDb ID if enabled and no manual override exists
-                    int? autoLookupTvdbId = null;
                     string baseName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
-                    if (enableMetadataLookup && !tvdbOverrides.ContainsKey(baseName))
+
+                    // Fetch series info first to get provider TMDB ID and episodes
+                    var seriesInfo = await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, series.SeriesId, ct).ConfigureAwait(false);
+
+                    // Early return if no episodes
+                    if (seriesInfo.Episodes == null || seriesInfo.Episodes.Count == 0)
+                    {
+                        CurrentProgress.ItemsProcessed++;
+                        return;
+                    }
+
+                    // Try to get TMDB ID from provider
+                    int? providerTmdbId = null;
+                    if (!string.IsNullOrEmpty(seriesInfo.Info?.Tmdb) && int.TryParse(seriesInfo.Info.Tmdb, out int tmdbParsed))
+                    {
+                        providerTmdbId = tmdbParsed;
+                    }
+
+                    // Only do TVDB lookup if provider doesn't have TMDB ID and metadata lookup is enabled
+                    int? autoLookupTvdbId = null;
+                    if (!providerTmdbId.HasValue && enableMetadataLookup && !tvdbOverrides.ContainsKey(baseName))
                     {
                         autoLookupTvdbId = await _metadataLookup.LookupSeriesTvdbIdAsync(seriesName, year, ct).ConfigureAwait(false);
                         if (!autoLookupTvdbId.HasValue)
@@ -1056,7 +1097,7 @@ public partial class StrmSyncService
                         }
                     }
 
-                    string seriesFolderName = BuildSeriesFolderName(seriesName, year, tvdbOverrides, autoLookupTvdbId);
+                    string seriesFolderName = BuildSeriesFolderName(seriesName, year, tvdbOverrides, providerTmdbId, autoLookupTvdbId);
 
                     // Determine target folders based on category mappings
                     var targetFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1135,15 +1176,6 @@ public partial class StrmSyncService
                         return;
                     }
 
-                    // Fetch episode info from API
-                    var seriesInfo = await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, series.SeriesId, ct).ConfigureAwait(false);
-
-                    if (seriesInfo.Episodes == null || seriesInfo.Episodes.Count == 0)
-                    {
-                        CurrentProgress.ItemsProcessed++;
-                        return;
-                    }
-
                     bool seriesHasNewEpisodes = false;
 
                     // Sync to each target folder
@@ -1208,7 +1240,7 @@ public partial class StrmSyncService
                                 }
 
                                 // Download episode thumbnail for unmatched series
-                                if (!autoLookupTvdbId.HasValue && !tvdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched)
+                                if (!providerTmdbId.HasValue && !autoLookupTvdbId.HasValue && !tvdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched)
                                 {
                                     var episodeThumbUrl = episode.Info?.MovieImage;
                                     if (!string.IsNullOrEmpty(episodeThumbUrl))
@@ -1572,16 +1604,22 @@ public partial class StrmSyncService
     /// <param name="sanitizedName">The sanitized movie name.</param>
     /// <param name="year">Optional release year.</param>
     /// <param name="overrides">Dictionary of folder name to TMDb ID overrides.</param>
+    /// <param name="providerTmdbId">Optional TMDB ID from provider (Xtream API).</param>
     /// <param name="autoLookupTmdbId">Optional TMDb ID from automatic lookup.</param>
-    /// <returns>Folder name, with [tmdbid-X] suffix if override or auto-lookup exists.</returns>
-    internal static string BuildMovieFolderName(string sanitizedName, int? year, Dictionary<string, int> overrides, int? autoLookupTmdbId = null)
+    /// <returns>Folder name, with [tmdbid-X] suffix if ID exists.</returns>
+    internal static string BuildMovieFolderName(string sanitizedName, int? year, Dictionary<string, int> overrides, int? providerTmdbId = null, int? autoLookupTmdbId = null)
     {
         string baseName = year.HasValue ? $"{sanitizedName} ({year})" : sanitizedName;
 
-        // Priority: manual override > auto-lookup > no ID
+        // Priority: manual override > provider TMDB > auto-lookup > no ID
         if (overrides.TryGetValue(baseName, out int tmdbId))
         {
             return $"{baseName} [tmdbid-{tmdbId}]";
+        }
+
+        if (providerTmdbId.HasValue)
+        {
+            return $"{baseName} [tmdbid-{providerTmdbId.Value}]";
         }
 
         if (autoLookupTmdbId.HasValue)
@@ -1593,21 +1631,27 @@ public partial class StrmSyncService
     }
 
     /// <summary>
-    /// Builds a series folder name, optionally with TVDb ID suffix.
+    /// Builds a series folder name, optionally with TMDB or TVDb ID suffix.
     /// </summary>
     /// <param name="sanitizedName">The sanitized series name.</param>
     /// <param name="year">Optional premiere year.</param>
     /// <param name="overrides">Dictionary of folder name to TVDb ID overrides.</param>
+    /// <param name="providerTmdbId">Optional TMDB ID from provider (Xtream API).</param>
     /// <param name="autoLookupTvdbId">Optional TVDb ID from automatic lookup.</param>
-    /// <returns>Folder name, with [tvdbid-X] suffix if override or auto-lookup exists.</returns>
-    internal static string BuildSeriesFolderName(string sanitizedName, int? year, Dictionary<string, int> overrides, int? autoLookupTvdbId = null)
+    /// <returns>Folder name, with [tmdbid-X] or [tvdbid-X] suffix if ID exists.</returns>
+    internal static string BuildSeriesFolderName(string sanitizedName, int? year, Dictionary<string, int> overrides, int? providerTmdbId = null, int? autoLookupTvdbId = null)
     {
         string baseName = year.HasValue ? $"{sanitizedName} ({year})" : sanitizedName;
 
-        // Priority: manual override > auto-lookup > no ID
+        // Priority: manual override > provider TMDB > TVDB lookup > no ID
         if (overrides.TryGetValue(baseName, out int tvdbId))
         {
             return $"{baseName} [tvdbid-{tvdbId}]";
+        }
+
+        if (providerTmdbId.HasValue)
+        {
+            return $"{baseName} [tmdbid-{providerTmdbId.Value}]";
         }
 
         if (autoLookupTvdbId.HasValue)
