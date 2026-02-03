@@ -139,6 +139,59 @@ public partial class StrmSyncService
                         await RetrySingleSeriesAsync(connectionInfo, seriesPath, item, result, cancellationToken).ConfigureAwait(false);
                     }
                 }
+                catch (HttpRequestException ex) when (ex.Message.Contains("404", StringComparison.Ordinal))
+                {
+                    // Item ID no longer exists - try to find by name (may have been re-added with new ID)
+                    if (item.ItemType == "Series")
+                    {
+                        var foundSeries = await FindSeriesByNameAsync(connectionInfo, item.Name, cancellationToken).ConfigureAwait(false);
+                        if (foundSeries != null)
+                        {
+                            _logger.LogInformation(
+                                "Found series with new ID {NewId} (was {OldId}): {SeriesName}",
+                                foundSeries.SeriesId,
+                                item.ItemId,
+                                item.Name);
+
+                            try
+                            {
+                                var newItem = new FailedItem
+                                {
+                                    ItemType = "Series",
+                                    ItemId = foundSeries.SeriesId,
+                                    Name = foundSeries.Name,
+                                };
+                                await RetrySingleSeriesAsync(connectionInfo, seriesPath, newItem, result, cancellationToken).ConfigureAwait(false);
+                            }
+                            catch (Exception retryEx)
+                            {
+                                _logger.LogWarning(retryEx, "Failed to sync series with new ID: {SeriesName}", foundSeries.Name);
+                                result.Errors++;
+                                result.AddFailedItem(new FailedItem
+                                {
+                                    ItemType = "Series",
+                                    ItemId = foundSeries.SeriesId,
+                                    Name = foundSeries.Name,
+                                    ErrorMessage = retryEx.Message,
+                                });
+                            }
+                        }
+                        else
+                        {
+                            _logger.LogInformation(
+                                "Series no longer available on provider: {SeriesName}",
+                                item.Name);
+                        }
+                    }
+                    else
+                    {
+                        // For movies, just remove from queue (TODO: implement movie name search if needed)
+                        _logger.LogInformation(
+                            "Removing {ItemType} from retry queue (404 Not Found): {ItemName}",
+                            item.ItemType,
+                            item.Name);
+                    }
+                }
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Retry failed for {ItemType}: {ItemName}", item.ItemType, item.Name);
@@ -298,6 +351,75 @@ public partial class StrmSyncService
         }
 
         _logger.LogInformation("Retry successful for series: {SeriesName}", item.Name);
+    }
+
+    /// <summary>
+    /// Searches for a series by name in the selected categories.
+    /// Used to find series that may have been re-added with a new ID.
+    /// </summary>
+    private async Task<Series?> FindSeriesByNameAsync(
+        ConnectionInfo connectionInfo,
+        string seriesName,
+        CancellationToken cancellationToken)
+    {
+        var config = Plugin.Instance.Configuration;
+        var categoryIds = config.SelectedSeriesCategoryIds;
+
+        // If no categories selected, we can't search efficiently
+        if (categoryIds == null || categoryIds.Length == 0)
+        {
+            _logger.LogDebug("No series categories configured, cannot search for series by name");
+            return null;
+        }
+
+        // Normalize the name for comparison (remove special chars, lowercase)
+        string normalizedSearchName = NormalizeSeriesName(seriesName);
+
+        foreach (var categoryId in categoryIds)
+        {
+            try
+            {
+                var seriesList = await _client.GetSeriesByCategoryAsync(connectionInfo, categoryId, cancellationToken)
+                    .ConfigureAwait(false);
+
+                foreach (var series in seriesList)
+                {
+                    string normalizedSeriesName = NormalizeSeriesName(series.Name);
+                    if (string.Equals(normalizedSearchName, normalizedSeriesName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return series;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Error searching category {CategoryId} for series", categoryId);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Normalizes a series name for comparison by removing prefixes, special characters, and extra whitespace.
+    /// </summary>
+    private static string NormalizeSeriesName(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+        {
+            return string.Empty;
+        }
+
+        // Remove common prefixes like "|NL|", "┃NL┃", etc.
+        var normalized = Regex.Replace(name, @"^[\|\┃][A-Z]+[\|\┃]\s*", string.Empty, RegexOptions.None, TimeSpan.FromSeconds(1));
+
+        // Remove year suffix like "(2024)" for comparison
+        normalized = Regex.Replace(normalized, @"\s*\(\d{4}\)\s*$", string.Empty, RegexOptions.None, TimeSpan.FromSeconds(1));
+
+        // Normalize whitespace
+        normalized = Regex.Replace(normalized, @"\s+", " ", RegexOptions.None, TimeSpan.FromSeconds(1)).Trim();
+
+        return normalized;
     }
 
     /// <summary>
@@ -614,6 +736,8 @@ public partial class StrmSyncService
 
         CurrentProgress.TotalCategories = totalBatches;
         CurrentProgress.CategoriesProcessed = 0;
+        CurrentProgress.TotalItems = 0;
+        CurrentProgress.ItemsProcessed = 0;
         CurrentProgress.Phase = "Syncing Movies";
 
         // Thread-safe counters and collections (shared across batches)
