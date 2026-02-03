@@ -284,6 +284,9 @@ const XtreamLibraryConfig = {
         var definitions = type === 'vod' ? this.vodFolderDefinitions : this.seriesFolderDefinitions;
         var listId = type === 'vod' ? 'vodFolderList' : 'seriesFolderList';
         var container = document.getElementById(listId);
+        if (!container) {
+            return;
+        }
         var folderItems = container.querySelectorAll('.folder-item');
 
         definitions.length = 0; // Clear array
@@ -297,7 +300,7 @@ const XtreamLibraryConfig = {
                 categoryIds.push(parseInt(cb.getAttribute('data-category-id')));
             });
 
-            if (nameInput.value.trim()) {
+            if (nameInput && nameInput.value.trim()) {
                 definitions.push({
                     name: nameInput.value.trim(),
                     categoryIds: categoryIds

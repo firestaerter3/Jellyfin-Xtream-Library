@@ -1148,7 +1148,7 @@ public partial class StrmSyncService
                     // Early return if no episodes
                     if (seriesInfo.Episodes == null || seriesInfo.Episodes.Count == 0)
                     {
-                        CurrentProgress.ItemsProcessed++;
+                        // Note: ItemsProcessed is incremented in finally block
                         return;
                     }
 
@@ -1247,7 +1247,7 @@ public partial class StrmSyncService
 
                             Interlocked.Increment(ref seriesSkipped);
                             Interlocked.Increment(ref smartSkipped);
-                            CurrentProgress.ItemsProcessed++;
+                            // Note: ItemsProcessed is incremented in finally block
                             return;
                         }
                     }
