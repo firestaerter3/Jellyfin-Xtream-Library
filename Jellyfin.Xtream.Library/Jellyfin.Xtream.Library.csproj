@@ -3,8 +3,8 @@
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
     <RootNamespace>Jellyfin.Xtream.Library</RootNamespace>
-    <AssemblyVersion>1.28.8.0</AssemblyVersion>
-    <FileVersion>1.28.8.0</FileVersion>
+    <AssemblyVersion>1.28.9.0</AssemblyVersion>
+    <FileVersion>1.28.9.0</FileVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Nullable>enable</Nullable>
