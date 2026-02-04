@@ -14,6 +14,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -41,12 +42,14 @@ namespace Jellyfin.Xtream.Library.Client;
 /// <param name="logger">Instance of the <see cref="ILogger"/> interface.</param>
 public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXtreamClient
 {
+    private static readonly ConcurrentDictionary<Type, PropertyInfo[]> PropertyCache = new();
+
     private readonly JsonSerializerSettings _serializerSettings = new()
     {
         Error = NullableEventHandler(logger),
     };
 
-    private bool _userAgentConfigured;
+    private volatile bool _userAgentConfigured;
 
     /// <summary>
     /// Gets or sets the delay in milliseconds between API requests.
@@ -104,7 +107,8 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
         {
             if (args.ErrorContext.OriginalObject?.GetType() is Type type && args.ErrorContext.Member is string jsonName)
             {
-                PropertyInfo? property = type.GetProperties().FirstOrDefault((p) =>
+                PropertyInfo[] properties = PropertyCache.GetOrAdd(type, t => t.GetProperties());
+                PropertyInfo? property = properties.FirstOrDefault((p) =>
                 {
                     CustomAttributeData? attribute = p.CustomAttributes.FirstOrDefault(a => a.AttributeType == typeof(JsonPropertyAttribute));
                     if (attribute == null)
@@ -167,29 +171,8 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
             try
             {
                 using var response = await client.GetAsync(uri, cancellationToken).ConfigureAwait(false);
-
-                if (response.StatusCode == HttpStatusCode.TooManyRequests)
-                {
-                    if (retryCount >= MaxRetries)
-                    {
-                        logger.LogError("Rate limited (429) after {Retries} retries for URL: {Url}", retryCount, uri);
-                        response.EnsureSuccessStatusCode(); // Throws HttpRequestException
-                    }
-
-                    // Check for Retry-After header
-                    if (response.Headers.RetryAfter?.Delta is TimeSpan retryAfter)
-                    {
-                        currentDelay = (int)retryAfter.TotalMilliseconds;
-                    }
-
-                    logger.LogWarning("Rate limited (429) for URL: {Url}. Retry {Retry}/{MaxRetries} after {Delay}ms", uri, retryCount + 1, MaxRetries, currentDelay);
-                    await Task.Delay(currentDelay, cancellationToken).ConfigureAwait(false);
-                    retryCount++;
-                    currentDelay *= 2; // Exponential backoff
-                    continue;
-                }
-
                 response.EnsureSuccessStatusCode();
+
                 var content = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
                 // Apply request delay to prevent rate limiting
@@ -200,8 +183,14 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
 
                 return content;
             }
-            catch (HttpRequestException ex) when (retryCount < MaxRetries && ex.StatusCode == HttpStatusCode.TooManyRequests)
+            catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests)
             {
+                if (retryCount >= MaxRetries)
+                {
+                    logger.LogError("Rate limited (429) after {Retries} retries for URL: {Url}", retryCount, uri);
+                    throw;
+                }
+
                 logger.LogWarning("Rate limited (429) for URL: {Url}. Retry {Retry}/{MaxRetries} after {Delay}ms", uri, retryCount + 1, MaxRetries, currentDelay);
                 await Task.Delay(currentDelay, cancellationToken).ConfigureAwait(false);
                 retryCount++;

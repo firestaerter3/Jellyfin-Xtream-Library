@@ -39,5 +39,5 @@ public class ConnectionInfo(string baseUrl, string username, string password)
     public string Password { get; set; } = password;
 
     /// <inheritdoc />
-    public override string ToString() => $"{BaseUrl} {UserName}:{Password}";
+    public override string ToString() => $"{BaseUrl} {UserName}:***";
 }

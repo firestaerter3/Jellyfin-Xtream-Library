@@ -34,12 +34,16 @@ namespace Jellyfin.Xtream.Library.Service;
 /// </summary>
 public partial class StrmSyncService
 {
-    private static readonly HttpClient ImageHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+    // Static HttpClient is intentional for connection pooling and efficient socket usage.
+    // For image downloads, we don't need per-request configuration, and a shared client
+    // improves performance by reusing TCP connections. A default User-Agent is set below.
+    private static readonly HttpClient ImageHttpClient = CreateImageHttpClient();
 
     private readonly IXtreamClient _client;
     private readonly ILibraryManager _libraryManager;
     private readonly IMetadataLookupService _metadataLookup;
     private readonly ILogger<StrmSyncService> _logger;
+    private readonly object _ctsLock = new();
     private CancellationTokenSource? _currentSyncCts;
 
     /// <summary>
@@ -82,11 +86,14 @@ public partial class StrmSyncService
     /// <returns>True if a sync was cancelled, false if no sync was running.</returns>
     public bool CancelSync()
     {
-        if (_currentSyncCts != null && !_currentSyncCts.IsCancellationRequested && CurrentProgress.IsRunning)
+        lock (_ctsLock)
         {
-            _logger.LogInformation("Cancelling sync operation...");
-            _currentSyncCts.Cancel();
-            return true;
+            if (_currentSyncCts != null && !_currentSyncCts.IsCancellationRequested && CurrentProgress.IsRunning)
+            {
+                _logger.LogInformation("Cancelling sync operation...");
+                _currentSyncCts.Cancel();
+                return true;
+            }
         }
 
         return false;
@@ -126,6 +133,8 @@ public partial class StrmSyncService
 
             foreach (var item in itemsToRetry)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 try
                 {
                     CurrentProgress.CurrentItem = item.Name;
@@ -209,7 +218,7 @@ public partial class StrmSyncService
                 }
                 finally
                 {
-                    CurrentProgress.ItemsProcessed++;
+                    CurrentProgress.IncrementItemsProcessed();
                 }
             }
 
@@ -433,9 +442,13 @@ public partial class StrmSyncService
         var result = new SyncResult { StartTime = DateTime.UtcNow };
 
         // Create linked cancellation token source for cancel support
-        _currentSyncCts?.Dispose();
-        _currentSyncCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var linkedToken = _currentSyncCts.Token;
+        CancellationToken linkedToken;
+        lock (_ctsLock)
+        {
+            _currentSyncCts?.Dispose();
+            _currentSyncCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            linkedToken = _currentSyncCts.Token;
+        }
 
         // Initialize progress tracking
         CurrentProgress.IsRunning = true;
@@ -511,7 +524,7 @@ public partial class StrmSyncService
                 var orphanedFiles = existingStrmFiles.Except(syncedFiles.Keys, StringComparer.OrdinalIgnoreCase).ToList();
 
                 // Protection: Check if deletion would exceed safety threshold (provider glitch protection)
-                const double SafetyThreshold = 0.20; // 20%
+                double safetyThreshold = config.OrphanSafetyThreshold;
                 int orphanedMovies = orphanedFiles.Count(f => f.StartsWith(moviesPath, StringComparison.OrdinalIgnoreCase));
                 int orphanedEpisodes = orphanedFiles.Count(f => f.StartsWith(seriesPath, StringComparison.OrdinalIgnoreCase));
                 int existingMovieCount = existingStrmFiles.Count(f => f.StartsWith(moviesPath, StringComparison.OrdinalIgnoreCase));
@@ -520,8 +533,8 @@ public partial class StrmSyncService
                 double movieDeletionRatio = existingMovieCount > 0 ? (double)orphanedMovies / existingMovieCount : 0;
                 double episodeDeletionRatio = existingEpisodeCount > 0 ? (double)orphanedEpisodes / existingEpisodeCount : 0;
 
-                bool skipMovieCleanup = existingMovieCount > 10 && movieDeletionRatio > SafetyThreshold;
-                bool skipEpisodeCleanup = existingEpisodeCount > 10 && episodeDeletionRatio > SafetyThreshold;
+                bool skipMovieCleanup = existingMovieCount > 10 && movieDeletionRatio > safetyThreshold;
+                bool skipEpisodeCleanup = existingEpisodeCount > 10 && episodeDeletionRatio > safetyThreshold;
 
                 if (skipMovieCleanup)
                 {
@@ -530,7 +543,7 @@ public partial class StrmSyncService
                         orphanedMovies,
                         existingMovieCount,
                         movieDeletionRatio,
-                        SafetyThreshold);
+                        safetyThreshold);
                 }
 
                 if (skipEpisodeCleanup)
@@ -540,7 +553,7 @@ public partial class StrmSyncService
                         orphanedEpisodes,
                         existingEpisodeCount,
                         episodeDeletionRatio,
-                        SafetyThreshold);
+                        safetyThreshold);
                 }
 
                 // Filter orphans based on safety checks
@@ -555,9 +568,11 @@ public partial class StrmSyncService
 
                 foreach (var orphan in safeOrphans)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+
                     try
                     {
-                        CurrentProgress.ItemsProcessed++;
+                        CurrentProgress.IncrementItemsProcessed();
                         File.Delete(orphan);
                         result.FilesDeleted++;
 
@@ -658,9 +673,9 @@ public partial class StrmSyncService
             {
                 await _metadataLookup.FlushCacheAsync().ConfigureAwait(false);
             }
-            catch
+            catch (Exception ex)
             {
-                // Ignore flush errors in finally
+                _logger.LogWarning(ex, "Failed to flush metadata cache");
             }
 
             CurrentProgress.IsRunning = false;
@@ -670,8 +685,11 @@ public partial class StrmSyncService
             }
 
             // Clean up the CTS
-            _currentSyncCts?.Dispose();
-            _currentSyncCts = null;
+            lock (_ctsLock)
+            {
+                _currentSyncCts?.Dispose();
+                _currentSyncCts = null;
+            }
         }
 
         LastSyncResult = result;
@@ -867,7 +885,7 @@ public partial class StrmSyncService
 
             _logger.LogInformation("Batch {Batch}: Found {Count} unique movies", batchIndex + 1, batchMovies.Count);
             CurrentProgress.Phase = $"Syncing Movies (batch {batchIndex + 1}/{totalBatches})";
-            CurrentProgress.TotalItems += batchMovies.Count;
+            CurrentProgress.AddTotalItems(batchMovies.Count);
 
             // Process movies in this batch
             await Parallel.ForEachAsync(
@@ -951,9 +969,20 @@ public partial class StrmSyncService
                         // Only do metadata lookup if provider doesn't have TMDB ID
                         if (!providerTmdbId.HasValue && enableMetadataLookup && !tmdbOverrides.ContainsKey(baseName))
                         {
-                            autoLookupTmdbId = await _metadataLookup.LookupMovieTmdbIdAsync(movieName, year, ct).ConfigureAwait(false);
-                            if (!autoLookupTmdbId.HasValue)
+                            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                            timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+                            try
                             {
+                                autoLookupTmdbId = await _metadataLookup.LookupMovieTmdbIdAsync(movieName, year, timeoutCts.Token).ConfigureAwait(false);
+                                if (!autoLookupTmdbId.HasValue)
+                                {
+                                    Interlocked.Increment(ref unmatchedCount);
+                                    unmatchedMovies.Add(baseName);
+                                }
+                            }
+                            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                            {
+                                _logger.LogWarning("Metadata lookup timed out for movie: {MovieName}", movieName);
                                 Interlocked.Increment(ref unmatchedCount);
                                 unmatchedMovies.Add(baseName);
                             }
@@ -968,6 +997,7 @@ public partial class StrmSyncService
 
                     bool anyCreated = false;
                     bool allSkipped = true;
+                    string? firstPosterPath = null;
 
                     // Sync to each target folder
                     foreach (var targetFolder in targetFolders)
@@ -992,8 +1022,16 @@ public partial class StrmSyncService
                         Directory.CreateDirectory(movieFolder);
 
                         // Write STRM file
-                        await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
-                        anyCreated = true;
+                        try
+                        {
+                            await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
+                            anyCreated = true;
+                        }
+                        catch (IOException) when (File.Exists(strmPath))
+                        {
+                            // File was created by another thread/process, skip
+                            continue;
+                        }
 
                         // Write NFO if proactive media info enabled (only for first target folder)
                         if (enableProactiveMediaInfo && targetFolders.First() == targetFolder)
@@ -1025,14 +1063,29 @@ public partial class StrmSyncService
                             }
                         }
 
-                        // Download artwork for unmatched movies
-                        if (!providerTmdbId.HasValue && !autoLookupTmdbId.HasValue && !tmdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched)
+                        // Download artwork for unmatched movies (only for first target folder)
+                        if (targetFolders.First() == targetFolder &&
+                            !providerTmdbId.HasValue && !autoLookupTmdbId.HasValue && !tmdbOverrides.ContainsKey(baseName) &&
+                            config.DownloadArtworkForUnmatched && !string.IsNullOrEmpty(stream.StreamIcon))
                         {
-                            if (!string.IsNullOrEmpty(stream.StreamIcon))
+                            var posterExt = GetImageExtension(stream.StreamIcon);
+                            var posterPath = Path.Combine(movieFolder, $"poster{posterExt}");
+                            await DownloadImageAsync(stream.StreamIcon, posterPath, ct).ConfigureAwait(false);
+                            firstPosterPath = posterPath;
+                        }
+
+                        // Copy artwork to additional folders
+                        else if (firstPosterPath != null && File.Exists(firstPosterPath))
+                        {
+                            var posterExt = Path.GetExtension(firstPosterPath);
+                            var posterPath = Path.Combine(movieFolder, $"poster{posterExt}");
+                            try
                             {
-                                var posterExt = GetImageExtension(stream.StreamIcon);
-                                var posterPath = Path.Combine(movieFolder, $"poster{posterExt}");
-                                await DownloadImageAsync(stream.StreamIcon, posterPath, ct).ConfigureAwait(false);
+                                File.Copy(firstPosterPath, posterPath, overwrite: false);
+                            }
+                            catch (IOException)
+                            {
+                                // File already exists or copy failed, continue
                             }
                         }
 
@@ -1062,7 +1115,7 @@ public partial class StrmSyncService
                 }
                 finally
                 {
-                    CurrentProgress.ItemsProcessed++;
+                    CurrentProgress.IncrementItemsProcessed();
                     CurrentProgress.MoviesCreated = moviesCreated;
                 }
             }).ConfigureAwait(false);
@@ -1245,7 +1298,7 @@ public partial class StrmSyncService
 
             _logger.LogInformation("Batch {Batch}: Found {Count} unique series", batchIndex + 1, batchSeries.Count);
             CurrentProgress.Phase = $"Syncing Series (batch {batchIndex + 1}/{totalBatches})";
-            CurrentProgress.TotalItems += batchSeries.Count;
+            CurrentProgress.AddTotalItems(batchSeries.Count);
 
             // Process series in this batch
             await Parallel.ForEachAsync(
@@ -1287,9 +1340,20 @@ public partial class StrmSyncService
                     int? autoLookupTvdbId = null;
                     if (!providerTmdbId.HasValue && enableMetadataLookup && !tvdbOverrides.ContainsKey(baseName))
                     {
-                        autoLookupTvdbId = await _metadataLookup.LookupSeriesTvdbIdAsync(seriesName, year, ct).ConfigureAwait(false);
-                        if (!autoLookupTvdbId.HasValue)
+                        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                        timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+                        try
                         {
+                            autoLookupTvdbId = await _metadataLookup.LookupSeriesTvdbIdAsync(seriesName, year, timeoutCts.Token).ConfigureAwait(false);
+                            if (!autoLookupTvdbId.HasValue)
+                            {
+                                Interlocked.Increment(ref unmatchedCount);
+                                unmatchedSeries.Add(baseName);
+                            }
+                        }
+                        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                        {
+                            _logger.LogWarning("Metadata lookup timed out for series: {SeriesName}", seriesName);
                             Interlocked.Increment(ref unmatchedCount);
                             unmatchedSeries.Add(baseName);
                         }
@@ -1339,6 +1403,14 @@ public partial class StrmSyncService
                                 path => Directory.GetFiles(path, "*.strm", SearchOption.AllDirectories));
 
                             if (existingStrms.Length == 0)
+                            {
+                                anyNeedsSync = true;
+                                break;
+                            }
+
+                            // Check if provider has more episodes than we have locally
+                            int providerEpisodeCount = seriesInfo.Episodes.Values.Sum(seasonEps => seasonEps.Count);
+                            if (existingStrms.Length < providerEpisodeCount)
                             {
                                 anyNeedsSync = true;
                                 break;
@@ -1417,10 +1489,18 @@ public partial class StrmSyncService
                                 string streamUrl = $"{connectionInfo.BaseUrl}/series/{connectionInfo.UserName}/{connectionInfo.Password}/{episode.EpisodeId}.{extension}";
 
                                 // Write STRM file
-                                await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
-                                Interlocked.Increment(ref episodesCreated);
-                                seasonHasNewEpisodes = true;
-                                seriesHasNewEpisodes = true;
+                                try
+                                {
+                                    await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
+                                    Interlocked.Increment(ref episodesCreated);
+                                    seasonHasNewEpisodes = true;
+                                    seriesHasNewEpisodes = true;
+                                }
+                                catch (IOException) when (File.Exists(strmPath))
+                                {
+                                    // File was created by another thread/process, skip
+                                    continue;
+                                }
 
                                 // Write NFO with media info if enabled (only for first target folder)
                                 if (enableProactiveMediaInfo && targetFolders.First() == targetFolder && episode.Info != null)
@@ -1526,7 +1606,7 @@ public partial class StrmSyncService
                 }
                 finally
                 {
-                    CurrentProgress.ItemsProcessed++;
+                    CurrentProgress.IncrementItemsProcessed();
                     CurrentProgress.EpisodesCreated = episodesCreated;
                 }
             }).ConfigureAwait(false);
@@ -1869,9 +1949,20 @@ public partial class StrmSyncService
             return;
         }
 
-        foreach (var file in Directory.EnumerateFiles(basePath, "*.strm", SearchOption.AllDirectories))
+        try
         {
-            files.Add(file);
+            foreach (var file in Directory.EnumerateFiles(basePath, "*.strm", SearchOption.AllDirectories))
+            {
+                files.Add(file);
+            }
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // Directory was deleted during enumeration
+        }
+        catch (IOException)
+        {
+            // I/O error during enumeration (permissions, corrupted filesystem, etc.)
         }
     }
 
@@ -2036,6 +2127,13 @@ public partial class StrmSyncService
     // Fixes malformed quotes like "'\'" "\''" "'\''" "Bob'\''s" to just "'"
     [GeneratedRegex(@"'\\''|'\\'|\\''|''+")]
     private static partial Regex MalformedQuotePattern();
+
+    private static HttpClient CreateImageHttpClient()
+    {
+        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        client.DefaultRequestHeaders.Add("User-Agent", "Jellyfin-Xtream-Library/1.0");
+        return client;
+    }
 }
 
 /// <summary>
@@ -2043,6 +2141,11 @@ public partial class StrmSyncService
 /// </summary>
 public class SyncProgress
 {
+    private int _itemsProcessed;
+    private int _totalItems;
+    private int _moviesCreated;
+    private int _episodesCreated;
+
     /// <summary>
     /// Gets or sets a value indicating whether a sync is currently in progress.
     /// </summary>
@@ -2071,27 +2174,76 @@ public class SyncProgress
     /// <summary>
     /// Gets or sets the total items in the current category.
     /// </summary>
-    public int TotalItems { get; set; }
+    public int TotalItems
+    {
+        get => Volatile.Read(ref _totalItems);
+        set => Volatile.Write(ref _totalItems, value);
+    }
 
     /// <summary>
     /// Gets or sets the items processed in the current category.
     /// </summary>
-    public int ItemsProcessed { get; set; }
+    public int ItemsProcessed
+    {
+        get => Volatile.Read(ref _itemsProcessed);
+        set => Volatile.Write(ref _itemsProcessed, value);
+    }
 
     /// <summary>
     /// Gets or sets the number of movies created so far.
     /// </summary>
-    public int MoviesCreated { get; set; }
+    public int MoviesCreated
+    {
+        get => Volatile.Read(ref _moviesCreated);
+        set => Volatile.Write(ref _moviesCreated, value);
+    }
 
     /// <summary>
     /// Gets or sets the number of episodes created so far.
     /// </summary>
-    public int EpisodesCreated { get; set; }
+    public int EpisodesCreated
+    {
+        get => Volatile.Read(ref _episodesCreated);
+        set => Volatile.Write(ref _episodesCreated, value);
+    }
 
     /// <summary>
     /// Gets or sets the start time.
     /// </summary>
     public DateTime? StartTime { get; set; }
+
+    /// <summary>
+    /// Atomically increments the ItemsProcessed counter.
+    /// </summary>
+    public void IncrementItemsProcessed()
+    {
+        Interlocked.Increment(ref _itemsProcessed);
+    }
+
+    /// <summary>
+    /// Atomically adds to the TotalItems counter.
+    /// </summary>
+    /// <param name="count">The number of items to add.</param>
+    public void AddTotalItems(int count)
+    {
+        Interlocked.Add(ref _totalItems, count);
+    }
+
+    /// <summary>
+    /// Atomically increments the MoviesCreated counter.
+    /// </summary>
+    public void IncrementMoviesCreated()
+    {
+        Interlocked.Increment(ref _moviesCreated);
+    }
+
+    /// <summary>
+    /// Atomically increments the EpisodesCreated counter.
+    /// </summary>
+    public void IncrementEpisodesCreated()
+    {
+        Interlocked.Increment(ref _episodesCreated);
+    }
 }
 
 /// <summary>

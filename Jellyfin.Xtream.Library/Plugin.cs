@@ -29,7 +29,7 @@ namespace Jellyfin.Xtream.Library;
 /// </summary>
 public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 {
-    private static Plugin? _instance;
+    private static volatile Plugin? _instance;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Plugin"/> class.

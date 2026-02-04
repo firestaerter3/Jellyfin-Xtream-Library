@@ -37,8 +37,8 @@ public static class NfoWriter
     /// <param name="audio">Audio stream info.</param>
     /// <param name="durationSecs">Duration in seconds.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>Task representing the async operation.</returns>
-    public static async Task WriteMovieNfoAsync(
+    /// <returns>True if NFO was written, false if no media info was available.</returns>
+    public static async Task<bool> WriteMovieNfoAsync(
         string nfoPath,
         string title,
         VideoInfo? video,
@@ -49,7 +49,7 @@ public static class NfoWriter
         // Skip if no media info available
         if (video == null && audio == null)
         {
-            return;
+            return false;
         }
 
         var sb = new StringBuilder();
@@ -62,6 +62,7 @@ public static class NfoWriter
         sb.AppendLine("</movie>");
 
         await File.WriteAllTextAsync(nfoPath, sb.ToString(), Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     /// <summary>
@@ -76,8 +77,8 @@ public static class NfoWriter
     /// <param name="audio">Audio stream info.</param>
     /// <param name="durationSecs">Duration in seconds.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>Task representing the async operation.</returns>
-    public static async Task WriteEpisodeNfoAsync(
+    /// <returns>True if NFO was written, false if no media info was available.</returns>
+    public static async Task<bool> WriteEpisodeNfoAsync(
         string nfoPath,
         string seriesName,
         int seasonNumber,
@@ -91,7 +92,7 @@ public static class NfoWriter
         // Skip if no media info available
         if (video == null && audio == null)
         {
-            return;
+            return false;
         }
 
         var sb = new StringBuilder();
@@ -107,6 +108,7 @@ public static class NfoWriter
         sb.AppendLine("</episodedetails>");
 
         await File.WriteAllTextAsync(nfoPath, sb.ToString(), Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     private static void AppendFileInfo(StringBuilder sb, VideoInfo? video, AudioInfo? audio, int? durationSecs)

@@ -49,10 +49,16 @@ public class SingularToListConverter<T> : JsonConverter
             case JsonToken.String:
                 if (typeof(T) == typeof(string))
                 {
-                    goto case JsonToken.StartObject;
+                    T? stringResult = serializer.Deserialize<T>(reader);
+                    if (stringResult is null)
+                    {
+                        return null;
+                    }
+
+                    return [stringResult];
                 }
 
-                goto default;
+                throw new JsonReaderException("The JsonReader points to an unexpected point.");
             case JsonToken.Null:
                 return [];
             default:

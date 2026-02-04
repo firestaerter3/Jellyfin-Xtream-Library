@@ -34,7 +34,7 @@ public class StringBoolConverter : JsonConverter
     {
         if (reader.Value == null)
         {
-            throw new ArgumentException("Value cannot be null.");
+            return false;
         }
 
         return "1".Equals((string)reader.Value, StringComparison.Ordinal);
@@ -45,7 +45,8 @@ public class StringBoolConverter : JsonConverter
     {
         if (value == null)
         {
-            throw new ArgumentException("Value cannot be null.");
+            writer.WriteNull();
+            return;
         }
 
         string result = (bool)value ? "1" : "0";

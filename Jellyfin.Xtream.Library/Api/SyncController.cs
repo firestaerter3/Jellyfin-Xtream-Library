@@ -63,6 +63,22 @@ public class SyncController : ControllerBase
     }
 
     /// <summary>
+    /// Safely gets the plugin configuration, returning null if the plugin is not initialized.
+    /// </summary>
+    /// <returns>The plugin configuration, or null if not available.</returns>
+    private PluginConfiguration? TryGetConfig()
+    {
+        try
+        {
+            return Plugin.Instance.Configuration;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Triggers a manual sync of Xtream content.
     /// </summary>
     /// <returns>Status indicating sync was started.</returns>
@@ -185,13 +201,24 @@ public class SyncController : ControllerBase
     /// <returns>Connection test result.</returns>
     [HttpPost("TestConnection")]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ConnectionTestResult>> TestConnection(
         [FromBody] ConnectionTestRequest? request,
         CancellationToken cancellationToken)
     {
-        var baseUrl = request?.BaseUrl ?? Plugin.Instance.Configuration.BaseUrl;
-        var username = request?.Username ?? Plugin.Instance.Configuration.Username;
-        var password = request?.Password ?? Plugin.Instance.Configuration.Password;
+        var config = TryGetConfig();
+        if (config == null)
+        {
+            return BadRequest(new ConnectionTestResult
+            {
+                Success = false,
+                Message = "Plugin not initialized.",
+            });
+        }
+
+        var baseUrl = request?.BaseUrl ?? config.BaseUrl;
+        var username = request?.Username ?? config.Username;
+        var password = request?.Password ?? config.Password;
 
         if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(username))
         {
@@ -238,7 +265,12 @@ public class SyncController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<IEnumerable<CategoryDto>>> GetVodCategories(CancellationToken cancellationToken)
     {
-        var config = Plugin.Instance.Configuration;
+        var config = TryGetConfig();
+        if (config == null)
+        {
+            return BadRequest("Plugin not initialized.");
+        }
+
         if (string.IsNullOrEmpty(config.BaseUrl) || string.IsNullOrEmpty(config.Username))
         {
             return BadRequest("Provider credentials not configured.");
@@ -274,7 +306,12 @@ public class SyncController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<IEnumerable<CategoryDto>>> GetSeriesCategories(CancellationToken cancellationToken)
     {
-        var config = Plugin.Instance.Configuration;
+        var config = TryGetConfig();
+        if (config == null)
+        {
+            return BadRequest("Plugin not initialized.");
+        }
+
         if (string.IsNullOrEmpty(config.BaseUrl) || string.IsNullOrEmpty(config.Username))
         {
             return BadRequest("Provider credentials not configured.");
@@ -322,7 +359,12 @@ public class SyncController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public ActionResult CleanLibraries()
     {
-        var config = Plugin.Instance.Configuration;
+        var config = TryGetConfig();
+        if (config == null)
+        {
+            return BadRequest(new { Success = false, Message = "Plugin not initialized." });
+        }
+
         if (string.IsNullOrEmpty(config.LibraryPath))
         {
             return BadRequest(new { Success = false, Message = "Library path not configured." });

@@ -69,6 +69,13 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool CleanupOrphans { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets the orphan safety threshold (0.0 to 1.0).
+    /// If more than this fraction of content would be deleted, orphan cleanup is skipped as a safety measure.
+    /// Default: 0.20 (20% of content).
+    /// </summary>
+    public double OrphanSafetyThreshold { get; set; } = 0.20;
+
+    /// <summary>
     /// Gets or sets an optional custom User-Agent string for API requests.
     /// </summary>
     public string UserAgent { get; set; } = string.Empty;
@@ -303,4 +310,46 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Each subsequent retry doubles this delay (exponential backoff).
     /// </summary>
     public int RetryDelayMs { get; set; } = 1000;
+
+    /// <summary>
+    /// Validates and clamps all configuration values to safe ranges.
+    /// Call this before using configuration values to ensure they are within valid bounds.
+    /// </summary>
+    public void Validate()
+    {
+        // Clamp parallelism settings to reasonable values
+        SyncParallelism = Math.Clamp(SyncParallelism, 1, 20);
+        MetadataParallelism = Math.Clamp(MetadataParallelism, 1, 10);
+        EpgParallelism = Math.Clamp(EpgParallelism, 1, 20);
+
+        // Clamp time intervals to positive values
+        SyncIntervalMinutes = Math.Max(SyncIntervalMinutes, 1);
+        MetadataCacheAgeDays = Math.Max(MetadataCacheAgeDays, 0);
+        M3UCacheMinutes = Math.Max(M3UCacheMinutes, 1);
+        EpgCacheMinutes = Math.Max(EpgCacheMinutes, 1);
+        EpgDaysToFetch = Math.Clamp(EpgDaysToFetch, 1, 14);
+        CatchupDays = Math.Clamp(CatchupDays, 1, 30);
+
+        // Clamp batch size to reasonable values (0 = unlimited)
+        if (CategoryBatchSize < 0)
+        {
+            CategoryBatchSize = 0;
+        }
+        else if (CategoryBatchSize > 100)
+        {
+            CategoryBatchSize = 100;
+        }
+
+        // Clamp daily schedule to valid time ranges
+        SyncDailyHour = Math.Clamp(SyncDailyHour, 0, 23);
+        SyncDailyMinute = Math.Clamp(SyncDailyMinute, 0, 59);
+
+        // Clamp rate limiting settings
+        RequestDelayMs = Math.Max(RequestDelayMs, 0);
+        MaxRetries = Math.Clamp(MaxRetries, 0, 10);
+        RetryDelayMs = Math.Max(RetryDelayMs, 0);
+
+        // Clamp orphan safety threshold to 0.0-1.0
+        OrphanSafetyThreshold = Math.Clamp(OrphanSafetyThreshold, 0.0, 1.0);
+    }
 }

@@ -59,7 +59,7 @@ public class Series
 
     [JsonConverter(typeof(SingularToListConverter<string>))]
     [JsonProperty("backdrop_path")]
-#pragma warning disable CA2227
+#pragma warning disable CA2227 // Collection properties should be read-only - Required for Newtonsoft.Json deserialization
     public ICollection<string> BackdropPaths { get; set; } = new List<string>();
 #pragma warning restore CA2227
 

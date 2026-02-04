@@ -140,9 +140,9 @@ public class SyncLibraryTask : IScheduledTask, IConfigurableScheduledTask
         {
             // Expected when task is cancelled
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // Ignore progress monitoring errors
+            _logger.LogDebug(ex, "Progress monitoring failed");
         }
     }
 

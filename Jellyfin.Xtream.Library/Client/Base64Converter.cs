@@ -35,7 +35,7 @@ public class Base64Converter : JsonConverter
     {
         if (reader.Value == null)
         {
-            throw new ArgumentException("Value cannot be null.");
+            return string.Empty;
         }
 
         byte[] bytes = Convert.FromBase64String((string)reader.Value);
@@ -47,7 +47,8 @@ public class Base64Converter : JsonConverter
     {
         if (value == null)
         {
-            throw new ArgumentException("Value cannot be null.");
+            writer.WriteNull();
+            return;
         }
 
         byte[] bytes = Encoding.UTF8.GetBytes((string)value);
