@@ -356,12 +356,13 @@ public class SyncController : ControllerBase
 
     /// <summary>
     /// Deletes all content from the Movies and Series library folders.
+    /// Cancels any running sync first and waits for it to stop.
     /// </summary>
     /// <returns>Result with counts of deleted items.</returns>
     [HttpPost("CleanLibraries")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public ActionResult CleanLibraries()
+    public async Task<ActionResult> CleanLibraries()
     {
         var config = TryGetConfig();
         if (config == null)
@@ -372,6 +373,27 @@ public class SyncController : ControllerBase
         if (string.IsNullOrEmpty(config.LibraryPath))
         {
             return BadRequest(new { Success = false, Message = "Library path not configured." });
+        }
+
+        // Cancel any running sync and wait for it to stop
+        bool wasCancelled = _syncService.CancelSync();
+        if (wasCancelled)
+        {
+            _logger.LogInformation("Waiting for running sync to stop before cleaning...");
+            var timeout = DateTime.UtcNow.AddSeconds(10);
+            while (_syncService.CurrentProgress.IsRunning && DateTime.UtcNow < timeout)
+            {
+                await Task.Delay(200).ConfigureAwait(false);
+            }
+
+            if (_syncService.CurrentProgress.IsRunning)
+            {
+                _logger.LogWarning("Sync did not stop within timeout, proceeding with clean anyway");
+            }
+            else
+            {
+                _logger.LogInformation("Sync stopped, proceeding with clean");
+            }
         }
 
         var moviesPath = System.IO.Path.Combine(config.LibraryPath, "Movies");
