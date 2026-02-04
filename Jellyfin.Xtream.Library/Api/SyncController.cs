@@ -99,6 +99,9 @@ public class SyncController : ControllerBase
 
         _logger.LogInformation("Manual sync triggered via API");
 
+        // Clear any sync suppression (from CleanLibraries) — manual trigger always runs
+        _syncService.ClearSuppression();
+
         // Start sync in background - NOT tied to HTTP request
         // Use CancellationToken.None so browser disconnect won't cancel the sync
         // The sync can still be cancelled via the Cancel endpoint
@@ -375,8 +378,8 @@ public class SyncController : ControllerBase
             return BadRequest(new { Success = false, Message = "Library path not configured." });
         }
 
-        // Suppress new syncs from starting (prevents scheduler from restarting immediately)
-        _syncService.SuppressSync(TimeSpan.FromMinutes(5));
+        // Suppress all syncs until user manually presses Sync
+        _syncService.SuppressSync();
 
         // Cancel any running sync and wait for it to stop
         bool wasCancelled = _syncService.CancelSync();
@@ -429,7 +432,7 @@ public class SyncController : ControllerBase
             return Ok(new
             {
                 Success = true,
-                Message = $"Deleted {moviesDeleted} movies and {seriesDeleted} episodes. Snapshots cleared. Sync suppressed for 5 minutes.",
+                Message = $"Deleted {moviesDeleted} movies and {seriesDeleted} episodes. Snapshots cleared. Press Sync to repopulate.",
                 MoviesDeleted = moviesDeleted,
                 EpisodesDeleted = seriesDeleted,
             });
