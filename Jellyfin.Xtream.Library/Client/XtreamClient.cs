@@ -46,6 +46,8 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
         Error = NullableEventHandler(logger),
     };
 
+    private bool _userAgentConfigured;
+
     /// <summary>
     /// Gets or sets the delay in milliseconds between API requests.
     /// </summary>
@@ -77,6 +79,17 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
         else
         {
             client.DefaultRequestHeaders.Add("User-Agent", customUserAgent);
+        }
+
+        _userAgentConfigured = true;
+    }
+
+    private void EnsureUserAgent()
+    {
+        if (!_userAgentConfigured)
+        {
+            var config = Plugin.Instance?.Configuration;
+            UpdateUserAgent(config?.UserAgent);
         }
     }
 
@@ -145,6 +158,7 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
 
     private async Task<string> GetStringWithRetryAsync(Uri uri, CancellationToken cancellationToken)
     {
+        EnsureUserAgent();
         int retryCount = 0;
         int currentDelay = RetryDelayMs;
 
