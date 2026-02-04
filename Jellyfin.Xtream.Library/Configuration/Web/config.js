@@ -66,6 +66,7 @@ const XtreamLibraryConfig = {
             // Metadata lookup
             document.getElementById('chkEnableMetadataLookup').checked = config.EnableMetadataLookup || false;
             document.getElementById('txtMetadataParallelism').value = config.MetadataParallelism || 3;
+            document.getElementById('txtSyncParallelism').value = config.SyncParallelism || 3;
             document.getElementById('txtCategoryBatchSize').value = config.CategoryBatchSize || 10;
 
             // Rate limiting
@@ -174,6 +175,7 @@ const XtreamLibraryConfig = {
             // Metadata lookup
             config.EnableMetadataLookup = document.getElementById('chkEnableMetadataLookup').checked;
             config.MetadataParallelism = parseInt(document.getElementById('txtMetadataParallelism').value) || 3;
+            config.SyncParallelism = parseInt(document.getElementById('txtSyncParallelism').value) || 3;
             config.CategoryBatchSize = parseInt(document.getElementById('txtCategoryBatchSize').value) || 10;
 
             // Rate limiting

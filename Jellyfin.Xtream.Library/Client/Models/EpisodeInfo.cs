@@ -13,7 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using System;
 using Newtonsoft.Json;
 
 #pragma warning disable CS1591
@@ -28,7 +27,7 @@ public class EpisodeInfo
     public string? Plot { get; set; }
 
     [JsonProperty("releasedate")]
-    public DateTime? ReleaseDate { get; set; }
+    public string? ReleaseDate { get; set; }
 
     [JsonProperty("rating")]
     public decimal? Rating { get; set; }

@@ -222,6 +222,15 @@
                                 </div>
                             </div>
                             <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtSyncParallelism">Sync Parallelism</label>
+                                <input is="emby-input" type="number" id="txtSyncParallelism" name="SyncParallelism"
+                                       min="1" max="10" step="1" />
+                                <div class="fieldDescription">
+                                    Number of parallel API requests during sync (1-10). Lower values reduce rate limiting (429 errors)
+                                    from providers. Default: 3.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="txtMetadataParallelism">Metadata Lookup Parallelism</label>
                                 <input is="emby-input" type="number" id="txtMetadataParallelism" name="MetadataParallelism"
                                        min="1" max="20" step="1" />

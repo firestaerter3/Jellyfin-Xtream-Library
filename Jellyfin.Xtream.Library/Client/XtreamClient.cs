@@ -135,7 +135,7 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
 
             return JsonConvert.DeserializeObject<T>(jsonContent, _serializerSettings)!;
         }
-        catch (JsonSerializationException ex)
+        catch (JsonException ex)
         {
             string jsonSample = jsonContent.Length > 500 ? string.Concat(jsonContent.AsSpan(0, 500), "...") : jsonContent;
             logger.LogError(ex, "Failed to deserialize response from Xtream API (URL: {Url}). JSON content: {Json}", uri, jsonSample);
