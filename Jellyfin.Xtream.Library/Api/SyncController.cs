@@ -375,15 +375,18 @@ public class SyncController : ControllerBase
             return BadRequest(new { Success = false, Message = "Library path not configured." });
         }
 
+        // Suppress new syncs from starting (prevents scheduler from restarting immediately)
+        _syncService.SuppressSync(TimeSpan.FromMinutes(5));
+
         // Cancel any running sync and wait for it to stop
         bool wasCancelled = _syncService.CancelSync();
         if (wasCancelled)
         {
             _logger.LogInformation("Waiting for running sync to stop before cleaning...");
-            var timeout = DateTime.UtcNow.AddSeconds(10);
+            var timeout = DateTime.UtcNow.AddSeconds(15);
             while (_syncService.CurrentProgress.IsRunning && DateTime.UtcNow < timeout)
             {
-                await Task.Delay(200).ConfigureAwait(false);
+                await Task.Delay(250).ConfigureAwait(false);
             }
 
             if (_syncService.CurrentProgress.IsRunning)
@@ -426,7 +429,7 @@ public class SyncController : ControllerBase
             return Ok(new
             {
                 Success = true,
-                Message = $"Deleted {moviesDeleted} movies and {seriesDeleted} episodes. Snapshots cleared.",
+                Message = $"Deleted {moviesDeleted} movies and {seriesDeleted} episodes. Snapshots cleared. Sync suppressed for 5 minutes.",
                 MoviesDeleted = moviesDeleted,
                 EpisodesDeleted = seriesDeleted,
             });

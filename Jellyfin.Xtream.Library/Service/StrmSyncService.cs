@@ -48,6 +48,7 @@ public partial class StrmSyncService
     private readonly ILogger<StrmSyncService> _logger;
     private readonly object _ctsLock = new();
     private CancellationTokenSource? _currentSyncCts;
+    private DateTime _syncSuppressedUntil = DateTime.MinValue;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StrmSyncService"/> class.
@@ -106,6 +107,17 @@ public partial class StrmSyncService
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Suppresses sync operations until the specified time.
+    /// Used by CleanLibraries to prevent the scheduler from immediately restarting a sync.
+    /// </summary>
+    /// <param name="duration">How long to suppress syncs.</param>
+    public void SuppressSync(TimeSpan duration)
+    {
+        _syncSuppressedUntil = DateTime.UtcNow + duration;
+        _logger.LogInformation("Sync suppressed for {Seconds}s", duration.TotalSeconds);
     }
 
     /// <summary>
@@ -449,6 +461,16 @@ public partial class StrmSyncService
     {
         var config = Plugin.Instance.Configuration;
         var result = new SyncResult { StartTime = DateTime.UtcNow };
+
+        // Check if sync is suppressed (e.g., after CleanLibraries)
+        if (DateTime.UtcNow < _syncSuppressedUntil)
+        {
+            var remaining = _syncSuppressedUntil - DateTime.UtcNow;
+            _logger.LogInformation("Sync suppressed for {Seconds:F0}s (libraries were recently cleaned)", remaining.TotalSeconds);
+            result.EndTime = DateTime.UtcNow;
+            result.Error = "Sync suppressed after library clean";
+            return result;
+        }
 
         // Create linked cancellation token source for cancel support
         CancellationToken linkedToken;
