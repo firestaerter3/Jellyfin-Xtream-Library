@@ -81,6 +81,29 @@ public class SnapshotService : IDisposable
 
         return ComputeMd5(data);
     }
+
+    /// <summary>
+    /// Computes a fingerprint of configuration settings that affect folder structure.
+    /// Changes to these settings require a full sync to reprocess all items.
+    /// </summary>
+    /// <param name="config">The plugin configuration.</param>
+    /// <returns>An MD5 fingerprint of the relevant settings.</returns>
+    public static string CalculateConfigFingerprint(PluginConfiguration config)
+    {
+        var data = string.Join(
+            "|",
+            config.MovieFolderMode,
+            config.SeriesFolderMode,
+            config.MovieFolderMappings ?? string.Empty,
+            config.SeriesFolderMappings ?? string.Empty,
+            string.Join(",", config.SelectedVodCategoryIds?.OrderBy(id => id) ?? Enumerable.Empty<int>()),
+            string.Join(",", config.SelectedSeriesCategoryIds?.OrderBy(id => id) ?? Enumerable.Empty<int>()),
+            config.EnableMetadataLookup.ToString(CultureInfo.InvariantCulture),
+            config.TmdbFolderIdOverrides ?? string.Empty,
+            config.TvdbFolderIdOverrides ?? string.Empty);
+
+        return ComputeMd5(data);
+    }
 #pragma warning restore CA5351
 
     /// <summary>

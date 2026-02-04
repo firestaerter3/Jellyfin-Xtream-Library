@@ -504,6 +504,18 @@ public partial class StrmSyncService
                     previousSnapshot = null;
                 }
 
+                // Force full sync if folder structure config changed
+                if (previousSnapshot != null)
+                {
+                    var currentFingerprint = SnapshotService.CalculateConfigFingerprint(config);
+                    if (!string.IsNullOrEmpty(previousSnapshot.ConfigFingerprint) &&
+                        !string.Equals(previousSnapshot.ConfigFingerprint, currentFingerprint, StringComparison.Ordinal))
+                    {
+                        _logger.LogInformation("Configuration changed (folder mode, categories, or metadata settings), forcing full sync");
+                        previousSnapshot = null;
+                    }
+                }
+
                 // Force full sync if snapshot is too old
                 if (previousSnapshot != null)
                 {
@@ -542,8 +554,8 @@ public partial class StrmSyncService
             Directory.CreateDirectory(moviesPath);
             Directory.CreateDirectory(seriesPath);
 
-            // Collect existing STRM files for orphan cleanup
-            if (config.CleanupOrphans)
+            // Collect existing STRM files for orphan cleanup (only during full sync)
+            if (config.CleanupOrphans && !isIncrementalSync)
             {
                 CollectExistingStrmFiles(config.LibraryPath, existingStrmFiles);
             }
@@ -568,8 +580,9 @@ public partial class StrmSyncService
                 await SyncSeriesAsync(connectionInfo, seriesPath, syncedFiles, result, previousSnapshot, allCollectedSeries, allSeriesInfoDict, linkedToken).ConfigureAwait(false);
             }
 
-            // Cleanup orphaned files
-            if (config.CleanupOrphans)
+            // Cleanup orphaned files (only during full sync - incremental sync doesn't track
+            // STRM paths for unchanged items, so they would be incorrectly flagged as orphans)
+            if (config.CleanupOrphans && !isIncrementalSync)
             {
                 CurrentProgress.Phase = "Cleaning up orphans";
                 CurrentProgress.CurrentItem = string.Empty;
@@ -2277,7 +2290,8 @@ public partial class StrmSyncService
 
             var snapshot = new ContentSnapshot
             {
-                ProviderUrl = config.BaseUrl
+                ProviderUrl = config.BaseUrl,
+                ConfigFingerprint = SnapshotService.CalculateConfigFingerprint(config)
             };
 
             // Build movie snapshots

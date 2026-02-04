@@ -26,6 +26,13 @@ public class ContentSnapshot
     public string ProviderUrl { get; set; } = string.Empty;
 
     /// <summary>
+    /// Gets or sets a fingerprint of configuration settings that affect folder structure.
+    /// When this changes (e.g., folder mode, category selection, metadata settings),
+    /// a full sync is forced to ensure content is placed in the correct locations.
+    /// </summary>
+    public string ConfigFingerprint { get; set; } = string.Empty;
+
+    /// <summary>
     /// Gets or sets all movies indexed by StreamId.
     /// </summary>
     public Dictionary<int, MovieSnapshot> Movies { get; set; } = new();

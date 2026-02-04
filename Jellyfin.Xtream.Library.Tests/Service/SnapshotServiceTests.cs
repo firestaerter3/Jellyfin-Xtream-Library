@@ -204,6 +204,67 @@ public class SnapshotServiceTests : IDisposable
         Assert.Null(result);
     }
 
+    [Fact]
+    public void ConfigFingerprint_SameConfig_SameHash()
+    {
+        var config1 = new PluginConfiguration
+        {
+            MovieFolderMode = "Multiple",
+            SeriesFolderMode = "Single",
+            SelectedVodCategoryIds = new[] { 3, 1, 2 },
+            EnableMetadataLookup = true,
+        };
+
+        var config2 = new PluginConfiguration
+        {
+            MovieFolderMode = "Multiple",
+            SeriesFolderMode = "Single",
+            SelectedVodCategoryIds = new[] { 2, 3, 1 }, // Different order, same IDs
+            EnableMetadataLookup = true,
+        };
+
+        var fp1 = SnapshotService.CalculateConfigFingerprint(config1);
+        var fp2 = SnapshotService.CalculateConfigFingerprint(config2);
+
+        Assert.Equal(fp1, fp2);
+    }
+
+    [Fact]
+    public void ConfigFingerprint_DifferentFolderMode_DifferentHash()
+    {
+        var config1 = new PluginConfiguration { MovieFolderMode = "Single" };
+        var config2 = new PluginConfiguration { MovieFolderMode = "Multiple" };
+
+        var fp1 = SnapshotService.CalculateConfigFingerprint(config1);
+        var fp2 = SnapshotService.CalculateConfigFingerprint(config2);
+
+        Assert.NotEqual(fp1, fp2);
+    }
+
+    [Fact]
+    public void ConfigFingerprint_DifferentCategories_DifferentHash()
+    {
+        var config1 = new PluginConfiguration { SelectedVodCategoryIds = new[] { 1, 2, 3 } };
+        var config2 = new PluginConfiguration { SelectedVodCategoryIds = new[] { 1, 2, 4 } };
+
+        var fp1 = SnapshotService.CalculateConfigFingerprint(config1);
+        var fp2 = SnapshotService.CalculateConfigFingerprint(config2);
+
+        Assert.NotEqual(fp1, fp2);
+    }
+
+    [Fact]
+    public void ConfigFingerprint_MetadataLookupToggle_DifferentHash()
+    {
+        var config1 = new PluginConfiguration { EnableMetadataLookup = true };
+        var config2 = new PluginConfiguration { EnableMetadataLookup = false };
+
+        var fp1 = SnapshotService.CalculateConfigFingerprint(config1);
+        var fp2 = SnapshotService.CalculateConfigFingerprint(config2);
+
+        Assert.NotEqual(fp1, fp2);
+    }
+
     private static ContentSnapshot CreateTestSnapshot()
     {
         var snapshot = new ContentSnapshot
