@@ -315,6 +315,35 @@
                                     </div>
                                 </div>
 
+                                <h4 style="margin-top: 20px; opacity: 0.8;">Incremental Sync</h4>
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
+                                        <input is="emby-checkbox" type="checkbox" id="chkEnableIncrementalSync" name="EnableIncrementalSync" />
+                                        <span>Enable Incremental Sync</span>
+                                    </label>
+                                    <div class="fieldDescription checkboxFieldDescription">
+                                        Only process new, modified, and removed content after the first full sync.
+                                        Dramatically reduces sync time and API load for subsequent syncs.
+                                    </div>
+                                </div>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtFullSyncIntervalDays">Full Sync Interval (days)</label>
+                                    <input is="emby-input" type="number" id="txtFullSyncIntervalDays" name="FullSyncIntervalDays"
+                                           min="1" max="30" step="1" />
+                                    <div class="fieldDescription">
+                                        Force a full sync every N days to ensure consistency (1-30). Default: 7.
+                                    </div>
+                                </div>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtFullSyncChangeThreshold">Change Threshold (%)</label>
+                                    <input is="emby-input" type="number" id="txtFullSyncChangeThreshold" name="FullSyncChangeThreshold"
+                                           min="0" max="100" step="5" />
+                                    <div class="fieldDescription">
+                                        If more than this percentage of content changed, fall back to full sync
+                                        as a safety measure (0-100%). Default: 50%.
+                                    </div>
+                                </div>
+
                                 <h4 style="margin-top: 20px; opacity: 0.8;">Experimental</h4>
                                 <div class="checkboxContainer checkboxContainer-withDescription">
                                     <label class="emby-checkbox-label">

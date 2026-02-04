@@ -120,6 +120,32 @@ public class PluginConfigurationTests
     }
 
     [Fact]
+    public void Validate_ClampsFullSyncIntervalDays_ToValidRange()
+    {
+        var configLow = new PluginConfiguration { FullSyncIntervalDays = 0 };
+        var configHigh = new PluginConfiguration { FullSyncIntervalDays = 60 };
+
+        configLow.Validate();
+        configHigh.Validate();
+
+        configLow.FullSyncIntervalDays.Should().Be(1);
+        configHigh.FullSyncIntervalDays.Should().Be(30);
+    }
+
+    [Fact]
+    public void Validate_ClampsFullSyncChangeThreshold_ToValidRange()
+    {
+        var configLow = new PluginConfiguration { FullSyncChangeThreshold = -0.5 };
+        var configHigh = new PluginConfiguration { FullSyncChangeThreshold = 2.0 };
+
+        configLow.Validate();
+        configHigh.Validate();
+
+        configLow.FullSyncChangeThreshold.Should().Be(0.0);
+        configHigh.FullSyncChangeThreshold.Should().Be(1.0);
+    }
+
+    [Fact]
     public void DefaultValues_AreReasonable()
     {
         var config = new PluginConfiguration();
@@ -132,5 +158,8 @@ public class PluginConfigurationTests
         config.RequestDelayMs.Should().Be(100);
         config.MaxRetries.Should().Be(3);
         config.RetryDelayMs.Should().Be(1000);
+        config.EnableIncrementalSync.Should().BeTrue();
+        config.FullSyncIntervalDays.Should().Be(7);
+        config.FullSyncChangeThreshold.Should().Be(0.50);
     }
 }

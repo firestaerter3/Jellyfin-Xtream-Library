@@ -76,6 +76,11 @@ const XtreamLibraryConfig = {
             // Artwork download for unmatched
             document.getElementById('chkDownloadArtworkForUnmatched').checked = config.DownloadArtworkForUnmatched !== false;
 
+            // Incremental sync
+            document.getElementById('chkEnableIncrementalSync').checked = config.EnableIncrementalSync !== false;
+            document.getElementById('txtFullSyncIntervalDays').value = config.FullSyncIntervalDays || 7;
+            document.getElementById('txtFullSyncChangeThreshold').value = Math.round((config.FullSyncChangeThreshold || 0.50) * 100);
+
             // Proactive media info
             document.getElementById('chkEnableProactiveMediaInfo').checked = config.EnableProactiveMediaInfo || false;
 
@@ -184,6 +189,11 @@ const XtreamLibraryConfig = {
 
             // Artwork download for unmatched
             config.DownloadArtworkForUnmatched = document.getElementById('chkDownloadArtworkForUnmatched').checked;
+
+            // Incremental sync
+            config.EnableIncrementalSync = document.getElementById('chkEnableIncrementalSync').checked;
+            config.FullSyncIntervalDays = parseInt(document.getElementById('txtFullSyncIntervalDays').value) || 7;
+            config.FullSyncChangeThreshold = (parseInt(document.getElementById('txtFullSyncChangeThreshold').value) || 50) / 100;
 
             // Proactive media info
             config.EnableProactiveMediaInfo = document.getElementById('chkEnableProactiveMediaInfo').checked;
@@ -642,6 +652,21 @@ const XtreamLibraryConfig = {
         }).catch(function () {});
     },
 
+    formatDuration: function (startTime, endTime) {
+        var start = new Date(startTime);
+        var end = new Date(endTime);
+        var ms = end - start;
+        if (ms < 0) return '0s';
+        var seconds = Math.floor(ms / 1000);
+        var minutes = Math.floor(seconds / 60);
+        var hours = Math.floor(minutes / 60);
+        seconds = seconds % 60;
+        minutes = minutes % 60;
+        if (hours > 0) return hours + 'h ' + minutes + 'm ' + seconds + 's';
+        if (minutes > 0) return minutes + 'm ' + seconds + 's';
+        return seconds + 's';
+    },
+
     displaySyncResult: function (result) {
         const infoDiv = document.getElementById('lastSyncInfo');
         if (!result) {
@@ -652,8 +677,18 @@ const XtreamLibraryConfig = {
 
         const startTime = new Date(result.StartTime).toLocaleString();
         const status = result.Success ? '<span style="color: green;">Success</span>' : '<span style="color: red;">Failed</span>';
+        const duration = this.formatDuration(result.StartTime, result.EndTime);
 
-        let html = '<strong>Last Sync:</strong> ' + startTime + ' - ' + status + '<br/><br/>';
+        // Sync type badge
+        var syncBadge = '';
+        if (result.WasIncrementalSync) {
+            syncBadge = '<span style="background: #1a5276; color: #85c1e9; padding: 2px 8px; border-radius: 4px; font-size: 0.85em; margin-left: 8px;">Incremental</span>';
+        } else {
+            syncBadge = '<span style="background: #1e3a1e; color: #82e0aa; padding: 2px 8px; border-radius: 4px; font-size: 0.85em; margin-left: 8px;">Full Sync</span>';
+        }
+
+        let html = '<strong>Last Sync:</strong> ' + startTime + ' - ' + status + syncBadge;
+        html += '<br/><span style="color: #aaa;">Duration: ' + duration + '</span><br/><br/>';
         html += '<strong>Movies</strong><br/>';
         html += '&nbsp;&nbsp;Total: ' + (result.TotalMovies || (result.MoviesCreated + result.MoviesSkipped)) + '<br/>';
         html += '&nbsp;&nbsp;' + result.MoviesCreated + ' added, ' + (result.MoviesDeleted || 0) + ' deleted<br/><br/>';

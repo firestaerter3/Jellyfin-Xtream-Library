@@ -24,6 +24,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Xtream.Library.Client;
 using Jellyfin.Xtream.Library.Client.Models;
+using Jellyfin.Xtream.Library.Service.Models;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 
@@ -42,6 +43,8 @@ public partial class StrmSyncService
     private readonly IXtreamClient _client;
     private readonly ILibraryManager _libraryManager;
     private readonly IMetadataLookupService _metadataLookup;
+    private readonly SnapshotService _snapshotService;
+    private readonly DeltaCalculator _deltaCalculator;
     private readonly ILogger<StrmSyncService> _logger;
     private readonly object _ctsLock = new();
     private CancellationTokenSource? _currentSyncCts;
@@ -52,16 +55,22 @@ public partial class StrmSyncService
     /// <param name="client">The Xtream API client.</param>
     /// <param name="libraryManager">The Jellyfin library manager.</param>
     /// <param name="metadataLookup">The metadata lookup service.</param>
+    /// <param name="snapshotService">The snapshot persistence service.</param>
+    /// <param name="deltaCalculator">The delta calculator for incremental sync.</param>
     /// <param name="logger">The logger instance.</param>
     public StrmSyncService(
         IXtreamClient client,
         ILibraryManager libraryManager,
         IMetadataLookupService metadataLookup,
+        SnapshotService snapshotService,
+        DeltaCalculator deltaCalculator,
         ILogger<StrmSyncService> logger)
     {
         _client = client;
         _libraryManager = libraryManager;
         _metadataLookup = metadataLookup;
+        _snapshotService = snapshotService;
+        _deltaCalculator = deltaCalculator;
         _logger = logger;
     }
 
@@ -477,9 +486,52 @@ public partial class StrmSyncService
         _client.MaxRetries = config.MaxRetries;
         _client.RetryDelayMs = config.RetryDelayMs;
 
-        _logger.LogInformation("Starting Xtream library sync to {LibraryPath} (requestDelay={DelayMs}ms, maxRetries={MaxRetries})", config.LibraryPath, config.RequestDelayMs, config.MaxRetries);
+        // Load previous snapshot for incremental sync
+        ContentSnapshot? previousSnapshot = null;
+        bool isIncrementalSync = false;
+
+        if (config.EnableIncrementalSync)
+        {
+            CurrentProgress.Phase = "Loading snapshot";
+            previousSnapshot = await _snapshotService.LoadLatestSnapshotAsync(linkedToken).ConfigureAwait(false);
+
+            if (previousSnapshot != null)
+            {
+                // Force full sync if provider URL changed
+                if (!string.Equals(previousSnapshot.ProviderUrl, config.BaseUrl, StringComparison.Ordinal))
+                {
+                    _logger.LogInformation("Provider URL changed ({Old} -> {New}), forcing full sync", previousSnapshot.ProviderUrl, config.BaseUrl);
+                    previousSnapshot = null;
+                }
+
+                // Force full sync if snapshot is too old
+                if (previousSnapshot != null)
+                {
+                    var daysSinceSnapshot = (DateTime.UtcNow - previousSnapshot.CreatedAt).TotalDays;
+                    if (daysSinceSnapshot >= config.FullSyncIntervalDays)
+                    {
+                        _logger.LogInformation("Snapshot is {Days:F1} days old (threshold: {Threshold} days), forcing full sync", daysSinceSnapshot, config.FullSyncIntervalDays);
+                        previousSnapshot = null;
+                    }
+                }
+            }
+
+            isIncrementalSync = previousSnapshot != null;
+        }
+
+        _logger.LogInformation(
+            "Starting {SyncType} Xtream library sync to {LibraryPath} (requestDelay={DelayMs}ms, maxRetries={MaxRetries})",
+            isIncrementalSync ? "incremental" : "full",
+            config.LibraryPath,
+            config.RequestDelayMs,
+            config.MaxRetries);
 
         var existingStrmFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Track all collected content for snapshot building
+        var allCollectedMovies = new ConcurrentBag<StreamInfo>();
+        var allCollectedSeries = new ConcurrentBag<Series>();
+        var allSeriesInfoDict = new ConcurrentDictionary<int, SeriesStreamInfo>();
 
         try
         {
@@ -502,18 +554,18 @@ public partial class StrmSyncService
             if (config.SyncMovies)
             {
                 _logger.LogInformation("Syncing movies/VOD content...");
-                CurrentProgress.Phase = "Syncing Movies";
-                await SyncMoviesAsync(connectionInfo, moviesPath, syncedFiles, result, linkedToken).ConfigureAwait(false);
+                CurrentProgress.Phase = isIncrementalSync ? "Incremental Sync: Movies" : "Syncing Movies";
+                await SyncMoviesAsync(connectionInfo, moviesPath, syncedFiles, result, previousSnapshot, allCollectedMovies, linkedToken).ConfigureAwait(false);
             }
 
             // Sync Series
             if (config.SyncSeries)
             {
                 _logger.LogInformation("Syncing series content...");
-                CurrentProgress.Phase = "Syncing Series";
+                CurrentProgress.Phase = isIncrementalSync ? "Incremental Sync: Series" : "Syncing Series";
                 CurrentProgress.CategoriesProcessed = 0;
                 CurrentProgress.TotalCategories = 0;
-                await SyncSeriesAsync(connectionInfo, seriesPath, syncedFiles, result, linkedToken).ConfigureAwait(false);
+                await SyncSeriesAsync(connectionInfo, seriesPath, syncedFiles, result, previousSnapshot, allCollectedSeries, allSeriesInfoDict, linkedToken).ConfigureAwait(false);
             }
 
             // Cleanup orphaned files
@@ -609,11 +661,20 @@ public partial class StrmSyncService
                 }
             }
 
+            // Save snapshot for next incremental sync
+            if (config.EnableIncrementalSync && !linkedToken.IsCancellationRequested)
+            {
+                CurrentProgress.Phase = "Saving snapshot";
+                await SaveSnapshotAsync(config, allCollectedMovies, allCollectedSeries, allSeriesInfoDict, linkedToken).ConfigureAwait(false);
+            }
+
+            result.WasIncrementalSync = isIncrementalSync;
             result.EndTime = DateTime.UtcNow;
             result.Success = true;
 
             _logger.LogInformation(
-                "Sync completed: Movies({MoviesCreated} added, {MoviesSkipped} skipped, {MoviesDeleted} deleted), Series({SeriesCreated} added, {SeriesSkipped} skipped), Episodes({EpisodesCreated} added, {EpisodesSkipped} skipped, {EpisodesDeleted} deleted)",
+                "{SyncType} sync completed: Movies({MoviesCreated} added, {MoviesSkipped} skipped, {MoviesDeleted} deleted), Series({SeriesCreated} added, {SeriesSkipped} skipped), Episodes({EpisodesCreated} added, {EpisodesSkipped} skipped, {EpisodesDeleted} deleted)",
+                isIncrementalSync ? "Incremental" : "Full",
                 result.MoviesCreated,
                 result.MoviesSkipped,
                 result.MoviesDeleted,
@@ -701,6 +762,8 @@ public partial class StrmSyncService
         string moviesPath,
         ConcurrentDictionary<string, byte> syncedFiles,
         SyncResult result,
+        ContentSnapshot? previousSnapshot,
+        ConcurrentBag<StreamInfo> allCollectedMovies,
         CancellationToken cancellationToken)
     {
         var config = Plugin.Instance.Configuration;
@@ -884,6 +947,36 @@ public partial class StrmSyncService
             }
 
             _logger.LogInformation("Batch {Batch}: Found {Count} unique movies", batchIndex + 1, batchMovies.Count);
+
+            // Track all collected movies for snapshot building
+            foreach (var (stream, _) in batchMovies)
+            {
+                allCollectedMovies.Add(stream);
+            }
+
+            // Incremental sync: filter to only new/modified movies
+            if (previousSnapshot != null)
+            {
+                var originalCount = batchMovies.Count;
+                batchMovies = batchMovies.Where(m =>
+                {
+                    var checksum = SnapshotService.CalculateChecksum(m.Stream);
+                    if (previousSnapshot.Movies.TryGetValue(m.Stream.StreamId, out var prev))
+                    {
+                        return prev.Checksum != checksum; // Modified
+                    }
+
+                    return true; // New
+                }).ToList();
+
+                var skipped = originalCount - batchMovies.Count;
+                if (skipped > 0)
+                {
+                    _logger.LogInformation("Incremental sync: skipping {Skipped} unchanged movies, processing {Count} changed", skipped, batchMovies.Count);
+                    Interlocked.Add(ref moviesSkipped, skipped);
+                }
+            }
+
             CurrentProgress.Phase = $"Syncing Movies (batch {batchIndex + 1}/{totalBatches})";
             CurrentProgress.AddTotalItems(batchMovies.Count);
 
@@ -1152,6 +1245,9 @@ public partial class StrmSyncService
         string seriesPath,
         ConcurrentDictionary<string, byte> syncedFiles,
         SyncResult result,
+        ContentSnapshot? previousSnapshot,
+        ConcurrentBag<Series> allCollectedSeries,
+        ConcurrentDictionary<int, SeriesStreamInfo> allSeriesInfoDict,
         CancellationToken cancellationToken)
     {
         var config = Plugin.Instance.Configuration;
@@ -1297,6 +1393,38 @@ public partial class StrmSyncService
             }
 
             _logger.LogInformation("Batch {Batch}: Found {Count} unique series", batchIndex + 1, batchSeries.Count);
+
+            // Track all collected series for snapshot building
+            foreach (var (series, _) in batchSeries)
+            {
+                allCollectedSeries.Add(series);
+            }
+
+            // Incremental sync: filter to only new/modified series
+            if (previousSnapshot != null)
+            {
+                var originalCount = batchSeries.Count;
+                batchSeries = batchSeries.Where(s =>
+                {
+                    if (previousSnapshot.Series.TryGetValue(s.Series.SeriesId, out var prev))
+                    {
+                        // Use previous episode count for comparison - if LastModified changed,
+                        // checksum will differ. This avoids the expensive series info API call.
+                        var checksum = SnapshotService.CalculateChecksum(s.Series, prev.EpisodeCount);
+                        return prev.Checksum != checksum;
+                    }
+
+                    return true; // New series
+                }).ToList();
+
+                var skipped = originalCount - batchSeries.Count;
+                if (skipped > 0)
+                {
+                    _logger.LogInformation("Incremental sync: skipping {Skipped} unchanged series, processing {Count} changed", skipped, batchSeries.Count);
+                    Interlocked.Add(ref seriesSkipped, skipped);
+                }
+            }
+
             CurrentProgress.Phase = $"Syncing Series (batch {batchIndex + 1}/{totalBatches})";
             CurrentProgress.AddTotalItems(batchSeries.Count);
 
@@ -1321,6 +1449,9 @@ public partial class StrmSyncService
 
                     // Fetch series info to get provider TMDB ID and episodes
                     var seriesInfo = await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, series.SeriesId, ct).ConfigureAwait(false);
+
+                    // Track for snapshot building
+                    allSeriesInfoDict[series.SeriesId] = seriesInfo;
 
                     // Early return if no episodes
                     if (seriesInfo.Episodes == null || seriesInfo.Episodes.Count == 0)
@@ -2128,6 +2259,80 @@ public partial class StrmSyncService
     [GeneratedRegex(@"'\\''|'\\'|\\''|''+")]
     private static partial Regex MalformedQuotePattern();
 
+    private async Task SaveSnapshotAsync(
+        PluginConfiguration config,
+        ConcurrentBag<StreamInfo> allMovies,
+        ConcurrentBag<Series> allSeries,
+        ConcurrentDictionary<int, SeriesStreamInfo> seriesInfoDict,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var snapshot = new ContentSnapshot
+            {
+                ProviderUrl = config.BaseUrl
+            };
+
+            // Build movie snapshots
+            var processedMovieIds = new HashSet<int>();
+            foreach (var movie in allMovies)
+            {
+                if (processedMovieIds.Add(movie.StreamId))
+                {
+                    snapshot.Movies[movie.StreamId] = new MovieSnapshot
+                    {
+                        StreamId = movie.StreamId,
+                        Name = movie.Name,
+                        StreamIcon = movie.StreamIcon,
+                        ContainerExtension = movie.ContainerExtension,
+                        CategoryId = movie.CategoryId ?? 0,
+                        Added = movie.Added,
+                        Checksum = SnapshotService.CalculateChecksum(movie)
+                    };
+                }
+            }
+
+            // Build series snapshots
+            var processedSeriesIds = new HashSet<int>();
+            foreach (var series in allSeries)
+            {
+                if (processedSeriesIds.Add(series.SeriesId))
+                {
+                    var episodeCount = 0;
+                    if (seriesInfoDict.TryGetValue(series.SeriesId, out var info) && info.Episodes != null)
+                    {
+                        episodeCount = info.Episodes.Values.Sum(eps => eps.Count);
+                    }
+
+                    snapshot.Series[series.SeriesId] = new SeriesSnapshot
+                    {
+                        SeriesId = series.SeriesId,
+                        Name = series.Name,
+                        Cover = series.Cover,
+                        CategoryId = series.CategoryId,
+                        EpisodeCount = episodeCount,
+                        LastModified = series.LastModified,
+                        Checksum = SnapshotService.CalculateChecksum(series, episodeCount)
+                    };
+                }
+            }
+
+            snapshot.Metadata = new SnapshotMetadata
+            {
+                TotalMovies = snapshot.Movies.Count,
+                TotalSeries = snapshot.Series.Count,
+                IsComplete = true
+            };
+
+            await _snapshotService.SaveSnapshotAsync(snapshot, cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation("Snapshot saved ({Movies} movies, {Series} series)", snapshot.Movies.Count, snapshot.Series.Count);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Failed to save snapshot - next sync will be full");
+        }
+    }
+
     private static HttpClient CreateImageHttpClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
@@ -2372,6 +2577,11 @@ public class SyncResult
     /// Gets the duration of the sync operation.
     /// </summary>
     public TimeSpan Duration => EndTime - StartTime;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether this sync was incremental (vs full).
+    /// </summary>
+    public bool WasIncrementalSync { get; set; }
 
     /// <summary>
     /// Adds a failed item to the list.

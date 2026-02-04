@@ -18,10 +18,12 @@ using Jellyfin.Xtream.Library.Api;
 using Jellyfin.Xtream.Library.Client;
 using Jellyfin.Xtream.Library.Service;
 using Jellyfin.Xtream.Library.Tests.Helpers;
+using MediaBrowser.Controller;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
 
@@ -45,10 +47,17 @@ public class SyncControllerTests
         _mockSyncServiceLogger = new Mock<ILogger<StrmSyncService>>();
         _mockControllerLogger = new Mock<ILogger<SyncController>>();
 
+        var appPathsMock = new Mock<IServerApplicationPaths>();
+        appPathsMock.Setup(p => p.DataPath).Returns("/tmp");
+        var snapshotService = new SnapshotService(appPathsMock.Object, NullLogger<SnapshotService>.Instance);
+        var deltaCalculator = new DeltaCalculator(NullLogger<DeltaCalculator>.Instance);
+
         _syncService = new StrmSyncService(
             _mockClient.Object,
             _mockLibraryManager.Object,
             _mockMetadataLookup.Object,
+            snapshotService,
+            deltaCalculator,
             _mockSyncServiceLogger.Object);
 
         _controller = new SyncController(

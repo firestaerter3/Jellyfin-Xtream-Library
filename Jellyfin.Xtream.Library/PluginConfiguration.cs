@@ -207,6 +207,30 @@ public class PluginConfiguration : BasePluginConfiguration
     public string SeriesFolderMappings { get; set; } = string.Empty;
 
     // =====================
+    // Incremental Sync Settings
+    // =====================
+
+    /// <summary>
+    /// Gets or sets a value indicating whether incremental sync is enabled.
+    /// When enabled, only new, modified, and removed content is processed after the first full sync.
+    /// </summary>
+    public bool EnableIncrementalSync { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the number of days between forced full syncs.
+    /// Even with incremental sync enabled, a full sync is performed periodically to ensure consistency.
+    /// </summary>
+    public int FullSyncIntervalDays { get; set; } = 7;
+
+    /// <summary>
+    /// Gets or sets the change threshold (0.0 to 1.0) that triggers a full sync.
+    /// If more than this fraction of content changed in a delta, fall back to full sync
+    /// as a safety measure against provider data corruption.
+    /// Default: 0.50 (50% of content).
+    /// </summary>
+    public double FullSyncChangeThreshold { get; set; } = 0.50;
+
+    // =====================
     // Live TV Settings
     // =====================
 
@@ -351,5 +375,9 @@ public class PluginConfiguration : BasePluginConfiguration
 
         // Clamp orphan safety threshold to 0.0-1.0
         OrphanSafetyThreshold = Math.Clamp(OrphanSafetyThreshold, 0.0, 1.0);
+
+        // Clamp incremental sync settings
+        FullSyncIntervalDays = Math.Clamp(FullSyncIntervalDays, 1, 30);
+        FullSyncChangeThreshold = Math.Clamp(FullSyncChangeThreshold, 0.0, 1.0);
     }
 }

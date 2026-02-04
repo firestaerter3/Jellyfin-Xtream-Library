@@ -34,6 +34,8 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddHttpClient<IXtreamClient, XtreamClient>();
         serviceCollection.AddSingleton<MetadataCache>();
         serviceCollection.AddSingleton<IMetadataLookupService, MetadataLookupService>();
+        serviceCollection.AddSingleton<SnapshotService>();
+        serviceCollection.AddSingleton<DeltaCalculator>();
         serviceCollection.AddSingleton<StrmSyncService>();
         serviceCollection.AddSingleton<LiveTvService>();
         serviceCollection.AddSingleton<IScheduledTask, SyncLibraryTask>();

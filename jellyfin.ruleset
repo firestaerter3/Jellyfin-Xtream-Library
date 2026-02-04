@@ -110,5 +110,9 @@
         <Rule Id="CA3003" Action="None" />
         <!-- disable warning CA1819: Properties should not return arrays (needed for configuration DTOs) -->
         <Rule Id="CA1819" Action="None" />
+        <!-- disable warning CA1002: Do not expose generic lists (internal models, performance over abstraction) -->
+        <Rule Id="CA1002" Action="None" />
+        <!-- disable warning CA2227: Collection properties should be read-only (required for JSON deserialization DTOs) -->
+        <Rule Id="CA2227" Action="None" />
     </Rules>
 </RuleSet>
