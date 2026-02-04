@@ -94,15 +94,15 @@
                     </div>
 
                     <!-- Tab Navigation -->
-                    <div class="xtream-tabs">
-                        <button type="button" class="xtream-tab active" data-tab="general">General</button>
-                        <button type="button" class="xtream-tab" data-tab="movies">Movies</button>
-                        <button type="button" class="xtream-tab" data-tab="series">Series</button>
-                        <button type="button" class="xtream-tab" data-tab="livetv">Live TV</button>
+                    <div class="xtream-tabs" role="tablist">
+                        <button type="button" class="xtream-tab active" data-tab="general" role="tab" aria-selected="true" aria-controls="tab-general">General</button>
+                        <button type="button" class="xtream-tab" data-tab="movies" role="tab" aria-selected="false" aria-controls="tab-movies">Movies</button>
+                        <button type="button" class="xtream-tab" data-tab="series" role="tab" aria-selected="false" aria-controls="tab-series">Series</button>
+                        <button type="button" class="xtream-tab" data-tab="livetv" role="tab" aria-selected="false" aria-controls="tab-livetv">Live TV</button>
                     </div>
 
                     <!-- General Tab -->
-                    <div id="tab-general" class="xtream-tab-content active">
+                    <div id="tab-general" class="xtream-tab-content active" role="tabpanel" aria-labelledby="general">
                         <div class="verticalSection">
                             <h3 class="sectionTitle">Provider Credentials</h3>
                             <div class="inputContainer">
@@ -362,7 +362,7 @@
                     </div>
 
                     <!-- Movies Tab -->
-                    <div id="tab-movies" class="xtream-tab-content">
+                    <div id="tab-movies" class="xtream-tab-content" role="tabpanel" aria-labelledby="movies">
                         <div class="verticalSection">
                             <h3 class="sectionTitle">Movies/VOD Settings</h3>
                             <div class="checkboxContainer checkboxContainer-withDescription">
@@ -445,7 +445,7 @@
                     </div>
 
                     <!-- Series Tab -->
-                    <div id="tab-series" class="xtream-tab-content">
+                    <div id="tab-series" class="xtream-tab-content" role="tabpanel" aria-labelledby="series">
                         <div class="verticalSection">
                             <h3 class="sectionTitle">Series Settings</h3>
                             <div class="checkboxContainer checkboxContainer-withDescription">
@@ -528,7 +528,7 @@
                     </div>
 
                     <!-- Live TV Tab -->
-                    <div id="tab-livetv" class="xtream-tab-content">
+                    <div id="tab-livetv" class="xtream-tab-content" role="tabpanel" aria-labelledby="livetv">
                         <div class="verticalSection">
                             <h3 class="sectionTitle">Live TV Settings</h3>
                             <div class="checkboxContainer checkboxContainer-withDescription">

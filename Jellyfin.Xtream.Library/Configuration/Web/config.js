@@ -20,10 +20,9 @@ const XtreamLibraryConfig = {
     // Tab switching
     switchTab: function (tabName) {
         document.querySelectorAll('.xtream-tab').forEach(function (tab) {
-            tab.classList.remove('active');
-            if (tab.getAttribute('data-tab') === tabName) {
-                tab.classList.add('active');
-            }
+            const isActive = tab.getAttribute('data-tab') === tabName;
+            tab.classList.toggle('active', isActive);
+            tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
         });
         document.querySelectorAll('.xtream-tab-content').forEach(function (content) {
             content.classList.remove('active');
@@ -422,8 +421,18 @@ const XtreamLibraryConfig = {
         const statusSpan = document.getElementById('connectionStatus');
         statusSpan.innerHTML = '<span style="color: orange;">Testing...</span>';
 
+        const baseUrl = document.getElementById('txtBaseUrl').value.trim().replace(/\/$/, '');
+
+        // Validate URL format
+        try {
+            new URL(baseUrl);
+        } catch (e) {
+            statusSpan.innerHTML = '<span style="color: red;">Invalid URL format. Must include protocol (http:// or https://)</span>';
+            return;
+        }
+
         const credentials = {
-            BaseUrl: document.getElementById('txtBaseUrl').value.trim().replace(/\/$/, ''),
+            BaseUrl: baseUrl,
             Username: document.getElementById('txtUsername').value.trim(),
             Password: document.getElementById('txtPassword').value
         };
@@ -1135,6 +1144,16 @@ function initXtreamLibraryConfig() {
             XtreamLibraryConfig.refreshLiveTvCache();
         });
     }
+
+    // Cleanup intervals on page unload
+    window.addEventListener('beforeunload', function () {
+        if (XtreamLibraryConfig.progressInterval) {
+            clearInterval(XtreamLibraryConfig.progressInterval);
+        }
+        if (XtreamLibraryConfig.completionInterval) {
+            clearInterval(XtreamLibraryConfig.completionInterval);
+        }
+    });
 
     XtreamLibraryConfig.loadConfig();
 }
