@@ -64,6 +64,7 @@ public class SyncControllerTests
             _syncService,
             _mockClient.Object,
             _mockMetadataLookup.Object,
+            snapshotService,
             _mockControllerLogger.Object);
     }
 

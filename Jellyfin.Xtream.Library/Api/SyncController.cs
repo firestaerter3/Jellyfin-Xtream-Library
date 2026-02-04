@@ -41,6 +41,7 @@ public class SyncController : ControllerBase
     private readonly StrmSyncService _syncService;
     private readonly IXtreamClient _client;
     private readonly IMetadataLookupService _metadataLookup;
+    private readonly SnapshotService _snapshotService;
     private readonly ILogger<SyncController> _logger;
 
     /// <summary>
@@ -49,16 +50,19 @@ public class SyncController : ControllerBase
     /// <param name="syncService">The STRM sync service.</param>
     /// <param name="client">The Xtream API client.</param>
     /// <param name="metadataLookup">The metadata lookup service.</param>
+    /// <param name="snapshotService">The snapshot service.</param>
     /// <param name="logger">The logger instance.</param>
     public SyncController(
         StrmSyncService syncService,
         IXtreamClient client,
         IMetadataLookupService metadataLookup,
+        SnapshotService snapshotService,
         ILogger<SyncController> logger)
     {
         _syncService = syncService;
         _client = client;
         _metadataLookup = metadataLookup;
+        _snapshotService = snapshotService;
         _logger = logger;
     }
 
@@ -380,28 +384,27 @@ public class SyncController : ControllerBase
         {
             if (System.IO.Directory.Exists(moviesPath))
             {
-                // Count actual movie STRM files (handles both single and multiple folder modes)
                 var movieStrms = System.IO.Directory.GetFiles(moviesPath, "*.strm", System.IO.SearchOption.AllDirectories);
                 moviesDeleted = movieStrms.Length;
-                System.IO.Directory.Delete(moviesPath, recursive: true);
-                System.IO.Directory.CreateDirectory(moviesPath);
+                ForceDeleteDirectoryContents(moviesPath);
                 _logger.LogInformation("Deleted {Count} movies from {Path}", moviesDeleted, moviesPath);
             }
 
             if (System.IO.Directory.Exists(seriesPath))
             {
-                // Count actual episode STRM files (handles both single and multiple folder modes)
                 var seriesStrms = System.IO.Directory.GetFiles(seriesPath, "*.strm", System.IO.SearchOption.AllDirectories);
                 seriesDeleted = seriesStrms.Length;
-                System.IO.Directory.Delete(seriesPath, recursive: true);
-                System.IO.Directory.CreateDirectory(seriesPath);
+                ForceDeleteDirectoryContents(seriesPath);
                 _logger.LogInformation("Deleted {Count} episodes from {Path}", seriesDeleted, seriesPath);
             }
+
+            // Delete snapshots so next sync starts fresh
+            _snapshotService.ClearAllSnapshots();
 
             return Ok(new
             {
                 Success = true,
-                Message = $"Deleted {moviesDeleted} movies and {seriesDeleted} episodes.",
+                Message = $"Deleted {moviesDeleted} movies and {seriesDeleted} episodes. Snapshots cleared.",
                 MoviesDeleted = moviesDeleted,
                 EpisodesDeleted = seriesDeleted,
             });
@@ -410,6 +413,47 @@ public class SyncController : ControllerBase
         {
             _logger.LogError(ex, "Failed to clean libraries");
             return BadRequest(new { Success = false, Message = $"Failed to clean libraries: {ex.Message}" });
+        }
+    }
+
+    /// <summary>
+    /// Deletes all contents of a directory without deleting the directory itself.
+    /// More reliable than Directory.Delete(recursive: true) on Linux/Docker where
+    /// file watchers can hold handles and cause "Directory not empty" errors.
+    /// </summary>
+    private static void ForceDeleteDirectoryContents(string directoryPath)
+    {
+        var di = new System.IO.DirectoryInfo(directoryPath);
+
+        foreach (var file in di.EnumerateFiles("*", System.IO.SearchOption.AllDirectories))
+        {
+            try
+            {
+                file.Delete();
+            }
+            catch (System.IO.IOException)
+            {
+                // Retry once after a brief delay (file watcher may release handle)
+                System.Threading.Thread.Sleep(50);
+                file.Delete();
+            }
+        }
+
+        // Delete subdirectories bottom-up (deepest first)
+        foreach (var dir in di.EnumerateDirectories("*", System.IO.SearchOption.AllDirectories)
+            .OrderByDescending(d => d.FullName.Length))
+        {
+            try
+            {
+                if (dir.Exists && dir.GetFileSystemInfos().Length == 0)
+                {
+                    dir.Delete();
+                }
+            }
+            catch (System.IO.IOException)
+            {
+                // Best effort - directory may still have locked files
+            }
         }
     }
 }

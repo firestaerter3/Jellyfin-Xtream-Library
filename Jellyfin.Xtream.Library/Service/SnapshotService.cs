@@ -283,6 +283,39 @@ public class SnapshotService : IDisposable
     }
 
     /// <summary>
+    /// Deletes all snapshot files. Used when cleaning libraries to force a full sync.
+    /// </summary>
+    public void ClearAllSnapshots()
+    {
+        if (!Directory.Exists(SnapshotDirectory))
+        {
+            return;
+        }
+
+        _fileLock.Wait();
+        try
+        {
+            foreach (var file in Directory.GetFiles(SnapshotDirectory, "snapshot_*.json"))
+            {
+                try
+                {
+                    File.Delete(file);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete snapshot: {File}", file);
+                }
+            }
+
+            _logger.LogInformation("Cleared all snapshots");
+        }
+        finally
+        {
+            _fileLock.Release();
+        }
+    }
+
+    /// <summary>
     /// Deletes old snapshot files, keeping only the most recent ones.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
