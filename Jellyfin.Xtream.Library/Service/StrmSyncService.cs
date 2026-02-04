@@ -48,7 +48,7 @@ public partial class StrmSyncService
     private readonly ILogger<StrmSyncService> _logger;
     private readonly object _ctsLock = new();
     private CancellationTokenSource? _currentSyncCts;
-    private DateTime _syncSuppressedUntil = DateTime.MinValue;
+    private bool _syncSuppressed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StrmSyncService"/> class.
@@ -110,14 +110,26 @@ public partial class StrmSyncService
     }
 
     /// <summary>
-    /// Suppresses sync operations until the specified time.
-    /// Used by CleanLibraries to prevent the scheduler from immediately restarting a sync.
+    /// Suppresses all scheduled/automatic sync operations until a manual sync is triggered.
+    /// Used by CleanLibraries to prevent the scheduler from repopulating content.
     /// </summary>
-    /// <param name="duration">How long to suppress syncs.</param>
-    public void SuppressSync(TimeSpan duration)
+    public void SuppressSync()
     {
-        _syncSuppressedUntil = DateTime.UtcNow + duration;
-        _logger.LogInformation("Sync suppressed for {Seconds}s", duration.TotalSeconds);
+        _syncSuppressed = true;
+        _logger.LogInformation("Sync suppressed until manually triggered");
+    }
+
+    /// <summary>
+    /// Clears sync suppression, allowing syncs to run again.
+    /// Called when user manually triggers a sync.
+    /// </summary>
+    public void ClearSuppression()
+    {
+        if (_syncSuppressed)
+        {
+            _syncSuppressed = false;
+            _logger.LogInformation("Sync suppression cleared");
+        }
     }
 
     /// <summary>
@@ -463,12 +475,11 @@ public partial class StrmSyncService
         var result = new SyncResult { StartTime = DateTime.UtcNow };
 
         // Check if sync is suppressed (e.g., after CleanLibraries)
-        if (DateTime.UtcNow < _syncSuppressedUntil)
+        if (_syncSuppressed)
         {
-            var remaining = _syncSuppressedUntil - DateTime.UtcNow;
-            _logger.LogInformation("Sync suppressed for {Seconds:F0}s (libraries were recently cleaned)", remaining.TotalSeconds);
+            _logger.LogInformation("Sync suppressed (libraries were cleaned, waiting for manual sync trigger)");
             result.EndTime = DateTime.UtcNow;
-            result.Error = "Sync suppressed after library clean";
+            result.Error = "Sync suppressed — use the Sync button to resume";
             return result;
         }
 
