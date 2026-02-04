@@ -665,7 +665,7 @@ public partial class StrmSyncService
             if (config.EnableIncrementalSync && !linkedToken.IsCancellationRequested)
             {
                 CurrentProgress.Phase = "Saving snapshot";
-                await SaveSnapshotAsync(config, allCollectedMovies, allCollectedSeries, allSeriesInfoDict, linkedToken).ConfigureAwait(false);
+                await SaveSnapshotAsync(config, allCollectedMovies, allCollectedSeries, allSeriesInfoDict, result.FailedItems, linkedToken).ConfigureAwait(false);
             }
 
             result.WasIncrementalSync = isIncrementalSync;
@@ -2264,10 +2264,17 @@ public partial class StrmSyncService
         ConcurrentBag<StreamInfo> allMovies,
         ConcurrentBag<Series> allSeries,
         ConcurrentDictionary<int, SeriesStreamInfo> seriesInfoDict,
+        IReadOnlyList<FailedItem> failedItems,
         CancellationToken cancellationToken)
     {
         try
         {
+            // Exclude failed items from snapshot so they are retried on next sync
+            var failedMovieIds = new HashSet<int>(
+                failedItems.Where(f => f.ItemType == "Movie").Select(f => f.ItemId));
+            var failedSeriesIds = new HashSet<int>(
+                failedItems.Where(f => f.ItemType == "Series").Select(f => f.ItemId));
+
             var snapshot = new ContentSnapshot
             {
                 ProviderUrl = config.BaseUrl
@@ -2277,7 +2284,7 @@ public partial class StrmSyncService
             var processedMovieIds = new HashSet<int>();
             foreach (var movie in allMovies)
             {
-                if (processedMovieIds.Add(movie.StreamId))
+                if (processedMovieIds.Add(movie.StreamId) && !failedMovieIds.Contains(movie.StreamId))
                 {
                     snapshot.Movies[movie.StreamId] = new MovieSnapshot
                     {
@@ -2296,7 +2303,7 @@ public partial class StrmSyncService
             var processedSeriesIds = new HashSet<int>();
             foreach (var series in allSeries)
             {
-                if (processedSeriesIds.Add(series.SeriesId))
+                if (processedSeriesIds.Add(series.SeriesId) && !failedSeriesIds.Contains(series.SeriesId))
                 {
                     var episodeCount = 0;
                     if (seriesInfoDict.TryGetValue(series.SeriesId, out var info) && info.Episodes != null)
