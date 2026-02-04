@@ -105,6 +105,54 @@ public class ConverterTests
         converter.CanConvert(typeof(int)).Should().BeFalse();
     }
 
+    [Fact]
+    public void StringBoolConverter_NullValue_ReturnsFalse()
+    {
+        var json = "{\"value\": null}";
+
+        var result = JsonConvert.DeserializeObject<TestBoolWrapper>(json);
+
+        result.Should().NotBeNull();
+        result!.Value.Should().BeFalse();
+    }
+
+    #endregion
+
+    #region Base64Converter Tests
+
+    /// <summary>
+    /// Test wrapper class that uses Base64Converter on a property.
+    /// </summary>
+    private class TestBase64Wrapper
+    {
+        [JsonConverter(typeof(Base64Converter))]
+        [JsonProperty("value")]
+        public string Value { get; set; } = string.Empty;
+    }
+
+    [Fact]
+    public void Base64Converter_ValidBase64_DecodesCorrectly()
+    {
+        // "Hello" in base64 is "SGVsbG8="
+        var json = "{\"value\": \"SGVsbG8=\"}";
+
+        var result = JsonConvert.DeserializeObject<TestBase64Wrapper>(json);
+
+        result.Should().NotBeNull();
+        result!.Value.Should().Be("Hello");
+    }
+
+    [Fact]
+    public void Base64Converter_NullValue_ReturnsEmptyString()
+    {
+        var json = "{\"value\": null}";
+
+        var result = JsonConvert.DeserializeObject<TestBase64Wrapper>(json);
+
+        result.Should().NotBeNull();
+        result!.Value.Should().BeEmpty();
+    }
+
     #endregion
 
     #region OnlyObjectConverter Tests

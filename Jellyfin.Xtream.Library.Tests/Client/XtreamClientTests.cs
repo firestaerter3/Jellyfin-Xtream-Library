@@ -110,11 +110,11 @@ public class XtreamClientTests : IDisposable
     }
 
     [Fact]
-    public void ConnectionInfo_ToString_FormatsCorrectly()
+    public void ConnectionInfo_ToString_MasksPassword()
     {
         var info = new ConnectionInfo("http://example.com", "user", "pass");
 
-        info.ToString().Should().Be("http://example.com user:pass");
+        info.ToString().Should().Be("http://example.com user:***");
     }
 
     [Fact]
