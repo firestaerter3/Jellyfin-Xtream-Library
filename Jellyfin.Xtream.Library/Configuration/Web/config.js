@@ -64,7 +64,7 @@ const XtreamLibraryConfig = {
             self.seriesFolderDefinitions = self.parseFolderMappings(config.SeriesFolderMappings);
 
             // Metadata lookup
-            document.getElementById('chkEnableMetadataLookup').checked = config.EnableMetadataLookup || false;
+            document.getElementById('chkEnableMetadataLookup').checked = config.EnableMetadataLookup !== false;
             document.getElementById('txtMetadataParallelism').value = config.MetadataParallelism || 3;
             document.getElementById('txtSyncParallelism').value = config.SyncParallelism || 3;
             document.getElementById('txtCategoryBatchSize').value = config.CategoryBatchSize || 10;
@@ -973,6 +973,18 @@ const XtreamLibraryConfig = {
         });
     },
 
+    toggleAdvanced: function () {
+        var section = document.getElementById('advancedSettings');
+        var arrow = document.getElementById('advancedArrow');
+        if (section.style.display === 'none') {
+            section.style.display = 'block';
+            arrow.innerHTML = '&#9662;'; // ▾
+        } else {
+            section.style.display = 'none';
+            arrow.innerHTML = '&#9656;'; // ▸
+        }
+    },
+
     refreshLiveTvCache: function () {
         const statusSpan = document.getElementById('liveTvCacheStatus');
         statusSpan.innerHTML = '<span style="color: orange;">Refreshing...</span>';
@@ -1058,6 +1070,14 @@ function initXtreamLibraryConfig() {
         btnLoadSeriesCategories.addEventListener('click', function (e) {
             e.preventDefault();
             XtreamLibraryConfig.loadSeriesCategories();
+        });
+    }
+
+    var btnAdvancedToggle = document.getElementById('btnAdvancedToggle');
+    if (btnAdvancedToggle) {
+        btnAdvancedToggle.addEventListener('click', function (e) {
+            e.preventDefault();
+            XtreamLibraryConfig.toggleAdvanced();
         });
     }
 

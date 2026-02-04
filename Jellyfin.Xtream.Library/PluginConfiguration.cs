@@ -116,7 +116,7 @@ public class PluginConfiguration : BasePluginConfiguration
     /// When enabled, uses Jellyfin's configured metadata providers to automatically
     /// look up TMDb/TVDb IDs during sync.
     /// </summary>
-    public bool EnableMetadataLookup { get; set; }
+    public bool EnableMetadataLookup { get; set; } = true;
 
     /// <summary>
     /// Gets or sets the metadata cache age in days before refresh.

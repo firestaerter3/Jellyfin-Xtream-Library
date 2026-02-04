@@ -73,6 +73,18 @@
             font-family: monospace;
             font-size: 0.9em;
         }
+        .advancedToggle {
+            cursor: pointer;
+            padding: 10px 0;
+            user-select: none;
+        }
+        .advancedToggle h3 {
+            display: inline-block;
+            margin: 0;
+        }
+        .advancedToggle:hover {
+            opacity: 0.8;
+        }
     </style>
     <div data-role="content">
         <div class="content-primary">
@@ -108,13 +120,6 @@
                             <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="txtPassword">Password</label>
                                 <input is="emby-input" type="password" id="txtPassword" name="Password" required />
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtUserAgent">Custom User-Agent (Optional)</label>
-                                <input is="emby-input" type="text" id="txtUserAgent" name="UserAgent" />
-                                <div class="fieldDescription">
-                                    Optional custom User-Agent string for API requests.
-                                </div>
                             </div>
                             <div>
                                 <button is="emby-button" type="button" id="btnTestConnection" class="raised button-submit">
@@ -221,85 +226,106 @@
                                     Requires metadata plugins (TMDb, TVDb) to be installed and configured in Jellyfin.
                                 </div>
                             </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtSyncParallelism">Sync Parallelism</label>
-                                <input is="emby-input" type="number" id="txtSyncParallelism" name="SyncParallelism"
-                                       min="1" max="10" step="1" />
-                                <div class="fieldDescription">
-                                    Number of parallel API requests during sync (1-10). Lower values reduce rate limiting (429 errors)
-                                    from providers. Default: 3.
-                                </div>
+                        </div>
+
+                        <div class="verticalSection">
+                            <div class="advancedToggle" id="btnAdvancedToggle">
+                                <h3 class="sectionTitle">Advanced Settings <span id="advancedArrow">&#9656;</span></h3>
                             </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtMetadataParallelism">Metadata Lookup Parallelism</label>
-                                <input is="emby-input" type="number" id="txtMetadataParallelism" name="MetadataParallelism"
-                                       min="1" max="20" step="1" />
-                                <div class="fieldDescription">
-                                    Number of parallel metadata lookups (1-20). Higher values speed up first sync but may
-                                    trigger API rate limits on TMDb/TVDb. Default: 3.
+                            <div id="advancedSettings" style="display: none;">
+
+                                <h4 style="margin-top: 5px; opacity: 0.8;">Metadata</h4>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtUserAgent">Custom User-Agent (Optional)</label>
+                                    <input is="emby-input" type="text" id="txtUserAgent" name="UserAgent" />
+                                    <div class="fieldDescription">
+                                        Optional custom User-Agent string for API requests.
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtCategoryBatchSize">Category Batch Size</label>
-                                <input is="emby-input" type="number" id="txtCategoryBatchSize" name="CategoryBatchSize"
-                                       min="0" max="100" step="1" />
-                                <div class="fieldDescription">
-                                    Number of categories to process per batch during sync (1-100). Lower values reduce memory
-                                    usage for large libraries. Set to 0 to disable batching. Default: 10.
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtMetadataParallelism">Metadata Lookup Parallelism</label>
+                                    <input is="emby-input" type="number" id="txtMetadataParallelism" name="MetadataParallelism"
+                                           min="1" max="20" step="1" />
+                                    <div class="fieldDescription">
+                                        Number of parallel metadata lookups (1-20). Higher values speed up first sync but may
+                                        trigger API rate limits on TMDb/TVDb. Default: 3.
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtRequestDelayMs">Request Delay (ms)</label>
-                                <input is="emby-input" type="number" id="txtRequestDelayMs" name="RequestDelayMs"
-                                       min="0" max="5000" step="50" />
-                                <div class="fieldDescription">
-                                    Delay in milliseconds between API requests (0-5000). Helps prevent rate limiting (429 errors)
-                                    from providers that limit request frequency. Default: 100ms. Set to 0 for no delay.
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
+                                        <input is="emby-checkbox" type="checkbox" id="chkDownloadArtworkForUnmatched" name="DownloadArtworkForUnmatched" />
+                                        <span>Download Artwork for Unmatched Content</span>
+                                    </label>
+                                    <div class="fieldDescription checkboxFieldDescription">
+                                        Download posters and fanart from the provider for content that couldn't be matched to TMDb/TVDb.
+                                        Ensures unmatched movies and series still have artwork in Jellyfin.
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtMaxRetries">Max Retries for Rate Limits</label>
-                                <input is="emby-input" type="number" id="txtMaxRetries" name="MaxRetries"
-                                       min="0" max="10" step="1" />
-                                <div class="fieldDescription">
-                                    Maximum number of retries when rate limited (429 response). Each retry waits longer
-                                    (exponential backoff). Default: 3.
+                                <div style="margin-top: 10px;">
+                                    <button is="emby-button" type="button" id="btnClearMetadataCache" class="raised">
+                                        <span>Clear Metadata Cache</span>
+                                    </button>
+                                    <span id="metadataCacheStatus" style="margin-left: 10px;"></span>
                                 </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtRetryDelayMs">Initial Retry Delay (ms)</label>
-                                <input is="emby-input" type="number" id="txtRetryDelayMs" name="RetryDelayMs"
-                                       min="100" max="30000" step="100" />
-                                <div class="fieldDescription">
-                                    Initial delay after a 429 response before retrying (100-30000ms). Each subsequent retry
-                                    doubles this delay. Default: 1000ms (1 second).
+
+                                <h4 style="margin-top: 20px; opacity: 0.8;">Performance &amp; Rate Limiting</h4>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtSyncParallelism">Sync Parallelism</label>
+                                    <input is="emby-input" type="number" id="txtSyncParallelism" name="SyncParallelism"
+                                           min="1" max="10" step="1" />
+                                    <div class="fieldDescription">
+                                        Number of parallel API requests during sync (1-10). Lower values reduce rate limiting (429 errors)
+                                        from providers. Default: 3.
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input is="emby-checkbox" type="checkbox" id="chkDownloadArtworkForUnmatched" name="DownloadArtworkForUnmatched" />
-                                    <span>Download Artwork for Unmatched Content</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">
-                                    Download posters and fanart from the provider for content that couldn't be matched to TMDb/TVDb.
-                                    Ensures unmatched movies and series still have artwork in Jellyfin.
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtCategoryBatchSize">Category Batch Size</label>
+                                    <input is="emby-input" type="number" id="txtCategoryBatchSize" name="CategoryBatchSize"
+                                           min="0" max="100" step="1" />
+                                    <div class="fieldDescription">
+                                        Number of categories to process per batch during sync (1-100). Lower values reduce memory
+                                        usage for large libraries. Set to 0 to disable batching. Default: 10.
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input is="emby-checkbox" type="checkbox" id="chkEnableProactiveMediaInfo" name="EnableProactiveMediaInfo" />
-                                    <span>Proactive Media Info</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">
-                                    Fetch media info (resolution, codec, audio) during sync and write NFO sidecar files.
-                                    Shows media details in Jellyfin without first-time playback. Increases sync time.
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtRequestDelayMs">Request Delay (ms)</label>
+                                    <input is="emby-input" type="number" id="txtRequestDelayMs" name="RequestDelayMs"
+                                           min="0" max="5000" step="50" />
+                                    <div class="fieldDescription">
+                                        Delay in milliseconds between API requests (0-5000). Helps prevent rate limiting (429 errors)
+                                        from providers that limit request frequency. Default: 100ms. Set to 0 for no delay.
+                                    </div>
                                 </div>
-                            </div>
-                            <div style="margin-top: 10px;">
-                                <button is="emby-button" type="button" id="btnClearMetadataCache" class="raised">
-                                    <span>Clear Metadata Cache</span>
-                                </button>
-                                <span id="metadataCacheStatus" style="margin-left: 10px;"></span>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtMaxRetries">Max Retries for Rate Limits</label>
+                                    <input is="emby-input" type="number" id="txtMaxRetries" name="MaxRetries"
+                                           min="0" max="10" step="1" />
+                                    <div class="fieldDescription">
+                                        Maximum number of retries when rate limited (429 response). Each retry waits longer
+                                        (exponential backoff). Default: 3.
+                                    </div>
+                                </div>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtRetryDelayMs">Initial Retry Delay (ms)</label>
+                                    <input is="emby-input" type="number" id="txtRetryDelayMs" name="RetryDelayMs"
+                                           min="100" max="30000" step="100" />
+                                    <div class="fieldDescription">
+                                        Initial delay after a 429 response before retrying (100-30000ms). Each subsequent retry
+                                        doubles this delay. Default: 1000ms (1 second).
+                                    </div>
+                                </div>
+
+                                <h4 style="margin-top: 20px; opacity: 0.8;">Experimental</h4>
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
+                                        <input is="emby-checkbox" type="checkbox" id="chkEnableProactiveMediaInfo" name="EnableProactiveMediaInfo" />
+                                        <span>Proactive Media Info</span>
+                                    </label>
+                                    <div class="fieldDescription checkboxFieldDescription">
+                                        Fetch media info (resolution, codec, audio) during sync and write NFO sidecar files.
+                                        Shows media details in Jellyfin without first-time playback. Increases sync time.
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
