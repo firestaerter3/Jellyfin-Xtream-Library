@@ -1012,7 +1012,7 @@ public partial class StrmSyncService
                                     var nfoPath = Path.Combine(movieFolder, $"{folderName}.nfo");
                                     await NfoWriter.WriteMovieNfoAsync(
                                         nfoPath,
-                                        stream.Name,
+                                        movieName,
                                         vodInfo.Info.Video,
                                         vodInfo.Info.Audio,
                                         vodInfo.Info.DurationSecs,
