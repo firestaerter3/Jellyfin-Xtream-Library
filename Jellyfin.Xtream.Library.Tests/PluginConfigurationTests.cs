@@ -152,7 +152,7 @@ public class PluginConfigurationTests
 
         config.Validate();
 
-        config.SyncParallelism.Should().Be(3);
+        config.SyncParallelism.Should().Be(6);
         config.MetadataParallelism.Should().Be(3);
         config.OrphanSafetyThreshold.Should().Be(0.20);
         config.RequestDelayMs.Should().Be(100);

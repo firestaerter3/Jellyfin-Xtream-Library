@@ -488,12 +488,16 @@ public partial class StrmSyncService
 
         // Load previous snapshot for incremental sync
         ContentSnapshot? previousSnapshot = null;
+        ContentSnapshot? hintSnapshot = null;
         bool isIncrementalSync = false;
 
         if (config.EnableIncrementalSync)
         {
             CurrentProgress.Phase = "Loading snapshot";
             previousSnapshot = await _snapshotService.LoadLatestSnapshotAsync(linkedToken).ConfigureAwait(false);
+
+            // Keep raw snapshot as hint for smart-skip optimization (even during full sync)
+            hintSnapshot = previousSnapshot;
 
             if (previousSnapshot != null)
             {
@@ -562,23 +566,50 @@ public partial class StrmSyncService
 
             var syncedFiles = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
 
-            // Sync Movies/VOD
+            // Sync Movies and Series concurrently (they write to separate directory trees
+            // and use thread-safe structures for shared state)
+            CurrentProgress.Phase = isIncrementalSync ? "Incremental Sync: Movies + Series" : "Syncing Movies + Series";
+
+            var syncTasks = new List<Task>();
             if (config.SyncMovies)
             {
-                _logger.LogInformation("Syncing movies/VOD content...");
-                CurrentProgress.Phase = isIncrementalSync ? "Incremental Sync: Movies" : "Syncing Movies";
-                await SyncMoviesAsync(connectionInfo, moviesPath, syncedFiles, result, previousSnapshot, allCollectedMovies, linkedToken).ConfigureAwait(false);
+                syncTasks.Add(Task.Run(
+                    async () =>
+                    {
+                        _logger.LogInformation("Syncing movies/VOD content...");
+                        await SyncMoviesAsync(
+                            connectionInfo,
+                            moviesPath,
+                            syncedFiles,
+                            result,
+                            previousSnapshot,
+                            allCollectedMovies,
+                            linkedToken).ConfigureAwait(false);
+                    },
+                    linkedToken));
             }
 
-            // Sync Series
             if (config.SyncSeries)
             {
-                _logger.LogInformation("Syncing series content...");
-                CurrentProgress.Phase = isIncrementalSync ? "Incremental Sync: Series" : "Syncing Series";
-                CurrentProgress.CategoriesProcessed = 0;
-                CurrentProgress.TotalCategories = 0;
-                await SyncSeriesAsync(connectionInfo, seriesPath, syncedFiles, result, previousSnapshot, allCollectedSeries, allSeriesInfoDict, linkedToken).ConfigureAwait(false);
+                syncTasks.Add(Task.Run(
+                    async () =>
+                    {
+                        _logger.LogInformation("Syncing series content...");
+                        await SyncSeriesAsync(
+                            connectionInfo,
+                            seriesPath,
+                            syncedFiles,
+                            result,
+                            previousSnapshot,
+                            hintSnapshot,
+                            allCollectedSeries,
+                            allSeriesInfoDict,
+                            linkedToken).ConfigureAwait(false);
+                    },
+                    linkedToken));
             }
+
+            await Task.WhenAll(syncTasks).ConfigureAwait(false);
 
             // Cleanup orphaned files (only during full sync - incremental sync doesn't track
             // STRM paths for unchanged items, so they would be incorrectly flagged as orphans)
@@ -1076,7 +1107,7 @@ public partial class StrmSyncService
                         if (!providerTmdbId.HasValue && enableMetadataLookup && !tmdbOverrides.ContainsKey(baseName))
                         {
                             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                            timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+                            timeoutCts.CancelAfter(TimeSpan.FromSeconds(10));
                             try
                             {
                                 autoLookupTmdbId = await _metadataLookup.LookupMovieTmdbIdAsync(movieName, year, timeoutCts.Token).ConfigureAwait(false);
@@ -1238,7 +1269,7 @@ public partial class StrmSyncService
         // Update result with thread-safe counters
         result.MoviesCreated += moviesCreated;
         result.MoviesSkipped += moviesSkipped;
-        result.Errors += errors;
+        result.AddErrors(errors);
         result.AddFailedItems(failedItems);
 
         // Log unmatched movies
@@ -1260,6 +1291,7 @@ public partial class StrmSyncService
         ConcurrentDictionary<string, byte> syncedFiles,
         SyncResult result,
         ContentSnapshot? previousSnapshot,
+        ContentSnapshot? hintSnapshot,
         ConcurrentBag<Series> allCollectedSeries,
         ConcurrentDictionary<int, SeriesStreamInfo> allSeriesInfoDict,
         CancellationToken cancellationToken)
@@ -1344,6 +1376,48 @@ public partial class StrmSyncService
         var enableMetadataLookup = config.EnableMetadataLookup;
         var enableProactiveMediaInfo = config.EnableProactiveMediaInfo;
         _logger.LogInformation("Processing series with parallelism={Parallelism}, smartSkip={SmartSkip}, metadataLookup={MetadataLookup}, proactiveMediaInfo={ProactiveMediaInfo}", parallelism, config.SmartSkipExisting, enableMetadataLookup, enableProactiveMediaInfo);
+
+        // Pre-scan existing series folders for fast skip-before-API-call detection
+        var existingSeriesFolderCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        if (config.SmartSkipExisting && Directory.Exists(seriesPath))
+        {
+            CurrentProgress.Phase = "Scanning existing series";
+            _logger.LogInformation("Pre-scanning existing series folders...");
+
+            // Scan all series directories and count STRM files
+            var scanDirs = new List<string> { seriesPath };
+            if (folderMappings.Count > 0)
+            {
+                foreach (var subfolder in folderMappings.Values.SelectMany(v => v).Distinct())
+                {
+                    var subPath = Path.Combine(seriesPath, subfolder);
+                    if (Directory.Exists(subPath))
+                    {
+                        scanDirs.Add(subPath);
+                    }
+                }
+            }
+
+            foreach (var scanDir in scanDirs)
+            {
+                try
+                {
+                    foreach (var seriesDir in Directory.GetDirectories(scanDir))
+                    {
+                        var strmCount = Directory.GetFiles(seriesDir, "*.strm", SearchOption.AllDirectories).Length;
+                        existingSeriesFolderCounts.TryAdd(seriesDir, strmCount);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Error scanning series directory: {Dir}", scanDir);
+                }
+            }
+
+            _logger.LogInformation("Found {Count} existing series folders", existingSeriesFolderCounts.Count);
+        }
+
+        int preApiSkipped = 0;
 
         // Process categories in batches to reduce memory usage
         for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
@@ -1461,6 +1535,86 @@ public partial class StrmSyncService
                     int? year = ExtractYear(series.Name);
                     string baseName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
 
+                    // Pre-API smart skip: use snapshot hints to avoid expensive API call
+                    // Check if all target folders already have this series with matching episode count
+                    if (config.SmartSkipExisting && hintSnapshot != null &&
+                        hintSnapshot.Series.TryGetValue(series.SeriesId, out var hintEntry) &&
+                        hintEntry.EpisodeCount > 0)
+                    {
+                        // Determine target folders for this series
+                        var preCheckFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var categoryId in categoryIds)
+                        {
+                            if (folderMappings.TryGetValue(categoryId, out var mappedFolders))
+                            {
+                                foreach (var folder in mappedFolders)
+                                {
+                                    preCheckFolders.Add(folder);
+                                }
+                            }
+                        }
+
+                        if (preCheckFolders.Count == 0)
+                        {
+                            preCheckFolders.Add(string.Empty);
+                        }
+
+                        bool allFoldersComplete = true;
+                        foreach (var targetFolder in preCheckFolders)
+                        {
+                            string seriesBasePath = string.IsNullOrEmpty(targetFolder)
+                                ? seriesPath
+                                : Path.Combine(seriesPath, targetFolder);
+
+                            // Find matching folder (baseName may have [tmdbid-X]/[tvdbid-X] suffix)
+                            bool foundMatch = false;
+                            foreach (var kvp in existingSeriesFolderCounts)
+                            {
+                                var folderDir = Path.GetDirectoryName(kvp.Key);
+                                var folderName = Path.GetFileName(kvp.Key);
+                                if (string.Equals(folderDir, seriesBasePath, StringComparison.OrdinalIgnoreCase) &&
+                                    folderName.StartsWith(baseName, StringComparison.OrdinalIgnoreCase) &&
+                                    kvp.Value >= hintEntry.EpisodeCount)
+                                {
+                                    foundMatch = true;
+
+                                    // Add existing files to synced set (for orphan protection)
+                                    try
+                                    {
+                                        foreach (var strm in Directory.GetFiles(kvp.Key, "*.strm", SearchOption.AllDirectories))
+                                        {
+                                            syncedFiles.TryAdd(strm, 0);
+                                        }
+                                    }
+                                    catch (Exception)
+                                    {
+                                        // Ignore filesystem errors during orphan protection scan
+                                    }
+
+                                    break;
+                                }
+                            }
+
+                            if (!foundMatch)
+                            {
+                                allFoldersComplete = false;
+                                break;
+                            }
+                        }
+
+                        if (allFoldersComplete)
+                        {
+                            // All folders have complete content - skip the expensive API call
+                            Interlocked.Increment(ref seriesSkipped);
+                            Interlocked.Increment(ref smartSkipped);
+                            Interlocked.Increment(ref preApiSkipped);
+
+                            // Re-use snapshot data for snapshot building (avoid API call)
+                            allCollectedSeries.Add(series);
+                            return;
+                        }
+                    }
+
                     // Fetch series info to get provider TMDB ID and episodes
                     var seriesInfo = await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, series.SeriesId, ct).ConfigureAwait(false);
 
@@ -1487,7 +1641,7 @@ public partial class StrmSyncService
                     if (!providerTmdbId.HasValue && enableMetadataLookup && !tvdbOverrides.ContainsKey(baseName))
                     {
                         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                        timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+                        timeoutCts.CancelAfter(TimeSpan.FromSeconds(10));
                         try
                         {
                             autoLookupTvdbId = await _metadataLookup.LookupSeriesTvdbIdAsync(seriesName, year, timeoutCts.Token).ConfigureAwait(false);
@@ -1595,6 +1749,7 @@ public partial class StrmSyncService
                     }
 
                     bool seriesHasNewEpisodes = false;
+                    var pendingImageDownloads = new List<(string Url, string Path)>();
 
                     // Sync to each target folder
                     foreach (var targetFolder in targetFolders)
@@ -1665,7 +1820,7 @@ public partial class StrmSyncService
                                         ct).ConfigureAwait(false);
                                 }
 
-                                // Download episode thumbnail for unmatched series
+                                // Collect episode thumbnail for batch download
                                 if (!providerTmdbId.HasValue && !autoLookupTvdbId.HasValue && !tvdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched)
                                 {
                                     var episodeThumbUrl = episode.Info?.MovieImage;
@@ -1674,7 +1829,7 @@ public partial class StrmSyncService
                                         var episodeThumbName = Path.GetFileNameWithoutExtension(episodeFileName);
                                         var thumbExt = GetImageExtension(episodeThumbUrl);
                                         var thumbPath = Path.Combine(seasonFolder, $"{episodeThumbName}-thumb{thumbExt}");
-                                        await DownloadImageAsync(episodeThumbUrl, thumbPath, ct).ConfigureAwait(false);
+                                        pendingImageDownloads.Add((episodeThumbUrl, thumbPath));
                                     }
                                 }
                             }
@@ -1692,7 +1847,7 @@ public partial class StrmSyncService
                                 }
                             }
 
-                            // Download season poster for unmatched series
+                            // Collect season poster for batch download
                             if (!autoLookupTvdbId.HasValue && !tvdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched && isNewSeason && seasonHasNewEpisodes)
                             {
                                 var season = seriesInfo.Seasons.FirstOrDefault(s => s.SeasonNumber == seasonNumber);
@@ -1701,31 +1856,38 @@ public partial class StrmSyncService
                                 {
                                     var seasonPosterExt = GetImageExtension(seasonCoverUrl);
                                     var seasonPosterPath = Path.Combine(seasonFolder, $"poster{seasonPosterExt}");
-                                    await DownloadImageAsync(seasonCoverUrl, seasonPosterPath, ct).ConfigureAwait(false);
+                                    pendingImageDownloads.Add((seasonCoverUrl, seasonPosterPath));
                                 }
                             }
                         }
 
-                        // Download artwork for unmatched series in this folder
+                        // Collect series artwork for batch download
                         if (!autoLookupTvdbId.HasValue && !tvdbOverrides.ContainsKey(baseName) && config.DownloadArtworkForUnmatched && seriesHasNewEpisodes && isNewSeries)
                         {
-                            // Download series poster
                             if (!string.IsNullOrEmpty(series.Cover))
                             {
                                 var posterExt = GetImageExtension(series.Cover);
                                 var posterPath = Path.Combine(seriesFolderPath, $"poster{posterExt}");
-                                await DownloadImageAsync(series.Cover, posterPath, ct).ConfigureAwait(false);
+                                pendingImageDownloads.Add((series.Cover, posterPath));
                             }
 
-                            // Download series backdrop/fanart
                             if (series.BackdropPaths.Count > 0)
                             {
                                 var backdropUrl = series.BackdropPaths.First();
                                 var fanartExt = GetImageExtension(backdropUrl);
                                 var fanartPath = Path.Combine(seriesFolderPath, $"fanart{fanartExt}");
-                                await DownloadImageAsync(backdropUrl, fanartPath, ct).ConfigureAwait(false);
+                                pendingImageDownloads.Add((backdropUrl, fanartPath));
                             }
                         }
+                    }
+
+                    // Batch download all collected images with bounded parallelism
+                    if (pendingImageDownloads.Count > 0)
+                    {
+                        await Parallel.ForEachAsync(
+                            pendingImageDownloads,
+                            new ParallelOptions { MaxDegreeOfParallelism = 5, CancellationToken = ct },
+                            async (img, t) => await DownloadImageAsync(img.Url, img.Path, t).ConfigureAwait(false)).ConfigureAwait(false);
                     }
 
                     // Track series created/skipped (once per series, not per folder)
@@ -1774,12 +1936,16 @@ public partial class StrmSyncService
         result.SeasonsSkipped += seasonsSkipped;
         result.EpisodesCreated += episodesCreated;
         result.EpisodesSkipped += episodesSkipped;
-        result.Errors += errors;
+        result.AddErrors(errors);
         result.AddFailedItems(failedItems);
 
         if (smartSkipped > 0)
         {
-            _logger.LogInformation("Smart-skipped {Count} series (already had STRM files)", smartSkipped);
+            _logger.LogInformation(
+                "Smart-skipped {Count} series ({PreApi} before API call, {PostApi} after API call)",
+                smartSkipped,
+                preApiSkipped,
+                smartSkipped - preApiSkipped);
         }
 
         // Log unmatched series
@@ -2481,6 +2647,8 @@ public class SyncProgress
 public class SyncResult
 {
     private readonly List<FailedItem> _failedItems = new();
+    private readonly object _failedItemsLock = new();
+    private int _errors;
 
     /// <summary>
     /// Gets or sets the start time of the sync.
@@ -2588,14 +2756,27 @@ public class SyncResult
     public int FilesDeleted { get; set; }
 
     /// <summary>
-    /// Gets or sets the number of errors encountered.
+    /// Gets or sets the number of errors encountered. Thread-safe for concurrent movie+series sync.
     /// </summary>
-    public int Errors { get; set; }
+    public int Errors
+    {
+        get => Volatile.Read(ref _errors);
+        set => Volatile.Write(ref _errors, value);
+    }
 
     /// <summary>
     /// Gets the list of failed items.
     /// </summary>
-    public IReadOnlyList<FailedItem> FailedItems => _failedItems;
+    public IReadOnlyList<FailedItem> FailedItems
+    {
+        get
+        {
+            lock (_failedItemsLock)
+            {
+                return _failedItems.ToList();
+            }
+        }
+    }
 
     /// <summary>
     /// Gets the duration of the sync operation.
@@ -2608,16 +2789,34 @@ public class SyncResult
     public bool WasIncrementalSync { get; set; }
 
     /// <summary>
-    /// Adds a failed item to the list.
+    /// Atomically adds to the Errors counter. Thread-safe for concurrent movie+series sync.
     /// </summary>
-    /// <param name="item">The failed item to add.</param>
-    internal void AddFailedItem(FailedItem item) => _failedItems.Add(item);
+    /// <param name="count">The number of errors to add.</param>
+    internal void AddErrors(int count) => Interlocked.Add(ref _errors, count);
 
     /// <summary>
-    /// Adds multiple failed items to the list.
+    /// Adds a failed item to the list. Thread-safe.
+    /// </summary>
+    /// <param name="item">The failed item to add.</param>
+    internal void AddFailedItem(FailedItem item)
+    {
+        lock (_failedItemsLock)
+        {
+            _failedItems.Add(item);
+        }
+    }
+
+    /// <summary>
+    /// Adds multiple failed items to the list. Thread-safe.
     /// </summary>
     /// <param name="items">The failed items to add.</param>
-    internal void AddFailedItems(IEnumerable<FailedItem> items) => _failedItems.AddRange(items);
+    internal void AddFailedItems(IEnumerable<FailedItem> items)
+    {
+        lock (_failedItemsLock)
+        {
+            _failedItems.AddRange(items);
+        }
+    }
 
     /// <summary>
     /// Clears and replaces all failed items.
@@ -2625,8 +2824,11 @@ public class SyncResult
     /// <param name="items">The new list of failed items.</param>
     internal void SetFailedItems(IEnumerable<FailedItem> items)
     {
-        _failedItems.Clear();
-        _failedItems.AddRange(items);
+        lock (_failedItemsLock)
+        {
+            _failedItems.Clear();
+            _failedItems.AddRange(items);
+        }
     }
 }
 
