@@ -1211,6 +1211,7 @@ public partial class StrmSyncService
                 {
                     _logger.LogWarning(ex, "Failed to create STRM for movie: {MovieName}", stream.Name);
                     Interlocked.Increment(ref errors);
+                    Interlocked.Increment(ref moviesSkipped);
                     failedItems.Add(new FailedItem
                     {
                         ItemType = "Movie",
@@ -1469,6 +1470,7 @@ public partial class StrmSyncService
                     // Early return if no episodes
                     if (seriesInfo.Episodes == null || seriesInfo.Episodes.Count == 0)
                     {
+                        Interlocked.Increment(ref seriesSkipped);
                         // Note: ItemsProcessed is incremented in finally block
                         return;
                     }
@@ -1740,6 +1742,7 @@ public partial class StrmSyncService
                 {
                     _logger.LogWarning(ex, "Failed to sync series: {SeriesName}", series.Name);
                     Interlocked.Increment(ref errors);
+                    Interlocked.Increment(ref seriesSkipped);
                     failedItems.Add(new FailedItem
                     {
                         ItemType = "Series",
