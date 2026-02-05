@@ -96,7 +96,7 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Gets or sets the number of parallel API requests during sync.
     /// Higher values speed up sync but may overload the provider.
     /// </summary>
-    public int SyncParallelism { get; set; } = 6;
+    public int SyncParallelism { get; set; } = 10;
 
     /// <summary>
     /// Gets or sets a value indicating whether to skip series that already have STRM files.
@@ -156,7 +156,7 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Lower values reduce memory usage but may increase sync duration.
     /// Set to 0 to disable batching (process all categories at once).
     /// </summary>
-    public int CategoryBatchSize { get; set; } = 10;
+    public int CategoryBatchSize { get; set; } = 25;
 
     /// <summary>
     /// Gets or sets the sync schedule type.

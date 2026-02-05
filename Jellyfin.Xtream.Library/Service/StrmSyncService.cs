@@ -1472,7 +1472,9 @@ public partial class StrmSyncService
         _logger.LogInformation("Processing series with parallelism={Parallelism}, smartSkip={SmartSkip}, metadataLookup={MetadataLookup}, proactiveMediaInfo={ProactiveMediaInfo}", parallelism, config.SmartSkipExisting, enableMetadataLookup, enableProactiveMediaInfo);
 
         // Pre-scan existing series folders for fast skip-before-API-call detection
+        // seriesFolderLookup provides O(1) lookup by (parentDir, baseName) instead of O(N) linear scan
         var existingSeriesFolderCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var seriesFolderLookup = new Dictionary<string, (string Path, int Count)>(StringComparer.OrdinalIgnoreCase);
         if (config.SmartSkipExisting && Directory.Exists(seriesPath))
         {
             CurrentProgress.Phase = "Scanning existing series";
@@ -1500,6 +1502,14 @@ public partial class StrmSyncService
                     {
                         var strmCount = Directory.GetFiles(seriesDir, "*.strm", SearchOption.AllDirectories).Length;
                         existingSeriesFolderCounts.TryAdd(seriesDir, strmCount);
+
+                        // Build O(1) lookup: key = "parentDir|baseName" (strip " [...]" suffix)
+                        var folderName = Path.GetFileName(seriesDir);
+                        var bracketIndex = folderName.LastIndexOf(" [", StringComparison.Ordinal);
+                        var baseKey = bracketIndex > 0 ? folderName[..bracketIndex] : folderName;
+                        var parentDir = Path.GetDirectoryName(seriesDir)!;
+                        var lookupKey = parentDir + "|" + baseKey;
+                        seriesFolderLookup.TryAdd(lookupKey, (seriesDir, strmCount));
                     }
                 }
                 catch (Exception ex)
@@ -1663,32 +1673,25 @@ public partial class StrmSyncService
                                 ? seriesPath
                                 : Path.Combine(seriesPath, targetFolder);
 
-                            // Find matching folder (baseName may have [tmdbid-X]/[tvdbid-X] suffix)
+                            // Find matching folder via O(1) lookup (baseName may have [tmdbid-X]/[tvdbid-X] suffix)
                             bool foundMatch = false;
-                            foreach (var kvp in existingSeriesFolderCounts)
+                            var lookupKey = seriesBasePath + "|" + baseName;
+                            if (seriesFolderLookup.TryGetValue(lookupKey, out var match) &&
+                                match.Count >= hintEntry.EpisodeCount)
                             {
-                                var folderDir = Path.GetDirectoryName(kvp.Key);
-                                var folderName = Path.GetFileName(kvp.Key);
-                                if (string.Equals(folderDir, seriesBasePath, StringComparison.OrdinalIgnoreCase) &&
-                                    folderName.StartsWith(baseName, StringComparison.OrdinalIgnoreCase) &&
-                                    kvp.Value >= hintEntry.EpisodeCount)
+                                foundMatch = true;
+
+                                // Add existing files to synced set (for orphan protection)
+                                try
                                 {
-                                    foundMatch = true;
-
-                                    // Add existing files to synced set (for orphan protection)
-                                    try
+                                    foreach (var strm in Directory.GetFiles(match.Path, "*.strm", SearchOption.AllDirectories))
                                     {
-                                        foreach (var strm in Directory.GetFiles(kvp.Key, "*.strm", SearchOption.AllDirectories))
-                                        {
-                                            syncedFiles.TryAdd(strm, 0);
-                                        }
+                                        syncedFiles.TryAdd(strm, 0);
                                     }
-                                    catch (Exception)
-                                    {
-                                        // Ignore filesystem errors during orphan protection scan
-                                    }
-
-                                    break;
+                                }
+                                catch (Exception)
+                                {
+                                    // Ignore filesystem errors during orphan protection scan
                                 }
                             }
 
