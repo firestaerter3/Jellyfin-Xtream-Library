@@ -1055,6 +1055,61 @@ public partial class StrmSyncService
                 }
             }
 
+            // Pre-fetch VOD info for new movies that need metadata lookup
+            // This bulk phase is much faster than per-movie fetching during processing
+            var vodInfoCache = new ConcurrentDictionary<int, VodInfoResponse?>();
+            if (enableMetadataLookup)
+            {
+                var moviesToPreFetch = batchMovies.Where(m =>
+                {
+                    string movieName = SanitizeFileName(m.Stream.Name);
+                    int? year = ExtractYear(m.Stream.Name);
+                    string baseName = year.HasValue ? $"{movieName} ({year})" : movieName;
+                    if (tmdbOverrides.ContainsKey(baseName))
+                    {
+                        return false;
+                    }
+
+                    // Check if folder already exists (no need to fetch VOD info)
+                    foreach (var targetFolder in m.CategoryIds.SelectMany(cid =>
+                        folderMappings.TryGetValue(cid, out var f) ? f : Enumerable.Empty<string>())
+                        .DefaultIfEmpty(string.Empty))
+                    {
+                        if (existingMovieFolders.TryGetValue(targetFolder, out var fc) &&
+                            fc.ContainsKey(baseName))
+                        {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                }).ToList();
+
+                if (moviesToPreFetch.Count > 0)
+                {
+                    CurrentProgress.MoviePhase = $"Fetching movie info (batch {batchIndex + 1}/{totalBatches})";
+                    await Parallel.ForEachAsync(
+                        moviesToPreFetch,
+                        new ParallelOptions
+                        {
+                            MaxDegreeOfParallelism = parallelism,
+                            CancellationToken = cancellationToken,
+                        },
+                        async (movieEntry, ct) =>
+                        {
+                            try
+                            {
+                                var info = await _client.GetVodInfoAsync(connectionInfo, movieEntry.Stream.StreamId, ct).ConfigureAwait(false);
+                                vodInfoCache[movieEntry.Stream.StreamId] = info;
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogDebug(ex, "Failed to pre-fetch VOD info: {StreamId}", movieEntry.Stream.StreamId);
+                            }
+                        }).ConfigureAwait(false);
+                }
+            }
+
             CurrentProgress.MoviePhase = $"Syncing Movies (batch {batchIndex + 1}/{totalBatches})";
             CurrentProgress.AddTotalItems(batchMovies.Count);
 
@@ -1120,20 +1175,28 @@ public partial class StrmSyncService
                     }
                     else
                     {
-                        // New movie - fetch provider TMDB ID
+                        // New movie - get provider TMDB ID from pre-fetched cache
                         if (enableMetadataLookup && !tmdbOverrides.ContainsKey(baseName))
                         {
-                            try
+                            if (vodInfoCache.TryGetValue(stream.StreamId, out var cachedInfo))
                             {
-                                vodInfo = await _client.GetVodInfoAsync(connectionInfo, stream.StreamId, ct).ConfigureAwait(false);
-                                if (!string.IsNullOrEmpty(vodInfo?.Info?.TmdbId) && int.TryParse(vodInfo.Info.TmdbId, out int tmdbParsed))
+                                vodInfo = cachedInfo;
+                            }
+                            else
+                            {
+                                try
                                 {
-                                    providerTmdbId = tmdbParsed;
+                                    vodInfo = await _client.GetVodInfoAsync(connectionInfo, stream.StreamId, ct).ConfigureAwait(false);
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogDebug(ex, "Failed to fetch VOD info for provider TMDB: {StreamId}", stream.StreamId);
                                 }
                             }
-                            catch (Exception ex)
+
+                            if (!string.IsNullOrEmpty(vodInfo?.Info?.TmdbId) && int.TryParse(vodInfo.Info.TmdbId, out int tmdbParsed))
                             {
-                                _logger.LogDebug(ex, "Failed to fetch VOD info for provider TMDB: {StreamId}", stream.StreamId);
+                                providerTmdbId = tmdbParsed;
                             }
                         }
 
@@ -1714,8 +1777,8 @@ public partial class StrmSyncService
                         targetFolders.Add(string.Empty);
                     }
 
-                    // Smart skip check with exact folder name
-                    if (config.SmartSkipExisting)
+                    // Smart skip check with exact folder name (skip when no existing folders - initial scan)
+                    if (config.SmartSkipExisting && existingSeriesFolderCounts.Count > 0)
                     {
                         bool anyNeedsSync = false;
                         foreach (var targetFolder in targetFolders)
