@@ -69,7 +69,7 @@ const XtreamLibraryConfig = {
             document.getElementById('txtCategoryBatchSize').value = config.CategoryBatchSize || 10;
 
             // Rate limiting
-            document.getElementById('txtRequestDelayMs').value = config.RequestDelayMs || 100;
+            document.getElementById('txtRequestDelayMs').value = config.RequestDelayMs || 50;
             document.getElementById('txtMaxRetries').value = config.MaxRetries || 3;
             document.getElementById('txtRetryDelayMs').value = config.RetryDelayMs || 1000;
 
@@ -183,7 +183,7 @@ const XtreamLibraryConfig = {
             config.CategoryBatchSize = parseInt(document.getElementById('txtCategoryBatchSize').value) || 10;
 
             // Rate limiting
-            config.RequestDelayMs = parseInt(document.getElementById('txtRequestDelayMs').value) || 100;
+            config.RequestDelayMs = parseInt(document.getElementById('txtRequestDelayMs').value) || 50;
             config.MaxRetries = parseInt(document.getElementById('txtMaxRetries').value) || 3;
             config.RetryDelayMs = parseInt(document.getElementById('txtRetryDelayMs').value) || 1000;
 

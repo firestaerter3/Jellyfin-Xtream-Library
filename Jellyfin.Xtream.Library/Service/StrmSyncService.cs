@@ -1141,7 +1141,7 @@ public partial class StrmSyncService
                         if (!providerTmdbId.HasValue && enableMetadataLookup && !tmdbOverrides.ContainsKey(baseName))
                         {
                             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                            timeoutCts.CancelAfter(TimeSpan.FromSeconds(10));
+                            timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
                             try
                             {
                                 autoLookupTmdbId = await _metadataLookup.LookupMovieTmdbIdAsync(movieName, year, timeoutCts.Token).ConfigureAwait(false);
@@ -1675,7 +1675,7 @@ public partial class StrmSyncService
                     if (!providerTmdbId.HasValue && enableMetadataLookup && !tvdbOverrides.ContainsKey(baseName))
                     {
                         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                        timeoutCts.CancelAfter(TimeSpan.FromSeconds(10));
+                        timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
                         try
                         {
                             autoLookupTvdbId = await _metadataLookup.LookupSeriesTvdbIdAsync(seriesName, year, timeoutCts.Token).ConfigureAwait(false);

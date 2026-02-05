@@ -155,7 +155,7 @@ public class PluginConfigurationTests
         config.SyncParallelism.Should().Be(6);
         config.MetadataParallelism.Should().Be(3);
         config.OrphanSafetyThreshold.Should().Be(0.20);
-        config.RequestDelayMs.Should().Be(100);
+        config.RequestDelayMs.Should().Be(50);
         config.MaxRetries.Should().Be(3);
         config.RetryDelayMs.Should().Be(1000);
         config.EnableIncrementalSync.Should().BeTrue();
