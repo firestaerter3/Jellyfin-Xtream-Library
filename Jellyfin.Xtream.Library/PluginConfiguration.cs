@@ -319,9 +319,9 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>
     /// Gets or sets the delay in milliseconds between API requests.
     /// Helps prevent rate limiting (429 errors) from the provider.
-    /// Set to 0 for no delay. Default: 100ms.
+    /// Set to 0 for no delay. Default: 50ms.
     /// </summary>
-    public int RequestDelayMs { get; set; } = 100;
+    public int RequestDelayMs { get; set; } = 50;
 
     /// <summary>
     /// Gets or sets the maximum number of retries for rate-limited requests.
