@@ -31,6 +31,7 @@ public class SeriesStreamInfo
     [JsonProperty("info")]
     public SeriesInfo Info { get; set; } = new SeriesInfo();
 
+    [JsonConverter(typeof(EpisodeDictionaryConverter))]
     [JsonProperty("episodes")]
 #pragma warning disable CA2227
     public Dictionary<int, ICollection<Episode>>? Episodes { get; set; } = new Dictionary<int, ICollection<Episode>>();

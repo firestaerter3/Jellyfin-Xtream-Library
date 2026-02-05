@@ -644,6 +644,10 @@ public partial class StrmSyncService
 
             await Task.WhenAll(syncTasks).ConfigureAwait(false);
 
+            // Clear concurrent sub-phases so subsequent sequential phases show via Phase
+            CurrentProgress.MoviePhase = string.Empty;
+            CurrentProgress.SeriesPhase = string.Empty;
+
             // Cleanup orphaned files (only during full sync - incremental sync doesn't track
             // STRM paths for unchanged items, so they would be incorrectly flagged as orphans)
             if (config.CleanupOrphans && !isIncrementalSync)
@@ -892,11 +896,8 @@ public partial class StrmSyncService
             batchSize,
             config.SyncParallelism);
 
-        CurrentProgress.TotalCategories = totalBatches;
-        CurrentProgress.CategoriesProcessed = 0;
-        CurrentProgress.TotalItems = 0;
-        CurrentProgress.ItemsProcessed = 0;
-        CurrentProgress.Phase = "Syncing Movies";
+        CurrentProgress.AddTotalCategories(totalBatches);
+        CurrentProgress.MoviePhase = "Syncing Movies";
 
         // Thread-safe counters and collections (shared across batches)
         int moviesCreated = 0;
@@ -981,7 +982,7 @@ public partial class StrmSyncService
                 totalBatches,
                 batchCategories.Count);
 
-            CurrentProgress.Phase = $"Collecting movies (batch {batchIndex + 1}/{totalBatches})";
+            CurrentProgress.MoviePhase = $"Collecting movies (batch {batchIndex + 1}/{totalBatches})";
 
             // Collect movies from this batch of categories
             var batchMovies = new List<(StreamInfo Stream, HashSet<int> CategoryIds)>();
@@ -1054,7 +1055,7 @@ public partial class StrmSyncService
                 }
             }
 
-            CurrentProgress.Phase = $"Syncing Movies (batch {batchIndex + 1}/{totalBatches})";
+            CurrentProgress.MoviePhase = $"Syncing Movies (batch {batchIndex + 1}/{totalBatches})";
             CurrentProgress.AddTotalItems(batchMovies.Count);
 
             // Process movies in this batch
@@ -1292,7 +1293,7 @@ public partial class StrmSyncService
             }).ConfigureAwait(false);
 
             // Update batch progress
-            CurrentProgress.CategoriesProcessed = batchIndex + 1;
+            CurrentProgress.IncrementCategoriesProcessed();
 
             // Allow GC to reclaim batch memory
             batchMovies.Clear();
@@ -1315,7 +1316,7 @@ public partial class StrmSyncService
             }
         }
 
-        CurrentProgress.CategoriesProcessed = 1;
+        CurrentProgress.MoviePhase = string.Empty;
     }
 
     private async Task SyncSeriesAsync(
@@ -1378,11 +1379,8 @@ public partial class StrmSyncService
             batchSize,
             config.SyncParallelism);
 
-        CurrentProgress.Phase = "Syncing Series";
-        CurrentProgress.TotalCategories = totalBatches;
-        CurrentProgress.CategoriesProcessed = 0;
-        CurrentProgress.TotalItems = 0;
-        CurrentProgress.ItemsProcessed = 0;
+        CurrentProgress.SeriesPhase = "Syncing Series";
+        CurrentProgress.AddTotalCategories(totalBatches);
 
         // Thread-safe counters (shared across batches)
         int seriesCreated = 0;
@@ -1468,7 +1466,7 @@ public partial class StrmSyncService
                 totalBatches,
                 batchCategories.Count);
 
-            CurrentProgress.Phase = $"Collecting series (batch {batchIndex + 1}/{totalBatches})";
+            CurrentProgress.SeriesPhase = $"Collecting series (batch {batchIndex + 1}/{totalBatches})";
 
             // Cache for directory scans (per batch to limit memory)
             var directoryCache = new ConcurrentDictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
@@ -1546,7 +1544,7 @@ public partial class StrmSyncService
                 }
             }
 
-            CurrentProgress.Phase = $"Syncing Series (batch {batchIndex + 1}/{totalBatches})";
+            CurrentProgress.SeriesPhase = $"Syncing Series (batch {batchIndex + 1}/{totalBatches})";
             CurrentProgress.AddTotalItems(batchSeries.Count);
 
             // Process series in this batch
@@ -1957,7 +1955,7 @@ public partial class StrmSyncService
             }).ConfigureAwait(false);
 
             // Update batch progress
-            CurrentProgress.CategoriesProcessed = batchIndex + 1;
+            CurrentProgress.IncrementCategoriesProcessed();
 
             // Allow GC to reclaim batch memory
             batchSeries.Clear();
@@ -1994,7 +1992,7 @@ public partial class StrmSyncService
             }
         }
 
-        CurrentProgress.CategoriesProcessed = 1;
+        CurrentProgress.SeriesPhase = string.Empty;
     }
 
     private async Task SyncSingleSeriesAsync(
@@ -2576,6 +2574,8 @@ public class SyncProgress
     private int _totalItems;
     private int _moviesCreated;
     private int _episodesCreated;
+    private int _totalCategories;
+    private int _categoriesProcessed;
 
     /// <summary>
     /// Gets or sets a value indicating whether a sync is currently in progress.
@@ -2583,9 +2583,19 @@ public class SyncProgress
     public bool IsRunning { get; set; }
 
     /// <summary>
-    /// Gets or sets the current phase of the sync.
+    /// Gets or sets the current phase of the sync (used for sequential phases like cleanup/retry).
     /// </summary>
     public string Phase { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the current movie sync phase (used during concurrent sync).
+    /// </summary>
+    public string MoviePhase { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the current series sync phase (used during concurrent sync).
+    /// </summary>
+    public string SeriesPhase { get; set; } = string.Empty;
 
     /// <summary>
     /// Gets or sets the current item being processed.
@@ -2595,12 +2605,20 @@ public class SyncProgress
     /// <summary>
     /// Gets or sets the total number of categories to process.
     /// </summary>
-    public int TotalCategories { get; set; }
+    public int TotalCategories
+    {
+        get => Volatile.Read(ref _totalCategories);
+        set => Volatile.Write(ref _totalCategories, value);
+    }
 
     /// <summary>
     /// Gets or sets the number of categories processed.
     /// </summary>
-    public int CategoriesProcessed { get; set; }
+    public int CategoriesProcessed
+    {
+        get => Volatile.Read(ref _categoriesProcessed);
+        set => Volatile.Write(ref _categoriesProcessed, value);
+    }
 
     /// <summary>
     /// Gets or sets the total items in the current category.
@@ -2674,6 +2692,23 @@ public class SyncProgress
     public void IncrementEpisodesCreated()
     {
         Interlocked.Increment(ref _episodesCreated);
+    }
+
+    /// <summary>
+    /// Atomically adds to the TotalCategories counter.
+    /// </summary>
+    /// <param name="count">The number of categories to add.</param>
+    public void AddTotalCategories(int count)
+    {
+        Interlocked.Add(ref _totalCategories, count);
+    }
+
+    /// <summary>
+    /// Atomically increments the CategoriesProcessed counter.
+    /// </summary>
+    public void IncrementCategoriesProcessed()
+    {
+        Interlocked.Increment(ref _categoriesProcessed);
     }
 }
 

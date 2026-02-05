@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Collections.Generic;
 using FluentAssertions;
 using Jellyfin.Xtream.Library.Client;
 using Jellyfin.Xtream.Library.Client.Models;
@@ -225,6 +226,117 @@ public class ConverterTests
 
         converter.CanConvert(typeof(string)).Should().BeTrue();
         converter.CanConvert(typeof(int)).Should().BeFalse();
+    }
+
+    #endregion
+
+    #region EpisodeDictionaryConverter Tests
+
+    [Fact]
+    public void EpisodeDictionaryConverter_NormalArrayEpisodes_DeserializesCorrectly()
+    {
+        var json = @"{
+            ""seasons"": [],
+            ""info"": {},
+            ""episodes"": {
+                ""1"": [
+                    {""id"": 101, ""episode_num"": 1, ""title"": ""Pilot"", ""container_extension"": ""mp4"", ""season"": 1},
+                    {""id"": 102, ""episode_num"": 2, ""title"": ""Second"", ""container_extension"": ""mp4"", ""season"": 1}
+                ]
+            }
+        }";
+
+        var result = JsonConvert.DeserializeObject<SeriesStreamInfo>(json);
+
+        result.Should().NotBeNull();
+        result!.Episodes.Should().NotBeNull();
+        result.Episodes.Should().ContainKey(1);
+        result.Episodes![1].Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void EpisodeDictionaryConverter_EmptyArray_ReturnsEmptyDict()
+    {
+        var json = @"{
+            ""seasons"": [],
+            ""info"": {},
+            ""episodes"": []
+        }";
+
+        var result = JsonConvert.DeserializeObject<SeriesStreamInfo>(json);
+
+        result.Should().NotBeNull();
+        result!.Episodes.Should().NotBeNull();
+        result.Episodes.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void EpisodeDictionaryConverter_Null_ReturnsEmptyDict()
+    {
+        var json = @"{
+            ""seasons"": [],
+            ""info"": {},
+            ""episodes"": null
+        }";
+
+        var result = JsonConvert.DeserializeObject<SeriesStreamInfo>(json);
+
+        result.Should().NotBeNull();
+        result!.Episodes.Should().NotBeNull();
+        result.Episodes.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void EpisodeDictionaryConverter_SingleEpisodeObject_WrapsInList()
+    {
+        var json = @"{
+            ""seasons"": [],
+            ""info"": {},
+            ""episodes"": {
+                ""1"": {""id"": 101, ""episode_num"": 1, ""title"": ""Only Episode"", ""container_extension"": ""mp4"", ""season"": 1}
+            }
+        }";
+
+        var result = JsonConvert.DeserializeObject<SeriesStreamInfo>(json);
+
+        result.Should().NotBeNull();
+        result!.Episodes.Should().NotBeNull();
+        result.Episodes.Should().ContainKey(1);
+        result.Episodes![1].Should().HaveCount(1);
+    }
+
+    [Fact]
+    public void EpisodeDictionaryConverter_MixedSeasons_HandlesBoth()
+    {
+        var json = @"{
+            ""seasons"": [],
+            ""info"": {},
+            ""episodes"": {
+                ""1"": [
+                    {""id"": 101, ""episode_num"": 1, ""title"": ""S1E1"", ""container_extension"": ""mp4"", ""season"": 1},
+                    {""id"": 102, ""episode_num"": 2, ""title"": ""S1E2"", ""container_extension"": ""mp4"", ""season"": 1}
+                ],
+                ""2"": {""id"": 201, ""episode_num"": 1, ""title"": ""S2E1"", ""container_extension"": ""mp4"", ""season"": 2}
+            }
+        }";
+
+        var result = JsonConvert.DeserializeObject<SeriesStreamInfo>(json);
+
+        result.Should().NotBeNull();
+        result!.Episodes.Should().NotBeNull();
+        result.Episodes.Should().ContainKey(1);
+        result.Episodes.Should().ContainKey(2);
+        result.Episodes![1].Should().HaveCount(2);
+        result.Episodes[2].Should().HaveCount(1);
+    }
+
+    [Fact]
+    public void EpisodeDictionaryConverter_CanConvert_ReturnsCorrectType()
+    {
+        var converter = new EpisodeDictionaryConverter();
+
+        converter.CanConvert(typeof(Dictionary<int, ICollection<Episode>>)).Should().BeTrue();
+        converter.CanConvert(typeof(string)).Should().BeFalse();
     }
 
     #endregion

@@ -614,12 +614,19 @@ const XtreamLibraryConfig = {
     displayProgress: function (progress) {
         const statusSpan = document.getElementById('syncStatus');
         let html = '<span style="color: orange;">';
-        html += progress.Phase;
+        if (progress.MoviePhase || progress.SeriesPhase) {
+            var parts = [];
+            if (progress.MoviePhase) parts.push(progress.MoviePhase);
+            if (progress.SeriesPhase) parts.push(progress.SeriesPhase);
+            html += parts.join(' | ');
+        } else {
+            html += progress.Phase;
+        }
         if (progress.CurrentItem) {
             html += ': ' + this.escapeHtml(progress.CurrentItem);
         }
         if (progress.TotalCategories > 0) {
-            html += '<br/>Categories: ' + progress.CategoriesProcessed + '/' + progress.TotalCategories;
+            html += '<br/>Batches: ' + progress.CategoriesProcessed + '/' + progress.TotalCategories;
         }
         if (progress.TotalItems > 0) {
             html += ' | Items: ' + progress.ItemsProcessed + '/' + progress.TotalItems;
