@@ -54,6 +54,7 @@ public class UserInfo
     public int MaxConnections { get; set; }
 
     #pragma warning disable CA2227
+    [JsonConverter(typeof(SingularToListConverter<string>))]
     [JsonProperty("allowed_output_formats")]
     public ICollection<string> AllowedOutputFormats { get; set; } = new List<string>();
     #pragma warning restore CA2227

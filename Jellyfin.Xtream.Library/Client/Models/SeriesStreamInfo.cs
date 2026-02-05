@@ -21,11 +21,13 @@ namespace Jellyfin.Xtream.Library.Client.Models;
 
 public class SeriesStreamInfo
 {
+    [JsonConverter(typeof(SingularToListConverter<Season>))]
     [JsonProperty("seasons")]
 #pragma warning disable CA2227
     public ICollection<Season> Seasons { get; set; } = new List<Season>();
 #pragma warning restore CA2227
 
+    [JsonConverter(typeof(OnlyObjectConverter<SeriesInfo>))]
     [JsonProperty("info")]
     public SeriesInfo Info { get; set; } = new SeriesInfo();
 

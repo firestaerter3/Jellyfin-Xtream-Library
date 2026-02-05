@@ -1570,9 +1570,11 @@ public partial class StrmSyncService
 
                     // Pre-API smart skip: use snapshot hints to avoid expensive API call
                     // Check if all target folders already have this series with matching episode count
+                    // Also verify LastModified hasn't changed to catch new episodes
                     if (config.SmartSkipExisting && hintSnapshot != null &&
                         hintSnapshot.Series.TryGetValue(series.SeriesId, out var hintEntry) &&
-                        hintEntry.EpisodeCount > 0)
+                        hintEntry.EpisodeCount > 0 &&
+                        series.LastModified == hintEntry.LastModified)
                     {
                         // Determine target folders for this series
                         var preCheckFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
