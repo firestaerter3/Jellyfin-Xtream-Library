@@ -613,50 +613,85 @@ public partial class StrmSyncService
 
             var syncedFiles = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
 
-            // Sync Movies and Series concurrently (they write to separate directory trees
-            // and use thread-safe structures for shared state)
+            // Sync Movies and Series - run concurrently when parallelism > 1,
+            // sequentially when parallelism <= 1 to respect strict rate limits
+            bool runConcurrently = config.SyncParallelism > 1;
             CurrentProgress.Phase = isIncrementalSync ? "Incremental Sync: Movies + Series" : "Syncing Movies + Series";
 
-            var syncTasks = new List<Task>();
-            if (config.SyncMovies)
+            if (runConcurrently)
             {
-                syncTasks.Add(Task.Run(
-                    async () =>
-                    {
-                        _logger.LogInformation("Syncing movies/VOD content...");
-                        await SyncMoviesAsync(
-                            connectionInfo,
-                            moviesPath,
-                            syncedFiles,
-                            result,
-                            previousSnapshot,
-                            allCollectedMovies,
-                            linkedToken).ConfigureAwait(false);
-                    },
-                    linkedToken));
-            }
+                var syncTasks = new List<Task>();
+                if (config.SyncMovies)
+                {
+                    syncTasks.Add(Task.Run(
+                        async () =>
+                        {
+                            _logger.LogInformation("Syncing movies/VOD content...");
+                            await SyncMoviesAsync(
+                                connectionInfo,
+                                moviesPath,
+                                syncedFiles,
+                                result,
+                                previousSnapshot,
+                                allCollectedMovies,
+                                linkedToken).ConfigureAwait(false);
+                        },
+                        linkedToken));
+                }
 
-            if (config.SyncSeries)
+                if (config.SyncSeries)
+                {
+                    syncTasks.Add(Task.Run(
+                        async () =>
+                        {
+                            _logger.LogInformation("Syncing series content...");
+                            await SyncSeriesAsync(
+                                connectionInfo,
+                                seriesPath,
+                                syncedFiles,
+                                result,
+                                previousSnapshot,
+                                hintSnapshot,
+                                allCollectedSeries,
+                                allSeriesInfoDict,
+                                linkedToken).ConfigureAwait(false);
+                        },
+                        linkedToken));
+                }
+
+                await Task.WhenAll(syncTasks).ConfigureAwait(false);
+            }
+            else
             {
-                syncTasks.Add(Task.Run(
-                    async () =>
-                    {
-                        _logger.LogInformation("Syncing series content...");
-                        await SyncSeriesAsync(
-                            connectionInfo,
-                            seriesPath,
-                            syncedFiles,
-                            result,
-                            previousSnapshot,
-                            hintSnapshot,
-                            allCollectedSeries,
-                            allSeriesInfoDict,
-                            linkedToken).ConfigureAwait(false);
-                    },
-                    linkedToken));
-            }
+                // Sequential sync to ensure only 1 API request at a time
+                if (config.SyncMovies)
+                {
+                    _logger.LogInformation("Syncing movies/VOD content (sequential mode)...");
+                    await SyncMoviesAsync(
+                        connectionInfo,
+                        moviesPath,
+                        syncedFiles,
+                        result,
+                        previousSnapshot,
+                        allCollectedMovies,
+                        linkedToken).ConfigureAwait(false);
+                }
 
-            await Task.WhenAll(syncTasks).ConfigureAwait(false);
+                if (config.SyncSeries)
+                {
+                    _logger.LogInformation("Syncing series content (sequential mode)...");
+                    await SyncSeriesAsync(
+                        connectionInfo,
+                        seriesPath,
+                        syncedFiles,
+                        result,
+                        previousSnapshot,
+                        hintSnapshot,
+                        allCollectedSeries,
+                        allSeriesInfoDict,
+                        linkedToken).ConfigureAwait(false);
+                }
+            }
 
             // Clear concurrent sub-phases so subsequent sequential phases show via Phase
             CurrentProgress.MoviePhase = string.Empty;

@@ -37,7 +37,7 @@ public class OnlyObjectConverter<T> : JsonConverter
         JToken token = JToken.Load(reader);
         if (token.Type == JTokenType.Object)
         {
-            return token.ToObject<T>();
+            return token.ToObject<T>(serializer);
         }
 
         return null;
