@@ -43,7 +43,7 @@ const XtreamLibraryConfig = {
             document.getElementById('chkSyncMovies').checked = config.SyncMovies !== false;
             document.getElementById('chkSyncSeries').checked = config.SyncSeries !== false;
             document.getElementById('txtSyncInterval').value = config.SyncIntervalMinutes || 60;
-            document.getElementById('chkTriggerScan').checked = config.TriggerLibraryScan !== false;
+            document.getElementById('chkTriggerScan').checked = config.TriggerLibraryScan === true;
             document.getElementById('chkCleanupOrphans').checked = config.CleanupOrphans !== false;
 
             // Store selected category IDs

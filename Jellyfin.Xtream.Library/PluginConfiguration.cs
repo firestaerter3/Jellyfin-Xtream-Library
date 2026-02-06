@@ -61,7 +61,7 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>
     /// Gets or sets a value indicating whether to trigger a Jellyfin library scan after sync.
     /// </summary>
-    public bool TriggerLibraryScan { get; set; } = true;
+    public bool TriggerLibraryScan { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether to remove orphaned STRM files (content removed from provider).

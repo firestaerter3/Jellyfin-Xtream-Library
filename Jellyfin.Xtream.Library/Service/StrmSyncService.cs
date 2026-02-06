@@ -292,7 +292,7 @@ public partial class StrmSyncService
             // Trigger library scan if enabled and items were created
             if (config.TriggerLibraryScan && (result.MoviesCreated > 0 || result.EpisodesCreated > 0))
             {
-                _logger.LogInformation("Triggering Jellyfin library scan after retry...");
+                _logger.LogWarning("Triggering full Jellyfin library scan after retry. Consider disabling this option for large libraries.");
                 await TriggerLibraryScanAsync().ConfigureAwait(false);
             }
         }
@@ -785,10 +785,10 @@ public partial class StrmSyncService
                 await _metadataLookup.FlushCacheAsync().ConfigureAwait(false);
             }
 
-            // Trigger library scan if enabled
+            // Trigger library scan if enabled (off by default - file monitor handles changes automatically)
             if (config.TriggerLibraryScan && (result.MoviesCreated > 0 || result.EpisodesCreated > 0 || result.FilesDeleted > 0))
             {
-                _logger.LogInformation("Triggering Jellyfin library scan...");
+                _logger.LogWarning("Triggering full Jellyfin library scan ({Movies} movies, {Episodes} episodes created, {Deleted} deleted). This may use significant memory with large libraries. Consider disabling this option and relying on Jellyfin's file monitor instead.", result.MoviesCreated, result.EpisodesCreated, result.FilesDeleted);
                 await TriggerLibraryScanAsync().ConfigureAwait(false);
             }
         }
@@ -1115,6 +1115,7 @@ public partial class StrmSyncService
                 {
                     int preFetched = 0;
                     int preFetchTotal = moviesToPreFetch.Count;
+                    _logger.LogInformation("Pre-fetching VOD info for {Count} movies (batch {Batch}/{Total})...", preFetchTotal, batchIndex + 1, totalBatches);
                     CurrentProgress.MoviePhase = $"Fetching movie info (batch {batchIndex + 1}/{totalBatches}): 0/{preFetchTotal}";
                     await Parallel.ForEachAsync(
                         moviesToPreFetch,
@@ -1141,6 +1142,8 @@ public partial class StrmSyncService
                                 CurrentProgress.MoviePhase = $"Fetching movie info (batch {batchIndex + 1}/{totalBatches}): {name} ({count}/{preFetchTotal})";
                             }
                         }).ConfigureAwait(false);
+
+                    _logger.LogInformation("Pre-fetched {Cached}/{Total} movie VOD infos (batch {Batch}/{TotalBatches})", vodInfoCache.Count, preFetchTotal, batchIndex + 1, totalBatches);
                 }
             }
 
@@ -1723,6 +1726,7 @@ public partial class StrmSyncService
                 {
                     int preFetched = 0;
                     int preFetchTotal = seriesToPreFetch.Count;
+                    _logger.LogInformation("Pre-fetching series info for {Count} series (batch {Batch}/{Total})...", preFetchTotal, batchIndex + 1, totalBatches);
                     CurrentProgress.SeriesPhase = $"Fetching series info (batch {batchIndex + 1}/{totalBatches}): 0/{preFetchTotal}";
                     await Parallel.ForEachAsync(
                         seriesToPreFetch,
@@ -1749,6 +1753,8 @@ public partial class StrmSyncService
                                 CurrentProgress.SeriesPhase = $"Fetching series info (batch {batchIndex + 1}/{totalBatches}): {name} ({count}/{preFetchTotal})";
                             }
                         }).ConfigureAwait(false);
+
+                    _logger.LogInformation("Pre-fetched {Cached}/{Total} series infos (batch {Batch}/{TotalBatches})", seriesInfoCache.Count, preFetchTotal, batchIndex + 1, totalBatches);
                 }
             }
 
