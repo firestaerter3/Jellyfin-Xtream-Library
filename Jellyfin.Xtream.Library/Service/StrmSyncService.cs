@@ -1099,7 +1099,9 @@ public partial class StrmSyncService
 
                 if (moviesToPreFetch.Count > 0)
                 {
-                    CurrentProgress.MoviePhase = $"Fetching movie info (batch {batchIndex + 1}/{totalBatches})";
+                    int preFetched = 0;
+                    int preFetchTotal = moviesToPreFetch.Count;
+                    CurrentProgress.MoviePhase = $"Fetching movie info (batch {batchIndex + 1}/{totalBatches}): 0/{preFetchTotal}";
                     await Parallel.ForEachAsync(
                         moviesToPreFetch,
                         new ParallelOptions
@@ -1117,6 +1119,12 @@ public partial class StrmSyncService
                             catch (Exception ex)
                             {
                                 _logger.LogDebug(ex, "Failed to pre-fetch VOD info: {StreamId}", movieEntry.Stream.StreamId);
+                            }
+                            finally
+                            {
+                                var count = Interlocked.Increment(ref preFetched);
+                                string name = SanitizeFileName(movieEntry.Stream.Name);
+                                CurrentProgress.MoviePhase = $"Fetching movie info (batch {batchIndex + 1}/{totalBatches}): {name} ({count}/{preFetchTotal})";
                             }
                         }).ConfigureAwait(false);
                 }
