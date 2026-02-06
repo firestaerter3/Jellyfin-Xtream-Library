@@ -183,15 +183,16 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
 
                 return content;
             }
-            catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests)
+            catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests ||
+                (ex.StatusCode.HasValue && (int)ex.StatusCode.Value >= 500))
             {
                 if (retryCount >= MaxRetries)
                 {
-                    logger.LogError("Rate limited (429) after {Retries} retries for URL: {Url}", retryCount, uri);
+                    logger.LogError("HTTP {StatusCode} after {Retries} retries for URL: {Url}", (int?)ex.StatusCode, retryCount, uri);
                     throw;
                 }
 
-                logger.LogWarning("Rate limited (429) for URL: {Url}. Retry {Retry}/{MaxRetries} after {Delay}ms", uri, retryCount + 1, MaxRetries, currentDelay);
+                logger.LogWarning("HTTP {StatusCode} for URL: {Url}. Retry {Retry}/{MaxRetries} after {Delay}ms", (int?)ex.StatusCode, uri, retryCount + 1, MaxRetries, currentDelay);
                 await Task.Delay(currentDelay, cancellationToken).ConfigureAwait(false);
                 retryCount++;
                 currentDelay *= 2; // Exponential backoff

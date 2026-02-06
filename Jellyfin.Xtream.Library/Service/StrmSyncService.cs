@@ -998,11 +998,23 @@ public partial class StrmSyncService
                 },
                 async (category, ct) =>
                 {
-                    var streams = await _client.GetVodStreamsByCategoryAsync(connectionInfo, category.CategoryId, ct)
-                        .ConfigureAwait(false);
-                    foreach (var stream in streams)
+                    try
                     {
-                        streamBag.Add((stream, category.CategoryId));
+                        var streams = await _client.GetVodStreamsByCategoryAsync(connectionInfo, category.CategoryId, ct)
+                            .ConfigureAwait(false);
+                        foreach (var stream in streams)
+                        {
+                            streamBag.Add((stream, category.CategoryId));
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to fetch VOD streams for category {CategoryId} ({CategoryName})", category.CategoryId, category.CategoryName);
+                        Interlocked.Increment(ref errors);
                     }
                 }).ConfigureAwait(false);
 
@@ -1131,6 +1143,8 @@ public partial class StrmSyncService
                     string movieName = SanitizeFileName(stream.Name);
                     int? year = ExtractYear(stream.Name);
                     string baseName = year.HasValue ? $"{movieName} ({year})" : movieName;
+
+                    CurrentProgress.MoviePhase = $"Syncing Movies (batch {batchIndex + 1}/{totalBatches}): {baseName}";
 
                     // Determine target folders based on category mappings
                     var targetFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1558,11 +1572,23 @@ public partial class StrmSyncService
                 },
                 async (category, ct) =>
                 {
-                    var seriesList = await _client.GetSeriesByCategoryAsync(connectionInfo, category.CategoryId, ct)
-                        .ConfigureAwait(false);
-                    foreach (var series in seriesList)
+                    try
                     {
-                        seriesBag.Add((series, category.CategoryId));
+                        var seriesList = await _client.GetSeriesByCategoryAsync(connectionInfo, category.CategoryId, ct)
+                            .ConfigureAwait(false);
+                        foreach (var series in seriesList)
+                        {
+                            seriesBag.Add((series, category.CategoryId));
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to fetch series for category {CategoryId} ({CategoryName})", category.CategoryId, category.CategoryName);
+                        Interlocked.Increment(ref errors);
                     }
                 }).ConfigureAwait(false);
 
@@ -1638,6 +1664,8 @@ public partial class StrmSyncService
                     string seriesName = SanitizeFileName(series.Name);
                     int? year = ExtractYear(series.Name);
                     string baseName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
+
+                    CurrentProgress.SeriesPhase = $"Syncing Series (batch {batchIndex + 1}/{totalBatches}): {baseName}";
 
                     // Pre-API smart skip: use snapshot hints to avoid expensive API call
                     // Check if all target folders already have this series with matching episode count
