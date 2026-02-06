@@ -220,18 +220,32 @@ public partial class StrmSyncService
                         }
                         else
                         {
-                            _logger.LogInformation(
-                                "Series no longer available on provider: {SeriesName}",
+                            _logger.LogWarning(
+                                "Series still returning 404 and not findable by name, keeping in failed list: {SeriesName}",
                                 item.Name);
+                            result.Errors++;
+                            result.AddFailedItem(new FailedItem
+                            {
+                                ItemType = item.ItemType,
+                                ItemId = item.ItemId,
+                                Name = item.Name,
+                                ErrorMessage = "404 Not Found (provider may be temporarily unavailable)",
+                            });
                         }
                     }
                     else
                     {
-                        // For movies, just remove from queue (TODO: implement movie name search if needed)
-                        _logger.LogInformation(
-                            "Removing {ItemType} from retry queue (404 Not Found): {ItemName}",
-                            item.ItemType,
+                        _logger.LogWarning(
+                            "Movie still returning 404, keeping in failed list: {ItemName}",
                             item.Name);
+                        result.Errors++;
+                        result.AddFailedItem(new FailedItem
+                        {
+                            ItemType = item.ItemType,
+                            ItemId = item.ItemId,
+                            Name = item.Name,
+                            ErrorMessage = "404 Not Found (provider may be temporarily unavailable)",
+                        });
                     }
                 }
                 catch (Exception ex)
@@ -1651,6 +1665,93 @@ public partial class StrmSyncService
                 }
             }
 
+            // Pre-fetch series info for series that will likely need processing
+            // This separates API latency from file I/O for much faster throughput
+            var seriesInfoCache = new ConcurrentDictionary<int, SeriesStreamInfo?>();
+            {
+                // Determine which series will NOT be smart-skipped (need API call)
+                var seriesToPreFetch = batchSeries.Where(s =>
+                {
+                    if (!config.SmartSkipExisting || hintSnapshot == null)
+                    {
+                        return true;
+                    }
+
+                    if (!hintSnapshot.Series.TryGetValue(s.Series.SeriesId, out var hintEntry) ||
+                        hintEntry.EpisodeCount <= 0 ||
+                        Math.Abs((s.Series.LastModified - hintEntry.LastModified).TotalSeconds) >= 1)
+                    {
+                        return true; // Would not be smart-skipped
+                    }
+
+                    // Check if all target folders have matching content
+                    string sName = SanitizeFileName(s.Series.Name);
+                    int? sYear = ExtractYear(s.Series.Name);
+                    string sBase = sYear.HasValue ? $"{sName} ({sYear})" : sName;
+
+                    var checkFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var catId in s.CategoryIds)
+                    {
+                        if (folderMappings.TryGetValue(catId, out var mapped))
+                        {
+                            foreach (var f in mapped)
+                            {
+                                checkFolders.Add(f);
+                            }
+                        }
+                    }
+
+                    if (checkFolders.Count == 0)
+                    {
+                        checkFolders.Add(string.Empty);
+                    }
+
+                    foreach (var folder in checkFolders)
+                    {
+                        string basePath = string.IsNullOrEmpty(folder) ? seriesPath : Path.Combine(seriesPath, folder);
+                        var key = basePath + "|" + sBase;
+                        if (!seriesFolderLookup.TryGetValue(key, out var m) || m.Count < hintEntry.EpisodeCount)
+                        {
+                            return true; // Would not be smart-skipped
+                        }
+                    }
+
+                    return false; // Would be smart-skipped, no need to pre-fetch
+                }).ToList();
+
+                if (seriesToPreFetch.Count > 0)
+                {
+                    int preFetched = 0;
+                    int preFetchTotal = seriesToPreFetch.Count;
+                    CurrentProgress.SeriesPhase = $"Fetching series info (batch {batchIndex + 1}/{totalBatches}): 0/{preFetchTotal}";
+                    await Parallel.ForEachAsync(
+                        seriesToPreFetch,
+                        new ParallelOptions
+                        {
+                            MaxDegreeOfParallelism = parallelism,
+                            CancellationToken = cancellationToken,
+                        },
+                        async (seriesEntry, ct) =>
+                        {
+                            try
+                            {
+                                var info = await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, seriesEntry.Series.SeriesId, ct).ConfigureAwait(false);
+                                seriesInfoCache[seriesEntry.Series.SeriesId] = info;
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogDebug(ex, "Failed to pre-fetch series info: {SeriesId}", seriesEntry.Series.SeriesId);
+                            }
+                            finally
+                            {
+                                var count = Interlocked.Increment(ref preFetched);
+                                string name = SanitizeFileName(seriesEntry.Series.Name);
+                                CurrentProgress.SeriesPhase = $"Fetching series info (batch {batchIndex + 1}/{totalBatches}): {name} ({count}/{preFetchTotal})";
+                            }
+                        }).ConfigureAwait(false);
+                }
+            }
+
             CurrentProgress.SeriesPhase = $"Syncing Series (batch {batchIndex + 1}/{totalBatches})";
             CurrentProgress.AddTotalItems(batchSeries.Count);
 
@@ -1751,8 +1852,16 @@ public partial class StrmSyncService
                         }
                     }
 
-                    // Fetch series info to get provider TMDB ID and episodes
-                    var seriesInfo = await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, series.SeriesId, ct).ConfigureAwait(false);
+                    // Fetch series info to get provider TMDB ID and episodes (use pre-fetched cache if available)
+                    SeriesStreamInfo seriesInfo;
+                    if (seriesInfoCache.TryGetValue(series.SeriesId, out var cachedInfo) && cachedInfo != null)
+                    {
+                        seriesInfo = cachedInfo;
+                    }
+                    else
+                    {
+                        seriesInfo = await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, series.SeriesId, ct).ConfigureAwait(false);
+                    }
 
                     // Track for snapshot building
                     allSeriesInfoDict[series.SeriesId] = seriesInfo;
