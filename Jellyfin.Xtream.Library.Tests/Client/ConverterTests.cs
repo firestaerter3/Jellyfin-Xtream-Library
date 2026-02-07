@@ -14,9 +14,12 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Collections.Generic;
+using System.Linq;
 using FluentAssertions;
 using Jellyfin.Xtream.Library.Client;
 using Jellyfin.Xtream.Library.Client.Models;
+using Microsoft.Extensions.Logging;
+using Moq;
 using Newtonsoft.Json;
 using Xunit;
 
@@ -337,6 +340,90 @@ public class ConverterTests
 
         converter.CanConvert(typeof(Dictionary<int, ICollection<Episode>>)).Should().BeTrue();
         converter.CanConvert(typeof(string)).Should().BeFalse();
+    }
+
+    #endregion
+
+    #region NullableEventHandler Tests
+
+    [Fact]
+    public void NullableEventHandler_ReleaseDateAsObject_GracefullyIgnored()
+    {
+        // Xtream APIs sometimes return "releasedate": {} instead of a string.
+        // The error handler must suppress this for string? properties.
+        var mockLogger = new Mock<ILogger<XtreamClient>>();
+        var settings = new JsonSerializerSettings
+        {
+            Error = XtreamClient.NullableEventHandler(mockLogger.Object),
+        };
+
+        var json = @"{
+            ""seasons"": [],
+            ""info"": {},
+            ""episodes"": {
+                ""1"": [
+                    {
+                        ""id"": 101,
+                        ""episode_num"": 1,
+                        ""title"": ""Test"",
+                        ""container_extension"": ""mp4"",
+                        ""season"": 1,
+                        ""info"": {
+                            ""releasedate"": {},
+                            ""plot"": ""A test episode"",
+                            ""rating"": 7.5
+                        }
+                    }
+                ]
+            }
+        }";
+
+        var result = JsonConvert.DeserializeObject<SeriesStreamInfo>(json, settings);
+
+        result.Should().NotBeNull();
+        result!.Episodes.Should().ContainKey(1);
+        result.Episodes![1].Should().HaveCount(1);
+        var episode = result.Episodes[1].First();
+        episode.Info.Should().NotBeNull();
+        episode.Info!.ReleaseDate.Should().BeNull();
+        episode.Info.Plot.Should().Be("A test episode");
+        episode.Info.Rating.Should().Be(7.5m);
+    }
+
+    [Fact]
+    public void NullableEventHandler_ReleaseDateAsString_ParsedNormally()
+    {
+        var mockLogger = new Mock<ILogger<XtreamClient>>();
+        var settings = new JsonSerializerSettings
+        {
+            Error = XtreamClient.NullableEventHandler(mockLogger.Object),
+        };
+
+        var json = @"{
+            ""seasons"": [],
+            ""info"": {},
+            ""episodes"": {
+                ""1"": [
+                    {
+                        ""id"": 101,
+                        ""episode_num"": 1,
+                        ""title"": ""Test"",
+                        ""container_extension"": ""mp4"",
+                        ""season"": 1,
+                        ""info"": {
+                            ""releasedate"": ""2024-01-15"",
+                            ""plot"": ""A test episode""
+                        }
+                    }
+                ]
+            }
+        }";
+
+        var result = JsonConvert.DeserializeObject<SeriesStreamInfo>(json, settings);
+
+        result.Should().NotBeNull();
+        var episode = result!.Episodes![1].First();
+        episode.Info!.ReleaseDate.Should().Be("2024-01-15");
     }
 
     #endregion
