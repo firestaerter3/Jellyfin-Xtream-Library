@@ -130,6 +130,7 @@ const XtreamLibraryConfig = {
         });
 
         this.loadSyncStatus();
+        this.checkRunningSync();
     },
 
     saveConfig: function () {
@@ -613,12 +614,13 @@ const XtreamLibraryConfig = {
 
     displayProgress: function (progress) {
         const statusSpan = document.getElementById('syncStatus');
-        let html = '<span style="color: orange;">';
+        let html = '<br/><span style="color: orange;">';
         if (progress.MoviePhase || progress.SeriesPhase) {
-            var parts = [];
-            if (progress.MoviePhase) parts.push(progress.MoviePhase);
-            if (progress.SeriesPhase) parts.push(progress.SeriesPhase);
-            html += parts.join(' | ');
+            if (progress.MoviePhase) html += progress.MoviePhase;
+            if (progress.SeriesPhase) {
+                if (progress.MoviePhase) html += '<br/>';
+                html += progress.SeriesPhase;
+            }
         } else {
             html += progress.Phase;
         }
@@ -655,6 +657,28 @@ const XtreamLibraryConfig = {
         }).then(function (data) {
             if (data) {
                 self.displaySyncResult(data);
+            }
+        }).catch(function () {});
+    },
+
+    checkRunningSync: function () {
+        const self = this;
+        fetch(ApiClient.getUrl('XtreamLibrary/Progress'), {
+            method: 'GET',
+            headers: {
+                'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
+            }
+        }).then(function (r) {
+            return r.ok ? r.json() : null;
+        }).then(function (progress) {
+            if (progress && progress.IsRunning) {
+                var syncBtn = document.getElementById('btnManualSync');
+                self.isSyncing = true;
+                syncBtn.querySelector('span').textContent = 'Cancel Sync';
+                syncBtn.style.background = '#c0392b';
+                self.displayProgress(progress);
+                self.startProgressPolling();
+                self.pollForCompletion();
             }
         }).catch(function () {});
     },

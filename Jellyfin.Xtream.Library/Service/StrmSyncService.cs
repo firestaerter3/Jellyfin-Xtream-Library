@@ -605,10 +605,18 @@ public partial class StrmSyncService
             Directory.CreateDirectory(moviesPath);
             Directory.CreateDirectory(seriesPath);
 
-            // Collect existing STRM files for orphan cleanup (only during full sync)
-            if (config.CleanupOrphans && !isIncrementalSync)
+            // Collect existing STRM files for orphan cleanup
+            if (config.CleanupOrphans)
             {
-                CollectExistingStrmFiles(config.LibraryPath, existingStrmFiles);
+                if (config.SyncMovies)
+                {
+                    CollectExistingStrmFiles(moviesPath, existingStrmFiles);
+                }
+
+                if (config.SyncSeries)
+                {
+                    CollectExistingStrmFiles(seriesPath, existingStrmFiles);
+                }
             }
 
             var syncedFiles = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
@@ -697,9 +705,9 @@ public partial class StrmSyncService
             CurrentProgress.MoviePhase = string.Empty;
             CurrentProgress.SeriesPhase = string.Empty;
 
-            // Cleanup orphaned files (only during full sync - incremental sync doesn't track
-            // STRM paths for unchanged items, so they would be incorrectly flagged as orphans)
-            if (config.CleanupOrphans && !isIncrementalSync)
+            // Cleanup orphaned files - works for both full and incremental syncs because
+            // incrementally-skipped items have their existing STRM paths added to syncedFiles
+            if (config.CleanupOrphans)
             {
                 CurrentProgress.Phase = "Cleaning up orphans";
                 CurrentProgress.CurrentItem = string.Empty;
@@ -1097,18 +1105,61 @@ public partial class StrmSyncService
             if (previousSnapshot != null)
             {
                 var originalCount = batchMovies.Count;
+                var unchangedMovies = new List<(StreamInfo Stream, HashSet<int> CategoryIds)>();
                 batchMovies = batchMovies.Where(m =>
                 {
                     var checksum = SnapshotService.CalculateChecksum(m.Stream);
                     if (previousSnapshot.Movies.TryGetValue(m.Stream.StreamId, out var prev))
                     {
-                        return prev.Checksum != checksum; // Modified
+                        if (prev.Checksum == checksum)
+                        {
+                            unchangedMovies.Add(m);
+                            return false; // Unchanged
+                        }
                     }
 
-                    return true; // New
+                    return true; // New or modified
                 }).ToList();
 
-                var skipped = originalCount - batchMovies.Count;
+                // Track existing STRM paths for unchanged movies (orphan protection)
+                foreach (var m in unchangedMovies)
+                {
+                    string movieName = SanitizeFileName(m.Stream.Name);
+                    int? year = ExtractYear(m.Stream.Name);
+                    string baseName = year.HasValue ? $"{movieName} ({year})" : movieName;
+
+                    var targetFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var categoryId in m.CategoryIds)
+                    {
+                        if (folderMappings.TryGetValue(categoryId, out var mappedFolders))
+                        {
+                            foreach (var folder in mappedFolders)
+                            {
+                                targetFolders.Add(folder);
+                            }
+                        }
+                    }
+
+                    if (targetFolders.Count == 0)
+                    {
+                        targetFolders.Add(string.Empty);
+                    }
+
+                    foreach (var targetFolder in targetFolders)
+                    {
+                        if (existingMovieFolders.TryGetValue(targetFolder, out var folderCache) &&
+                            folderCache.TryGetValue(baseName, out var existingFolderName))
+                        {
+                            string movieBasePath = string.IsNullOrEmpty(targetFolder)
+                                ? moviesPath
+                                : Path.Combine(moviesPath, targetFolder);
+                            string strmPath = Path.Combine(movieBasePath, existingFolderName, $"{existingFolderName}.strm");
+                            syncedFiles.TryAdd(strmPath, 0);
+                        }
+                    }
+                }
+
+                var skipped = unchangedMovies.Count;
                 if (skipped > 0)
                 {
                     _logger.LogInformation("Incremental sync: skipping {Skipped} unchanged movies, processing {Count} changed", skipped, batchMovies.Count);
@@ -1549,7 +1600,7 @@ public partial class StrmSyncService
         // seriesFolderLookup provides O(1) lookup by (parentDir, baseName) instead of O(N) linear scan
         var existingSeriesFolderCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var seriesFolderLookup = new Dictionary<string, (string Path, int Count)>(StringComparer.OrdinalIgnoreCase);
-        if (config.SmartSkipExisting && Directory.Exists(seriesPath))
+        if ((config.SmartSkipExisting || config.CleanupOrphans) && Directory.Exists(seriesPath))
         {
             CurrentProgress.Phase = "Scanning existing series";
             _logger.LogInformation("Pre-scanning existing series folders...");
@@ -1682,6 +1733,7 @@ public partial class StrmSyncService
             if (previousSnapshot != null)
             {
                 var originalCount = batchSeries.Count;
+                var unchangedSeries = new List<(Series Series, HashSet<int> CategoryIds)>();
                 batchSeries = batchSeries.Where(s =>
                 {
                     if (previousSnapshot.Series.TryGetValue(s.Series.SeriesId, out var prev))
@@ -1689,13 +1741,64 @@ public partial class StrmSyncService
                         // Use previous episode count for comparison - if LastModified changed,
                         // checksum will differ. This avoids the expensive series info API call.
                         var checksum = SnapshotService.CalculateChecksum(s.Series, prev.EpisodeCount);
-                        return prev.Checksum != checksum;
+                        if (prev.Checksum == checksum)
+                        {
+                            unchangedSeries.Add(s);
+                            return false; // Unchanged
+                        }
                     }
 
-                    return true; // New series
+                    return true; // New or modified series
                 }).ToList();
 
-                var skipped = originalCount - batchSeries.Count;
+                // Track existing STRM paths for unchanged series (orphan protection)
+                foreach (var s in unchangedSeries)
+                {
+                    string seriesName = SanitizeFileName(s.Series.Name);
+                    int? year = ExtractYear(s.Series.Name);
+                    string baseName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
+
+                    var targetFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var categoryId in s.CategoryIds)
+                    {
+                        if (folderMappings.TryGetValue(categoryId, out var mappedFolders))
+                        {
+                            foreach (var folder in mappedFolders)
+                            {
+                                targetFolders.Add(folder);
+                            }
+                        }
+                    }
+
+                    if (targetFolders.Count == 0)
+                    {
+                        targetFolders.Add(string.Empty);
+                    }
+
+                    foreach (var targetFolder in targetFolders)
+                    {
+                        string seriesBasePath = string.IsNullOrEmpty(targetFolder)
+                            ? seriesPath
+                            : Path.Combine(seriesPath, targetFolder);
+                        var lookupKey = seriesBasePath + "|" + baseName;
+                        if (seriesFolderLookup.TryGetValue(lookupKey, out var match))
+                        {
+                            try
+                            {
+                                foreach (var strm in Directory.GetFiles(match.Path, "*.strm", SearchOption.AllDirectories))
+                                {
+                                    syncedFiles.TryAdd(strm, 0);
+                                }
+                            }
+                            catch (Exception)
+                            {
+                                // Ignore filesystem errors during orphan protection scan
+                            }
+                        }
+                    }
+                }
+
+                var skipped = unchangedSeries.Count;
                 if (skipped > 0)
                 {
                     _logger.LogInformation("Incremental sync: skipping {Skipped} unchanged series, processing {Count} changed", skipped, batchSeries.Count);
