@@ -127,7 +127,7 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
                     }
                 });
 
-                if (property != null && Nullable.GetUnderlyingType(property.PropertyType) != null)
+                if (property != null && (!property.PropertyType.IsValueType || Nullable.GetUnderlyingType(property.PropertyType) != null))
                 {
                     logger.LogDebug("Property `{PropertyName}` (`{JsonName}` in JSON) is nullable, ignoring parsing error!", property.Name, jsonName);
                     args.ErrorContext.Handled = true;
