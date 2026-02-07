@@ -46,8 +46,8 @@ public static class NfoWriter
         int? durationSecs,
         CancellationToken cancellationToken)
     {
-        // Skip if no media info available
-        if (video == null && audio == null)
+        // Skip if no usable media info available
+        if (!HasUsableData(video, audio))
         {
             return false;
         }
@@ -89,8 +89,8 @@ public static class NfoWriter
         int? durationSecs,
         CancellationToken cancellationToken)
     {
-        // Skip if no media info available
-        if (video == null && audio == null)
+        // Skip if no usable media info available
+        if (!HasUsableData(video, audio))
         {
             return false;
         }
@@ -172,6 +172,15 @@ public static class NfoWriter
 
         sb.AppendLine("    </streamdetails>");
         sb.AppendLine("  </fileinfo>");
+    }
+
+    private static bool HasUsableData(VideoInfo? video, AudioInfo? audio)
+    {
+        bool hasVideo = video != null &&
+            (!string.IsNullOrEmpty(video.CodecName) || video.Width > 0 || video.Height > 0);
+        bool hasAudio = audio != null &&
+            (!string.IsNullOrEmpty(audio.CodecName) || audio.Channels > 0);
+        return hasVideo || hasAudio;
     }
 
     private static decimal? ParseAspectRatio(string aspectRatio)
