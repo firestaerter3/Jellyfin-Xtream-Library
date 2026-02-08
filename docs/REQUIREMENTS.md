@@ -42,6 +42,8 @@ Create STRM files that point to Xtream streaming URLs, allowing content to appea
 | FR-2.8 | User can select specific VOD categories to sync | Should |
 | FR-2.9 | User can select specific Series categories to sync | Should |
 | FR-2.10 | Empty category selection syncs all (backward compatible) | Must |
+| FR-2.11 | Preserve multiple quality variants of the same movie (e.g., default, HEVC, 4K) as separate STRM files using Jellyfin's native version picker | Should |
+| FR-2.12 | Dispatcharr multi-stream: discover all upstream stream relations per movie via REST API and create versioned STRM files with proxy URLs for real media info in Jellyfin's version picker | Should |
 
 ### FR-3: File Structure
 
@@ -172,6 +174,14 @@ http://provider.example.com:8000/movie/user123/pass456/12345.mp4
 {SanitizedName} ({Year})/{SanitizedName} ({Year}).strm
 ```
 Example: `The Matrix (1999)/The Matrix (1999).strm`
+
+### Movie Quality Variants
+```
+{SanitizedName} ({Year})/{SanitizedName} ({Year}) - {VersionLabel}.strm
+```
+Example: `The Matrix (1999)/The Matrix (1999) - HEVC.strm`
+
+Multiple variants coexist in the same folder. Jellyfin detects them and shows a version picker. See [MOVIE_VERSIONS.md](MOVIE_VERSIONS.md) for full details.
 
 ### Episodes
 ```

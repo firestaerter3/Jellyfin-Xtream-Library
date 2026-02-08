@@ -355,6 +355,41 @@
                                         Shows media details in Jellyfin without first-time playback. Increases sync time.
                                     </div>
                                 </div>
+
+                                <h4 style="margin-top: 20px; opacity: 0.8;">Dispatcharr</h4>
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
+                                        <input is="emby-checkbox" type="checkbox" id="chkEnableDispatcharrMode" name="EnableDispatcharrMode" />
+                                        <span>Dispatcharr Mode</span>
+                                    </label>
+                                    <div class="fieldDescription checkboxFieldDescription">
+                                        Discovers all stream variants per movie via Dispatcharr's REST API.
+                                        Creates multiple STRM files so Jellyfin can show real codec, resolution, and audio info
+                                        in the version picker. Requires a Django admin account on your Dispatcharr instance.
+                                    </div>
+                                </div>
+                                <div id="dispatcharrSettings" style="display: none;">
+                                    <div class="inputContainer">
+                                        <label class="inputLabel inputLabelUnfocused" for="txtDispatcharrApiUser">API Username</label>
+                                        <input is="emby-input" type="text" id="txtDispatcharrApiUser" name="DispatcharrApiUser" />
+                                        <div class="fieldDescription">
+                                            Django admin username for the Dispatcharr REST API.
+                                        </div>
+                                    </div>
+                                    <div class="inputContainer">
+                                        <label class="inputLabel inputLabelUnfocused" for="txtDispatcharrApiPass">API Password</label>
+                                        <input is="emby-input" type="password" id="txtDispatcharrApiPass" name="DispatcharrApiPass" />
+                                        <div class="fieldDescription">
+                                            Django admin password for the Dispatcharr REST API.
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <button is="emby-button" type="button" id="btnTestDispatcharr" class="raised button-submit">
+                                            <span>Test Dispatcharr</span>
+                                        </button>
+                                        <span id="dispatcharrStatus" style="margin-left: 10px;"></span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 

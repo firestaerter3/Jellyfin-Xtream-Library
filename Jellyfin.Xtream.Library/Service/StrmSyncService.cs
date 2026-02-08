@@ -41,6 +41,7 @@ public partial class StrmSyncService
     private static readonly HttpClient ImageHttpClient = CreateImageHttpClient();
 
     private readonly IXtreamClient _client;
+    private readonly IDispatcharrClient _dispatcharrClient;
     private readonly ILibraryManager _libraryManager;
     private readonly IMetadataLookupService _metadataLookup;
     private readonly SnapshotService _snapshotService;
@@ -54,6 +55,7 @@ public partial class StrmSyncService
     /// Initializes a new instance of the <see cref="StrmSyncService"/> class.
     /// </summary>
     /// <param name="client">The Xtream API client.</param>
+    /// <param name="dispatcharrClient">The Dispatcharr REST API client.</param>
     /// <param name="libraryManager">The Jellyfin library manager.</param>
     /// <param name="metadataLookup">The metadata lookup service.</param>
     /// <param name="snapshotService">The snapshot persistence service.</param>
@@ -61,6 +63,7 @@ public partial class StrmSyncService
     /// <param name="logger">The logger instance.</param>
     public StrmSyncService(
         IXtreamClient client,
+        IDispatcharrClient dispatcharrClient,
         ILibraryManager libraryManager,
         IMetadataLookupService metadataLookup,
         SnapshotService snapshotService,
@@ -68,6 +71,7 @@ public partial class StrmSyncService
         ILogger<StrmSyncService> logger)
     {
         _client = client;
+        _dispatcharrClient = dispatcharrClient;
         _libraryManager = libraryManager;
         _metadataLookup = metadataLookup;
         _snapshotService = snapshotService;
@@ -322,8 +326,9 @@ public partial class StrmSyncService
         string movieName = SanitizeFileName(item.Name);
         int? year = ExtractYear(item.Name);
         string folderName = year.HasValue ? $"{movieName} ({year})" : movieName;
+        string? versionLabel = ExtractVersionLabel(item.Name);
         string movieFolder = Path.Combine(moviesPath, folderName);
-        string strmFileName = $"{folderName}.strm";
+        string strmFileName = BuildMovieStrmFileName(folderName, versionLabel);
         string strmPath = Path.Combine(movieFolder, strmFileName);
 
         // Build stream URL using stored item ID (assume mp4 as default extension)
@@ -996,6 +1001,14 @@ public partial class StrmSyncService
         var parallelism = Math.Max(1, config.SyncParallelism);
         var enableMetadataLookup = config.EnableMetadataLookup;
         var enableProactiveMediaInfo = config.EnableProactiveMediaInfo;
+        var enableDispatcharrMode = config.EnableDispatcharrMode && !string.IsNullOrEmpty(config.DispatcharrApiUser);
+        if (enableDispatcharrMode)
+        {
+            _dispatcharrClient.RequestDelayMs = config.RequestDelayMs;
+            _dispatcharrClient.Configure(config.DispatcharrApiUser, config.DispatcharrApiPass);
+            _logger.LogInformation("Dispatcharr mode enabled, will discover multi-stream providers per movie");
+        }
+
         _logger.LogInformation("Processing movies with parallelism={Parallelism}, metadataLookup={MetadataLookup}, proactiveMediaInfo={ProactiveMediaInfo}", parallelism, enableMetadataLookup, enableProactiveMediaInfo);
 
         // Pre-scan existing movie folders for faster skip detection
@@ -1175,8 +1188,14 @@ public partial class StrmSyncService
                             string movieBasePath = string.IsNullOrEmpty(targetFolder)
                                 ? moviesPath
                                 : Path.Combine(moviesPath, targetFolder);
-                            string strmPath = Path.Combine(movieBasePath, existingFolderName, $"{existingFolderName}.strm");
-                            syncedFiles.TryAdd(strmPath, 0);
+                            string movieFolder = Path.Combine(movieBasePath, existingFolderName);
+                            if (Directory.Exists(movieFolder))
+                            {
+                                foreach (var strmFile in Directory.GetFiles(movieFolder, "*.strm"))
+                                {
+                                    syncedFiles.TryAdd(strmFile, 0);
+                                }
+                            }
                         }
                     }
                 }
@@ -1255,6 +1274,61 @@ public partial class StrmSyncService
                 }
             }
 
+            // Pre-fetch Dispatcharr providers for movies in this batch
+            var dispatcharrCache = new ConcurrentDictionary<int, (string Uuid, List<Client.Models.DispatcharrMovieProvider> Providers)>();
+            if (enableDispatcharrMode && batchMovies.Count > 0)
+            {
+                int dpFetched = 0;
+                int dpTotal = batchMovies.Count;
+                _logger.LogInformation("Fetching Dispatcharr providers for {Count} movies (batch {Batch}/{Total})...", dpTotal, batchIndex + 1, totalBatches);
+                CurrentProgress.MoviePhase = $"Fetching providers (batch {batchIndex + 1}/{totalBatches}): 0/{dpTotal}";
+
+                await Parallel.ForEachAsync(
+                    batchMovies,
+                    new ParallelOptions
+                    {
+                        MaxDegreeOfParallelism = parallelism,
+                        CancellationToken = cancellationToken,
+                    },
+                    async (movieEntry, ct) =>
+                    {
+                        try
+                        {
+                            var detail = await _dispatcharrClient.GetMovieDetailAsync(connectionInfo.BaseUrl, movieEntry.Stream.StreamId, ct).ConfigureAwait(false);
+                            if (detail != null && !string.IsNullOrEmpty(detail.Uuid))
+                            {
+                                var providers = await _dispatcharrClient.GetMovieProvidersAsync(connectionInfo.BaseUrl, movieEntry.Stream.StreamId, ct).ConfigureAwait(false);
+                                if (providers.Count > 1)
+                                {
+                                    // Deduplicate by stream_id
+                                    var seen = new HashSet<int>();
+                                    var unique = new List<Client.Models.DispatcharrMovieProvider>();
+                                    foreach (var p in providers)
+                                    {
+                                        if (seen.Add(p.StreamId))
+                                        {
+                                            unique.Add(p);
+                                        }
+                                    }
+
+                                    dispatcharrCache[movieEntry.Stream.StreamId] = (detail.Uuid, unique);
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogDebug(ex, "Failed to fetch Dispatcharr providers for movie {StreamId}", movieEntry.Stream.StreamId);
+                        }
+                        finally
+                        {
+                            var count = Interlocked.Increment(ref dpFetched);
+                            CurrentProgress.MoviePhase = $"Fetching providers (batch {batchIndex + 1}/{totalBatches}): {count}/{dpTotal}";
+                        }
+                    }).ConfigureAwait(false);
+
+                _logger.LogInformation("Found {Count} multi-provider movies in batch {Batch}/{Total}", dispatcharrCache.Count, batchIndex + 1, totalBatches);
+            }
+
             CurrentProgress.MoviePhase = $"Syncing Movies (batch {batchIndex + 1}/{totalBatches})";
             CurrentProgress.AddTotalItems(batchMovies.Count);
 
@@ -1276,6 +1350,7 @@ public partial class StrmSyncService
                     string movieName = SanitizeFileName(stream.Name);
                     int? year = ExtractYear(stream.Name);
                     string baseName = year.HasValue ? $"{movieName} ({year})" : movieName;
+                    string? versionLabel = ExtractVersionLabel(stream.Name);
 
                     CurrentProgress.MoviePhase = $"Syncing Movies (batch {batchIndex + 1}/{totalBatches}): {baseName}";
 
@@ -1372,9 +1447,29 @@ public partial class StrmSyncService
                         folderName = BuildMovieFolderName(movieName, year, tmdbOverrides, providerTmdbId, autoLookupTmdbId);
                     }
 
-                    // Build stream URL (same for all copies)
-                    string extension = string.IsNullOrEmpty(stream.ContainerExtension) ? "mp4" : stream.ContainerExtension;
-                    string streamUrl = $"{connectionInfo.BaseUrl}/movie/{connectionInfo.UserName}/{connectionInfo.Password}/{stream.StreamId}.{extension}";
+                    // Build STRM URLs and filenames — Dispatcharr multi-stream or standard single-stream
+                    var strmEntries = new List<(string StreamUrl, string StrmFileName)>();
+                    if (enableDispatcharrMode &&
+                        dispatcharrCache.TryGetValue(stream.StreamId, out var movieProviderInfo))
+                    {
+                        var providers = movieProviderInfo.Providers;
+                        string uuid = movieProviderInfo.Uuid;
+                        for (int i = 0; i < providers.Count; i++)
+                        {
+                            string providerStreamUrl = $"{connectionInfo.BaseUrl}/proxy/vod/movie/{uuid}?stream_id={providers[i].StreamId}";
+                            string strmFileName = BuildMovieStrmFileName(folderName, i == 0 ? null : $"Version {i + 1}");
+                            strmEntries.Add((providerStreamUrl, strmFileName));
+                        }
+                    }
+                    else
+                    {
+                        string extension = string.IsNullOrEmpty(stream.ContainerExtension) ? "mp4" : stream.ContainerExtension;
+                        string streamUrl = enableDispatcharrMode
+                            ? $"{connectionInfo.BaseUrl}/proxy/vod/movie/{stream.StreamId}"
+                            : $"{connectionInfo.BaseUrl}/movie/{connectionInfo.UserName}/{connectionInfo.Password}/{stream.StreamId}.{extension}";
+                        string strmFileName = BuildMovieStrmFileName(folderName, versionLabel);
+                        strmEntries.Add((streamUrl, strmFileName));
+                    }
 
                     bool anyCreated = false;
                     bool anyUpdated = false;
@@ -1388,7 +1483,9 @@ public partial class StrmSyncService
                             ? moviesPath
                             : Path.Combine(moviesPath, targetFolder);
                         string movieFolder = Path.Combine(movieBasePath, folderName);
-                        string strmFileName = $"{folderName}.strm";
+
+                        foreach (var (streamUrl, strmFileName) in strmEntries)
+                        {
                         string strmPath = Path.Combine(movieFolder, strmFileName);
 
                         syncedFiles.TryAdd(strmPath, 0);
@@ -1424,8 +1521,11 @@ public partial class StrmSyncService
                             continue;
                         }
 
+                        _logger.LogDebug("Created movie STRM: {StrmPath}", strmPath);
+                        } // end strmEntries foreach
+
                         // Write NFO if proactive media info enabled (only for first target folder)
-                        if (enableProactiveMediaInfo && targetFolders.First() == targetFolder)
+                        if (anyCreated && enableProactiveMediaInfo && targetFolders.First() == targetFolder)
                         {
                             try
                             {
@@ -1479,8 +1579,6 @@ public partial class StrmSyncService
                                 // File already exists or copy failed, continue
                             }
                         }
-
-                        _logger.LogDebug("Created movie STRM: {StrmPath}", strmPath);
                     }
 
                     if (anyCreated)
@@ -2518,6 +2616,9 @@ public partial class StrmSyncService
         // Remove source tags like "BluRay", "WEBRip", "HDTV", etc.
         cleanName = SourceTagPattern().Replace(cleanName, string.Empty);
 
+        // Remove empty brackets left after tag stripping (e.g., "Movie [4K]" → "Movie []" → "Movie")
+        cleanName = EmptyBracketsPattern().Replace(cleanName, string.Empty);
+
         // Remove year from name if present (we'll add it back in folder name format)
         cleanName = YearPattern().Replace(cleanName, string.Empty);
 
@@ -2537,6 +2638,43 @@ public partial class StrmSyncService
         cleanName = cleanName.Trim('_', ' ', '-');
 
         return string.IsNullOrEmpty(cleanName) ? "Unknown" : cleanName;
+    }
+
+    internal static string? ExtractVersionLabel(string? name)
+    {
+        if (string.IsNullOrEmpty(name))
+        {
+            return null;
+        }
+
+        // Strip prefix language tags first (same as SanitizeFileName step 1)
+        string cleanName = PrefixLanguageTagPattern().Replace(name, string.Empty);
+
+        var labels = new List<string>();
+
+        foreach (Match match in CodecTagPattern().Matches(cleanName))
+        {
+            labels.Add(match.Value);
+        }
+
+        foreach (Match match in QualityTagPattern().Matches(cleanName))
+        {
+            labels.Add(match.Value);
+        }
+
+        foreach (Match match in SourceTagPattern().Matches(cleanName))
+        {
+            labels.Add(match.Value);
+        }
+
+        return labels.Count > 0 ? string.Join(" ", labels) : null;
+    }
+
+    internal static string BuildMovieStrmFileName(string folderName, string? versionLabel)
+    {
+        return versionLabel != null
+            ? $"{folderName} - {versionLabel}.strm"
+            : $"{folderName}.strm";
     }
 
     internal static int? ExtractYear(string? name)
@@ -2898,6 +3036,10 @@ public partial class StrmSyncService
     // Fixes malformed quotes like "'\'" "\''" "'\''" "Bob'\''s" to just "'"
     [GeneratedRegex(@"'\\''|'\\'|\\''|''+")]
     private static partial Regex MalformedQuotePattern();
+
+    // Matches empty brackets left after tag stripping, e.g., "[]" or "()"
+    [GeneratedRegex(@"\[\s*\]|\(\s*\)")]
+    private static partial Regex EmptyBracketsPattern();
 
     private async Task SaveSnapshotAsync(
         PluginConfiguration config,

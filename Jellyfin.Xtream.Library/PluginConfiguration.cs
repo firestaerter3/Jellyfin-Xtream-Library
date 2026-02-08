@@ -207,6 +207,27 @@ public class PluginConfiguration : BasePluginConfiguration
     public string SeriesFolderMappings { get; set; } = string.Empty;
 
     // =====================
+    // Dispatcharr Mode Settings
+    // =====================
+
+    /// <summary>
+    /// Gets or sets a value indicating whether Dispatcharr mode is enabled.
+    /// When enabled, discovers all stream variants per movie via Dispatcharr's
+    /// REST API and creates multiple STRM files with proxy URLs.
+    /// </summary>
+    public bool EnableDispatcharrMode { get; set; }
+
+    /// <summary>
+    /// Gets or sets the Dispatcharr REST API username (Django admin account).
+    /// </summary>
+    public string DispatcharrApiUser { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the Dispatcharr REST API password (Django admin account).
+    /// </summary>
+    public string DispatcharrApiPass { get; set; } = string.Empty;
+
+    // =====================
     // Incremental Sync Settings
     // =====================
 

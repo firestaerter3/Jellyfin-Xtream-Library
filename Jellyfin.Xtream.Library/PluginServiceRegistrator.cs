@@ -32,6 +32,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
     public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
         serviceCollection.AddHttpClient<IXtreamClient, XtreamClient>();
+        serviceCollection.AddHttpClient<IDispatcharrClient, DispatcharrClient>();
         serviceCollection.AddSingleton<MetadataCache>();
         serviceCollection.AddSingleton<IMetadataLookupService, MetadataLookupService>();
         serviceCollection.AddSingleton<SnapshotService>();

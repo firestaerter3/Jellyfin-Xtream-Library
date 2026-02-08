@@ -25,15 +25,18 @@ The plugin syncs content from an Xtream-compatible IPTV provider to Jellyfin's n
 Jellyfin.Xtream.Library/
 ├── Api/                        # REST API controllers
 │   └── SyncController.cs       # Manual sync & status endpoints
-├── Client/                     # Xtream API client
-│   ├── IXtreamClient.cs        # Client interface
-│   ├── XtreamClient.cs         # HTTP client implementation
+├── Client/                     # API clients
+│   ├── IXtreamClient.cs        # Xtream client interface
+│   ├── XtreamClient.cs         # Xtream HTTP client implementation
+│   ├── IDispatcharrClient.cs   # Dispatcharr REST API interface
+│   ├── DispatcharrClient.cs    # Dispatcharr JWT-authenticated client
 │   ├── ConnectionInfo.cs       # Connection credentials wrapper
 │   ├── Models/                 # API response models
 │   │   ├── Category.cs
 │   │   ├── Episode.cs
 │   │   ├── Series.cs
 │   │   ├── StreamInfo.cs       # VOD stream info
+│   │   ├── DispatcharrTokenResponse.cs  # Dispatcharr REST API models
 │   │   └── ...
 │   └── *Converter.cs           # JSON converters for API quirks
 ├── Service/
@@ -63,7 +66,8 @@ Jellyfin.Xtream.Library/
 
 ### PluginServiceRegistrator.cs
 - Registers services with Jellyfin's DI container:
-  - `IXtreamClient` → `XtreamClient` (Singleton)
+  - `IXtreamClient` → `XtreamClient` (HttpClient)
+  - `IDispatcharrClient` → `DispatcharrClient` (HttpClient)
   - `StrmSyncService` (Singleton)
   - `IScheduledTask` → `SyncLibraryTask` (Singleton)
 
@@ -78,6 +82,17 @@ Jellyfin.Xtream.Library/
   - `StringBoolConverter` - "1"/"0" to boolean
   - `SingularToListConverter` - Single value or array
   - `OnlyObjectConverter` - Ignore non-object responses
+
+### DispatcharrClient
+- JWT-authenticated HTTP client for Dispatcharr's REST API
+- Used when `EnableDispatcharrMode` is configured
+- Endpoints:
+  - `POST /api/token/` - JWT login (username/password → access + refresh tokens)
+  - `POST /api/token/refresh/` - Refresh expired access token
+  - `GET /api/vod/movies/{id}/` - Movie detail (UUID for proxy URLs)
+  - `GET /api/vod/movies/{id}/providers/` - All stream relations per movie
+- Token management: caches access token, refreshes before 5-min expiry
+- Graceful degradation: returns null/empty on failure, sync falls back to standard mode
 
 ### StrmSyncService
 Core synchronization logic:
@@ -99,8 +114,14 @@ Core synchronization logic:
    - After sync, deletes files not in synced set
    - Removes empty parent directories
 
-4. **Utility Methods**
-   - `SanitizeFileName` - Removes invalid chars, collapses underscores
+4. **Movie Versions** (see [MOVIE_VERSIONS.md](MOVIE_VERSIONS.md))
+   - `ExtractVersionLabel` - Extracts codec/quality/source tags as version label
+   - `BuildMovieStrmFileName` - Constructs STRM filename with optional version suffix
+   - Multiple quality variants (e.g., default, HEVC, 4K) create separate STRMs in the same folder
+   - Jellyfin natively detects these and shows a version picker during playback
+
+5. **Utility Methods**
+   - `SanitizeFileName` - Removes invalid chars, codec/quality tags, collapses underscores
    - `ExtractYear` - Parses year from title like "Movie (2024)"
    - `BuildEpisodeFileName` - Formats episode filename with padding
    - `CleanupEmptyDirectories` - Recursive empty dir removal

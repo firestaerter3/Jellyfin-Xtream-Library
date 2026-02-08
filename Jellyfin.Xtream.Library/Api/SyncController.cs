@@ -40,6 +40,7 @@ public class SyncController : ControllerBase
 {
     private readonly StrmSyncService _syncService;
     private readonly IXtreamClient _client;
+    private readonly IDispatcharrClient _dispatcharrClient;
     private readonly IMetadataLookupService _metadataLookup;
     private readonly SnapshotService _snapshotService;
     private readonly ILogger<SyncController> _logger;
@@ -49,18 +50,21 @@ public class SyncController : ControllerBase
     /// </summary>
     /// <param name="syncService">The STRM sync service.</param>
     /// <param name="client">The Xtream API client.</param>
+    /// <param name="dispatcharrClient">The Dispatcharr REST API client.</param>
     /// <param name="metadataLookup">The metadata lookup service.</param>
     /// <param name="snapshotService">The snapshot service.</param>
     /// <param name="logger">The logger instance.</param>
     public SyncController(
         StrmSyncService syncService,
         IXtreamClient client,
+        IDispatcharrClient dispatcharrClient,
         IMetadataLookupService metadataLookup,
         SnapshotService snapshotService,
         ILogger<SyncController> logger)
     {
         _syncService = syncService;
         _client = client;
+        _dispatcharrClient = dispatcharrClient;
         _metadataLookup = metadataLookup;
         _snapshotService = snapshotService;
         _logger = logger;
@@ -259,6 +263,51 @@ public class SyncController : ControllerBase
                 Success = false,
                 Message = $"Connection failed: {ex.Message}",
             });
+        }
+    }
+
+    /// <summary>
+    /// Tests the Dispatcharr REST API connection and JWT authentication.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Connection test result.</returns>
+    [HttpPost("TestDispatcharr")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult> TestDispatcharr(CancellationToken cancellationToken)
+    {
+        var config = TryGetConfig();
+        if (config == null)
+        {
+            return BadRequest(new { Success = false, Message = "Plugin not initialized." });
+        }
+
+        if (string.IsNullOrEmpty(config.BaseUrl))
+        {
+            return Ok(new { Success = false, Message = "Please configure Base URL first." });
+        }
+
+        if (string.IsNullOrEmpty(config.DispatcharrApiUser))
+        {
+            return Ok(new { Success = false, Message = "Please enter Dispatcharr API credentials." });
+        }
+
+        try
+        {
+            _dispatcharrClient.Configure(config.DispatcharrApiUser, config.DispatcharrApiPass);
+            var success = await _dispatcharrClient.TestConnectionAsync(config.BaseUrl, cancellationToken).ConfigureAwait(false);
+
+            if (success)
+            {
+                return Ok(new { Success = true, Message = "Dispatcharr REST API connected successfully." });
+            }
+
+            return Ok(new { Success = false, Message = "Dispatcharr authentication failed. Check API credentials." });
+        }
+        catch (System.Exception ex)
+        {
+            _logger.LogError(ex, "Dispatcharr connection test failed");
+            return Ok(new { Success = false, Message = $"Connection failed: {ex.Message}" });
         }
     }
 

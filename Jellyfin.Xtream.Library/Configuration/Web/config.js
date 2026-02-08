@@ -84,6 +84,12 @@ const XtreamLibraryConfig = {
             // Proactive media info
             document.getElementById('chkEnableProactiveMediaInfo').checked = config.EnableProactiveMediaInfo || false;
 
+            // Dispatcharr mode
+            document.getElementById('chkEnableDispatcharrMode').checked = config.EnableDispatcharrMode || false;
+            document.getElementById('txtDispatcharrApiUser').value = config.DispatcharrApiUser || '';
+            document.getElementById('txtDispatcharrApiPass').value = config.DispatcharrApiPass || '';
+            self.updateDispatcharrVisibility();
+
             // Schedule settings
             document.getElementById('selSyncScheduleType').value = config.SyncScheduleType || 'Interval';
             document.getElementById('selSyncDailyHour').value = config.SyncDailyHour || 3;
@@ -198,6 +204,11 @@ const XtreamLibraryConfig = {
 
             // Proactive media info
             config.EnableProactiveMediaInfo = document.getElementById('chkEnableProactiveMediaInfo').checked;
+
+            // Dispatcharr mode
+            config.EnableDispatcharrMode = document.getElementById('chkEnableDispatcharrMode').checked;
+            config.DispatcharrApiUser = document.getElementById('txtDispatcharrApiUser').value.trim();
+            config.DispatcharrApiPass = document.getElementById('txtDispatcharrApiPass').value;
 
             // Schedule settings
             config.SyncScheduleType = document.getElementById('selSyncScheduleType').value;
@@ -957,6 +968,31 @@ const XtreamLibraryConfig = {
         }
     },
 
+    updateDispatcharrVisibility: function () {
+        const enabled = document.getElementById('chkEnableDispatcharrMode').checked;
+        document.getElementById('dispatcharrSettings').style.display = enabled ? 'block' : 'none';
+    },
+
+    testDispatcharr: function () {
+        const statusSpan = document.getElementById('dispatcharrStatus');
+        statusSpan.innerHTML = '<span style="color: orange;">Testing...</span>';
+
+        fetch(ApiClient.getUrl('XtreamLibrary/TestDispatcharr'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        }).then(function (response) {
+            return response.json();
+        }).then(function (result) {
+            if (result.Success) {
+                statusSpan.innerHTML = '<span style="color: #52b54b;">' + result.Message + '</span>';
+            } else {
+                statusSpan.innerHTML = '<span style="color: #ff6b6b;">' + result.Message + '</span>';
+            }
+        }).catch(function (err) {
+            statusSpan.innerHTML = '<span style="color: #ff6b6b;">Error: ' + err.message + '</span>';
+        });
+    },
+
     clearMetadataCache: function () {
         const statusSpan = document.getElementById('metadataCacheStatus');
         statusSpan.innerHTML = '<span style="color: orange;">Clearing...</span>';
@@ -1171,6 +1207,21 @@ function initXtreamLibraryConfig() {
         btnAdvancedToggle.addEventListener('click', function (e) {
             e.preventDefault();
             XtreamLibraryConfig.toggleAdvanced();
+        });
+    }
+
+    var chkEnableDispatcharrMode = document.getElementById('chkEnableDispatcharrMode');
+    if (chkEnableDispatcharrMode) {
+        chkEnableDispatcharrMode.addEventListener('change', function () {
+            XtreamLibraryConfig.updateDispatcharrVisibility();
+        });
+    }
+
+    var btnTestDispatcharr = document.getElementById('btnTestDispatcharr');
+    if (btnTestDispatcharr) {
+        btnTestDispatcharr.addEventListener('click', function (e) {
+            e.preventDefault();
+            XtreamLibraryConfig.testDispatcharr();
         });
     }
 

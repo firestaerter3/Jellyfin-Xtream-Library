@@ -52,8 +52,10 @@ public class SyncControllerTests
         var snapshotService = new SnapshotService(appPathsMock.Object, NullLogger<SnapshotService>.Instance);
         var deltaCalculator = new DeltaCalculator(NullLogger<DeltaCalculator>.Instance);
 
+        var mockDispatcharrClient = new Mock<IDispatcharrClient>();
         _syncService = new StrmSyncService(
             _mockClient.Object,
+            mockDispatcharrClient.Object,
             _mockLibraryManager.Object,
             _mockMetadataLookup.Object,
             snapshotService,
@@ -63,6 +65,7 @@ public class SyncControllerTests
         _controller = new SyncController(
             _syncService,
             _mockClient.Object,
+            mockDispatcharrClient.Object,
             _mockMetadataLookup.Object,
             snapshotService,
             _mockControllerLogger.Object);

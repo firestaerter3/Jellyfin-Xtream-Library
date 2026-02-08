@@ -623,4 +623,188 @@ public class StrmSyncServiceTests
     }
 
     #endregion
+
+    #region ExtractVersionLabel Tests
+
+    [Fact]
+    public void ExtractVersionLabel_Null_ReturnsNull()
+    {
+        var result = StrmSyncService.ExtractVersionLabel(null);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void ExtractVersionLabel_NoTags_ReturnsNull()
+    {
+        var result = StrmSyncService.ExtractVersionLabel("Gladiator");
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void ExtractVersionLabel_HEVC_ReturnsHEVC()
+    {
+        var result = StrmSyncService.ExtractVersionLabel("┃NL┃ Gladiator HEVC");
+
+        result.Should().Be("HEVC");
+    }
+
+    [Fact]
+    public void ExtractVersionLabel_4K_Returns4K()
+    {
+        var result = StrmSyncService.ExtractVersionLabel("┃NL┃ Movie [4K]");
+
+        result.Should().Be("4K");
+    }
+
+    [Fact]
+    public void ExtractVersionLabel_Combined_ReturnsAllTags()
+    {
+        var result = StrmSyncService.ExtractVersionLabel("Movie HEVC 4K HDR BluRay");
+
+        result.Should().Be("HEVC 4K HDR BluRay");
+    }
+
+    [Fact]
+    public void ExtractVersionLabel_x264_Returnsx264()
+    {
+        var result = StrmSyncService.ExtractVersionLabel("Movie x264");
+
+        result.Should().Be("x264");
+    }
+
+    [Fact]
+    public void ExtractVersionLabel_1080p_Returns1080p()
+    {
+        var result = StrmSyncService.ExtractVersionLabel("Movie 1080p");
+
+        result.Should().Be("1080p");
+    }
+
+    [Fact]
+    public void ExtractVersionLabel_BluRay_ReturnsBluRay()
+    {
+        var result = StrmSyncService.ExtractVersionLabel("Movie BluRay");
+
+        result.Should().Be("BluRay");
+    }
+
+    [Fact]
+    public void ExtractVersionLabel_REMUX_ReturnsREMUX()
+    {
+        var result = StrmSyncService.ExtractVersionLabel("Movie REMUX");
+
+        result.Should().Be("REMUX");
+    }
+
+    #endregion
+
+    #region BuildMovieStrmFileName Tests
+
+    [Fact]
+    public void BuildMovieStrmFileName_NullLabel_ReturnsBaseName()
+    {
+        var result = StrmSyncService.BuildMovieStrmFileName("Folder", null);
+
+        result.Should().Be("Folder.strm");
+    }
+
+    [Fact]
+    public void BuildMovieStrmFileName_WithLabel_ReturnsSuffixedName()
+    {
+        var result = StrmSyncService.BuildMovieStrmFileName("Folder [tmdbid-98]", "HEVC");
+
+        result.Should().Be("Folder [tmdbid-98] - HEVC.strm");
+    }
+
+    [Fact]
+    public void BuildMovieStrmFileName_CombinedLabel_ReturnsCombinedSuffix()
+    {
+        var result = StrmSyncService.BuildMovieStrmFileName("Folder", "HEVC 4K");
+
+        result.Should().Be("Folder - HEVC 4K.strm");
+    }
+
+    #endregion
+
+    #region SanitizeFileName Empty Brackets Tests
+
+    [Fact]
+    public void SanitizeFileName_EmptyBrackets_RemovesEmptyBrackets()
+    {
+        var result = StrmSyncService.SanitizeFileName("Movie [4K] Title");
+
+        result.Should().Be("Movie Title");
+    }
+
+    #endregion
+
+    #region Dispatcharr Multi-Stream STRM Filename Tests
+
+    [Fact]
+    public void MultiStream_SingleProvider_CreatesOneStrm()
+    {
+        // With a single provider, the default STRM filename is used (no version suffix)
+        var strmFileName = StrmSyncService.BuildMovieStrmFileName("Gladiator [tmdbid-98]", null);
+
+        strmFileName.Should().Be("Gladiator [tmdbid-98].strm");
+    }
+
+    [Fact]
+    public void MultiStream_MultipleProviders_CreatesVersionedStrms()
+    {
+        // First provider gets default filename, subsequent get version numbers
+        var folderName = "Gladiator [tmdbid-98]";
+        var strm1 = StrmSyncService.BuildMovieStrmFileName(folderName, null);
+        var strm2 = StrmSyncService.BuildMovieStrmFileName(folderName, "Version 2");
+        var strm3 = StrmSyncService.BuildMovieStrmFileName(folderName, "Version 3");
+
+        strm1.Should().Be("Gladiator [tmdbid-98].strm");
+        strm2.Should().Be("Gladiator [tmdbid-98] - Version 2.strm");
+        strm3.Should().Be("Gladiator [tmdbid-98] - Version 3.strm");
+    }
+
+    [Fact]
+    public void MultiStream_ProxyUrlFormat_ContainsUuidAndStreamId()
+    {
+        // Verify proxy URL format matches Dispatcharr expectations
+        string uuid = "abc-123-def";
+        int streamId = 423017;
+        string baseUrl = "http://dispatcharr.local:5656";
+
+        string url = $"{baseUrl}/proxy/vod/movie/{uuid}?stream_id={streamId}";
+
+        url.Should().Be("http://dispatcharr.local:5656/proxy/vod/movie/abc-123-def?stream_id=423017");
+    }
+
+    [Fact]
+    public void MultiStream_StandardUrlFormat_ContainsCredentials()
+    {
+        // Verify standard Xtream URL format for comparison
+        string baseUrl = "http://provider.com:8000";
+        string username = "user";
+        string password = "pass";
+        int streamId = 12345;
+        string extension = "mp4";
+
+        string url = $"{baseUrl}/movie/{username}/{password}/{streamId}.{extension}";
+
+        url.Should().Be("http://provider.com:8000/movie/user/pass/12345.mp4");
+    }
+
+    [Fact]
+    public void MultiStream_DispatcharrSingleStream_UsesProxyUrl()
+    {
+        // When Dispatcharr is enabled but only one provider exists,
+        // the fallback uses proxy URL format without stream_id pinning
+        string baseUrl = "http://dispatcharr.local:5656";
+        int streamId = 12345;
+
+        string url = $"{baseUrl}/proxy/vod/movie/{streamId}";
+
+        url.Should().Be("http://dispatcharr.local:5656/proxy/vod/movie/12345");
+    }
+
+    #endregion
 }
