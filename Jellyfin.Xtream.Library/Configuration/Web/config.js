@@ -980,15 +980,27 @@ const XtreamLibraryConfig = {
         });
     },
 
-    cleanLibraries: function () {
-        if (!confirm('Are you sure you want to delete ALL Movies and Series content?\n\nThis action cannot be undone.')) {
+    cleanMovies: function () {
+        if (!confirm('Are you sure you want to delete ALL Movies content?\n\nThis action cannot be undone.')) {
             return;
         }
 
-        const statusSpan = document.getElementById('cleanLibrariesStatus');
-        statusSpan.innerHTML = '<span style="color: orange;">Deleting...</span>';
+        this.cleanLibraryFolder('CleanMovies');
+    },
 
-        fetch(ApiClient.getUrl('XtreamLibrary/CleanLibraries'), {
+    cleanSeries: function () {
+        if (!confirm('Are you sure you want to delete ALL Series content?\n\nThis action cannot be undone.')) {
+            return;
+        }
+
+        this.cleanLibraryFolder('CleanSeries');
+    },
+
+    cleanLibraryFolder: function (endpoint) {
+        const statusDiv = document.getElementById('cleanLibrariesStatus');
+        statusDiv.innerHTML = '<span style="color: orange;">Deleting...</span>';
+
+        fetch(ApiClient.getUrl('XtreamLibrary/' + endpoint), {
             method: 'POST',
             headers: {
                 'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
@@ -997,13 +1009,13 @@ const XtreamLibraryConfig = {
             return response.json();
         }).then(function (data) {
             if (data.Success) {
-                statusSpan.innerHTML = '<span style="color: green;">' + data.Message + '</span>';
+                statusDiv.innerHTML = '<span style="color: green;">' + data.Message + '</span>';
             } else {
-                statusSpan.innerHTML = '<span style="color: red;">' + (data.Message || 'Failed to clean libraries.') + '</span>';
+                statusDiv.innerHTML = '<span style="color: red;">' + (data.Message || 'Failed to clean library.') + '</span>';
             }
         }).catch(function (error) {
-            console.error('CleanLibraries error:', error);
-            statusSpan.innerHTML = '<span style="color: red;">Failed: ' + (error.message || 'Check console for details') + '</span>';
+            console.error('Clean library error:', error);
+            statusDiv.innerHTML = '<span style="color: red;">Failed: ' + (error.message || 'Check console for details') + '</span>';
         });
     },
 
@@ -1170,11 +1182,19 @@ function initXtreamLibraryConfig() {
         });
     }
 
-    var btnCleanLibraries = document.getElementById('btnCleanLibraries');
-    if (btnCleanLibraries) {
-        btnCleanLibraries.addEventListener('click', function (e) {
+    var btnCleanMovies = document.getElementById('btnCleanMovies');
+    if (btnCleanMovies) {
+        btnCleanMovies.addEventListener('click', function (e) {
             e.preventDefault();
-            XtreamLibraryConfig.cleanLibraries();
+            XtreamLibraryConfig.cleanMovies();
+        });
+    }
+
+    var btnCleanSeries = document.getElementById('btnCleanSeries');
+    if (btnCleanSeries) {
+        btnCleanSeries.addEventListener('click', function (e) {
+            e.preventDefault();
+            XtreamLibraryConfig.cleanSeries();
         });
     }
 

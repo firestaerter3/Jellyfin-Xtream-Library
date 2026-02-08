@@ -361,14 +361,17 @@
                         <div class="verticalSection">
                             <h3 class="sectionTitle">Danger Zone</h3>
                             <div class="fieldDescription" style="color: #ff6b6b; margin-bottom: 10px;">
-                                Warning: This will permanently delete all synced content. Use before re-syncing with new metadata lookup settings.
+                                Warning: This will permanently delete synced content. Use before re-syncing with new metadata lookup settings.
                             </div>
                             <div>
-                                <button is="emby-button" type="button" id="btnCleanLibraries" class="raised" style="background: #c0392b;">
-                                    <span>Delete All Library Content</span>
+                                <button is="emby-button" type="button" id="btnCleanMovies" class="raised" style="background: #c0392b;">
+                                    <span>Delete Movies Library</span>
                                 </button>
-                                <span id="cleanLibrariesStatus" style="margin-left: 10px;"></span>
+                                <button is="emby-button" type="button" id="btnCleanSeries" class="raised" style="background: #c0392b; margin-left: 10px;">
+                                    <span>Delete Series Library</span>
+                                </button>
                             </div>
+                            <div id="cleanLibrariesStatus" style="margin-top: 8px;"></div>
                         </div>
 
                         <div class="verticalSection">

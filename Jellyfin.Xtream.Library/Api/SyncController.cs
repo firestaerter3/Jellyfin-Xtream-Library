@@ -358,14 +358,32 @@ public class SyncController : ControllerBase
     }
 
     /// <summary>
-    /// Deletes all content from the Movies and Series library folders.
+    /// Deletes all content from the Movies library folder.
     /// Cancels any running sync first and waits for it to stop.
     /// </summary>
-    /// <returns>Result with counts of deleted items.</returns>
-    [HttpPost("CleanLibraries")]
+    /// <returns>Result with count of deleted items.</returns>
+    [HttpPost("CleanMovies")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult> CleanLibraries()
+    public async Task<ActionResult> CleanMovies()
+    {
+        return await CleanLibraryFolder("Movies").ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Deletes all content from the Series library folder.
+    /// Cancels any running sync first and waits for it to stop.
+    /// </summary>
+    /// <returns>Result with count of deleted items.</returns>
+    [HttpPost("CleanSeries")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult> CleanSeries()
+    {
+        return await CleanLibraryFolder("Series").ConfigureAwait(false);
+    }
+
+    private async Task<ActionResult> CleanLibraryFolder(string folderName)
     {
         var config = TryGetConfig();
         if (config == null)
@@ -402,45 +420,34 @@ public class SyncController : ControllerBase
             }
         }
 
-        var moviesPath = System.IO.Path.Combine(config.LibraryPath, "Movies");
-        var seriesPath = System.IO.Path.Combine(config.LibraryPath, "Series");
-
-        int moviesDeleted = 0;
-        int seriesDeleted = 0;
+        var folderPath = System.IO.Path.Combine(config.LibraryPath, folderName);
 
         try
         {
-            if (System.IO.Directory.Exists(moviesPath))
+            int deleted = 0;
+            if (System.IO.Directory.Exists(folderPath))
             {
-                var movieStrms = System.IO.Directory.GetFiles(moviesPath, "*.strm", System.IO.SearchOption.AllDirectories);
-                moviesDeleted = movieStrms.Length;
-                ForceDeleteDirectoryContents(moviesPath);
-                _logger.LogInformation("Deleted {Count} movies from {Path}", moviesDeleted, moviesPath);
-            }
-
-            if (System.IO.Directory.Exists(seriesPath))
-            {
-                var seriesStrms = System.IO.Directory.GetFiles(seriesPath, "*.strm", System.IO.SearchOption.AllDirectories);
-                seriesDeleted = seriesStrms.Length;
-                ForceDeleteDirectoryContents(seriesPath);
-                _logger.LogInformation("Deleted {Count} episodes from {Path}", seriesDeleted, seriesPath);
+                var strms = System.IO.Directory.GetFiles(folderPath, "*.strm", System.IO.SearchOption.AllDirectories);
+                deleted = strms.Length;
+                ForceDeleteDirectoryContents(folderPath);
+                _logger.LogInformation("Deleted {Count} items from {Path}", deleted, folderPath);
             }
 
             // Delete snapshots so next sync starts fresh
             _snapshotService.ClearAllSnapshots();
 
+            var label = string.Equals(folderName, "Movies", System.StringComparison.Ordinal) ? "movies" : "episodes";
             return Ok(new
             {
                 Success = true,
-                Message = $"Deleted {moviesDeleted} movies and {seriesDeleted} episodes. Snapshots cleared. Press Sync to repopulate.",
-                MoviesDeleted = moviesDeleted,
-                EpisodesDeleted = seriesDeleted,
+                Message = $"Deleted {deleted} {label}. Snapshots cleared. Press Sync to repopulate.",
+                Deleted = deleted,
             });
         }
         catch (System.Exception ex)
         {
-            _logger.LogError(ex, "Failed to clean libraries");
-            return BadRequest(new { Success = false, Message = $"Failed to clean libraries: {ex.Message}" });
+            _logger.LogError(ex, "Failed to clean {Folder} library", folderName);
+            return BadRequest(new { Success = false, Message = $"Failed to clean {folderName} library: {ex.Message}" });
         }
     }
 
