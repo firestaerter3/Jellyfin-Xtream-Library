@@ -979,7 +979,10 @@ const XtreamLibraryConfig = {
 
         fetch(ApiClient.getUrl('XtreamLibrary/TestDispatcharr'), {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
+            }
         }).then(function (response) {
             return response.json();
         }).then(function (result) {
