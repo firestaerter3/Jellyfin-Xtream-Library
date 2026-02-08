@@ -101,10 +101,18 @@ git push
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/XtreamLibrary/Sync` | POST | Trigger manual sync |
+| `/XtreamLibrary/Cancel` | POST | Cancel running sync |
 | `/XtreamLibrary/Status` | GET | Get last sync result |
+| `/XtreamLibrary/Progress` | GET | Get live sync progress |
 | `/XtreamLibrary/TestConnection` | POST | Test provider connection |
 | `/XtreamLibrary/Categories/Vod` | GET | Fetch VOD categories |
 | `/XtreamLibrary/Categories/Series` | GET | Fetch Series categories |
+| `/XtreamLibrary/Categories/Live` | GET | Fetch Live TV categories |
+| `/XtreamLibrary/RetryFailed` | POST | Retry failed items from last sync |
+| `/XtreamLibrary/CleanMovies` | POST | Delete all Movies library content |
+| `/XtreamLibrary/CleanSeries` | POST | Delete all Series library content |
+| `/XtreamLibrary/ClearMetadataCache` | POST | Clear metadata lookup cache |
+| `/XtreamLibrary/LiveTv/RefreshCache` | POST | Refresh Live TV cache |
 
 ## Code Analysis
 

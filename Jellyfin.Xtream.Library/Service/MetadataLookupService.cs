@@ -14,7 +14,9 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Globalization;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities.Movies;
@@ -120,8 +122,20 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
                 firstResult.ProviderIds.TryGetValue(MetadataProvider.Tmdb.ToString(), out var tmdbIdStr) &&
                 int.TryParse(tmdbIdStr, out var parsedId))
             {
-                tmdbId = parsedId;
-                _logger.LogDebug("Found TMDb ID for movie: {Title} ({Year}) -> {Id}", title, year, tmdbId);
+                // Validate the match to reject obvious false positives
+                if (IsLikelyFalsePositive(title, firstResult.Name, year, firstResult.ProductionYear))
+                {
+                    _logger.LogDebug(
+                        "Rejected TMDb match for movie: '{SearchTitle}' -> '{ResultName}' ({ResultYear})",
+                        title,
+                        firstResult.Name,
+                        firstResult.ProductionYear);
+                }
+                else
+                {
+                    tmdbId = parsedId;
+                    _logger.LogDebug("Found TMDb ID for movie: {Title} ({Year}) -> {Id}", title, year, tmdbId);
+                }
             }
             else
             {
@@ -132,7 +146,7 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
             _cache.Set(cacheKey, new MetadataCacheEntry
             {
                 TmdbId = tmdbId,
-                Confidence = firstResult != null ? 100 : 0,
+                Confidence = firstResult != null && tmdbId.HasValue ? 100 : 0,
             });
 
             return tmdbId;
@@ -191,8 +205,20 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
                 firstResult.ProviderIds.TryGetValue(MetadataProvider.Tvdb.ToString(), out var tvdbIdStr) &&
                 int.TryParse(tvdbIdStr, out var parsedId))
             {
-                tvdbId = parsedId;
-                _logger.LogDebug("Found TVDb ID for series: {Title} ({Year}) -> {Id}", title, year, tvdbId);
+                // Validate the match to reject obvious false positives
+                if (IsLikelyFalsePositive(title, firstResult.Name, year, firstResult.ProductionYear))
+                {
+                    _logger.LogDebug(
+                        "Rejected TVDb match for series: '{SearchTitle}' -> '{ResultName}' ({ResultYear})",
+                        title,
+                        firstResult.Name,
+                        firstResult.ProductionYear);
+                }
+                else
+                {
+                    tvdbId = parsedId;
+                    _logger.LogDebug("Found TVDb ID for series: {Title} ({Year}) -> {Id}", title, year, tvdbId);
+                }
             }
             else
             {
@@ -203,7 +229,7 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
             _cache.Set(cacheKey, new MetadataCacheEntry
             {
                 TvdbId = tvdbId,
-                Confidence = firstResult != null ? 100 : 0,
+                Confidence = firstResult != null && tvdbId.HasValue ? 100 : 0,
             });
 
             return tvdbId;
@@ -224,6 +250,50 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
 
     /// <inheritdoc />
     public Task ClearCacheAsync() => _cache.ClearAsync();
+
+    /// <summary>
+    /// Checks whether a search result is likely a false positive match.
+    /// Uses year mismatch and title length ratio to detect bad matches
+    /// without breaking cross-language matching (e.g. Dutch title to English result).
+    /// </summary>
+    /// <param name="searchTitle">The original title used for the search query.</param>
+    /// <param name="resultName">The title returned by the metadata provider.</param>
+    /// <param name="searchYear">The year associated with the search, if known.</param>
+    /// <param name="resultYear">The production year of the result from the provider.</param>
+    /// <returns>True if the match is likely a false positive and should be rejected.</returns>
+    internal static bool IsLikelyFalsePositive(string searchTitle, string? resultName, int? searchYear, int? resultYear)
+    {
+        // Check 1: Year mismatch from parameters
+        if (searchYear.HasValue && resultYear.HasValue &&
+            Math.Abs(searchYear.Value - resultYear.Value) > 2)
+        {
+            return true;
+        }
+
+        // Check 2: Extract year from search title text when no explicit year parameter.
+        // Only match years that appear after some text (not at the start, to avoid
+        // rejecting movies named with a year like "1917" or "2001: A Space Odyssey").
+        if (!searchYear.HasValue && resultYear.HasValue)
+        {
+            var yearMatch = Regex.Match(searchTitle, @"(?<=\S\s)(19|20)\d{2}(?=\s|$)");
+            if (yearMatch.Success &&
+                int.TryParse(yearMatch.Value, NumberStyles.None, CultureInfo.InvariantCulture, out var titleYear) &&
+                Math.Abs(titleYear - resultYear.Value) > 2)
+            {
+                return true;
+            }
+        }
+
+        // Check 3: Result title is extremely short compared to search title.
+        // Catches cases like "Formule 1 2023 USA Austin SprintRace" → "+1".
+        if (!string.IsNullOrEmpty(resultName) &&
+            resultName.Length <= 3 && searchTitle.Length >= 15)
+        {
+            return true;
+        }
+
+        return false;
+    }
 
     /// <inheritdoc />
     public void Dispose()
