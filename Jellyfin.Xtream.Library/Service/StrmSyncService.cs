@@ -289,8 +289,8 @@ public partial class StrmSyncService
                 LastSyncResult.Errors = result.FailedItems.Count;
             }
 
-            // Trigger library scan if enabled and items were created
-            if (config.TriggerLibraryScan && (result.MoviesCreated > 0 || result.EpisodesCreated > 0))
+            // Trigger library scan if enabled and items were created or updated
+            if (config.TriggerLibraryScan && (result.MoviesCreated > 0 || result.MoviesUpdated > 0 || result.EpisodesCreated > 0 || result.EpisodesUpdated > 0))
             {
                 _logger.LogWarning("Triggering full Jellyfin library scan after retry. Consider disabling this option for large libraries.");
                 await TriggerLibraryScanAsync().ConfigureAwait(false);
@@ -326,16 +326,25 @@ public partial class StrmSyncService
         string strmFileName = $"{folderName}.strm";
         string strmPath = Path.Combine(movieFolder, strmFileName);
 
+        // Build stream URL using stored item ID (assume mp4 as default extension)
+        string streamUrl = $"{connectionInfo.BaseUrl}/movie/{connectionInfo.UserName}/{connectionInfo.Password}/{item.ItemId}.mp4";
+
         if (File.Exists(strmPath))
         {
-            result.MoviesSkipped++;
+            if (StrmContentMatches(strmPath, streamUrl))
+            {
+                result.MoviesSkipped++;
+                return;
+            }
+
+            // Stream URL changed, update the STRM file
+            await File.WriteAllTextAsync(strmPath, streamUrl, cancellationToken).ConfigureAwait(false);
+            result.MoviesUpdated++;
+            _logger.LogInformation("Updated stale STRM for movie: {MovieName}", item.Name);
             return;
         }
 
         Directory.CreateDirectory(movieFolder);
-
-        // Build stream URL using stored item ID (assume mp4 as default extension)
-        string streamUrl = $"{connectionInfo.BaseUrl}/movie/{connectionInfo.UserName}/{connectionInfo.Password}/{item.ItemId}.mp4";
 
         await File.WriteAllTextAsync(strmPath, streamUrl, cancellationToken).ConfigureAwait(false);
         result.MoviesCreated++;
@@ -378,16 +387,24 @@ public partial class StrmSyncService
                 string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode);
                 string strmPath = Path.Combine(seasonFolder, episodeFileName);
 
+                string extension = string.IsNullOrEmpty(episode.ContainerExtension) ? "mkv" : episode.ContainerExtension;
+                string streamUrl = $"{connectionInfo.BaseUrl}/series/{connectionInfo.UserName}/{connectionInfo.Password}/{episode.EpisodeId}.{extension}";
+
                 if (File.Exists(strmPath))
                 {
-                    result.EpisodesSkipped++;
+                    if (StrmContentMatches(strmPath, streamUrl))
+                    {
+                        result.EpisodesSkipped++;
+                        continue;
+                    }
+
+                    // Stream URL changed, update the STRM file
+                    await File.WriteAllTextAsync(strmPath, streamUrl, cancellationToken).ConfigureAwait(false);
+                    result.EpisodesUpdated++;
                     continue;
                 }
 
                 Directory.CreateDirectory(seasonFolder);
-
-                string extension = string.IsNullOrEmpty(episode.ContainerExtension) ? "mkv" : episode.ContainerExtension;
-                string streamUrl = $"{connectionInfo.BaseUrl}/series/{connectionInfo.UserName}/{connectionInfo.Password}/{episode.EpisodeId}.{extension}";
 
                 await File.WriteAllTextAsync(strmPath, streamUrl, cancellationToken).ConfigureAwait(false);
                 result.EpisodesCreated++;
@@ -516,7 +533,9 @@ public partial class StrmSyncService
         CurrentProgress.TotalItems = 0;
         CurrentProgress.ItemsProcessed = 0;
         CurrentProgress.MoviesCreated = 0;
+        CurrentProgress.MoviesUpdated = 0;
         CurrentProgress.EpisodesCreated = 0;
+        CurrentProgress.EpisodesUpdated = 0;
 
         if (string.IsNullOrEmpty(config.BaseUrl) || string.IsNullOrEmpty(config.Username))
         {
@@ -811,14 +830,16 @@ public partial class StrmSyncService
             result.Success = true;
 
             _logger.LogInformation(
-                "{SyncType} sync completed: Movies({MoviesCreated} added, {MoviesSkipped} skipped, {MoviesDeleted} deleted), Series({SeriesCreated} added, {SeriesSkipped} skipped), Episodes({EpisodesCreated} added, {EpisodesSkipped} skipped, {EpisodesDeleted} deleted)",
+                "{SyncType} sync completed: Movies({MoviesCreated} added, {MoviesUpdated} updated, {MoviesSkipped} skipped, {MoviesDeleted} deleted), Series({SeriesCreated} added, {SeriesSkipped} skipped), Episodes({EpisodesCreated} added, {EpisodesUpdated} updated, {EpisodesSkipped} skipped, {EpisodesDeleted} deleted)",
                 isIncrementalSync ? "Incremental" : "Full",
                 result.MoviesCreated,
+                result.MoviesUpdated,
                 result.MoviesSkipped,
                 result.MoviesDeleted,
                 result.SeriesCreated,
                 result.SeriesSkipped,
                 result.EpisodesCreated,
+                result.EpisodesUpdated,
                 result.EpisodesSkipped,
                 result.EpisodesDeleted);
 
@@ -829,9 +850,9 @@ public partial class StrmSyncService
             }
 
             // Trigger library scan if enabled (off by default - file monitor handles changes automatically)
-            if (config.TriggerLibraryScan && (result.MoviesCreated > 0 || result.EpisodesCreated > 0 || result.FilesDeleted > 0))
+            if (config.TriggerLibraryScan && (result.MoviesCreated > 0 || result.MoviesUpdated > 0 || result.EpisodesCreated > 0 || result.EpisodesUpdated > 0 || result.FilesDeleted > 0))
             {
-                _logger.LogWarning("Triggering full Jellyfin library scan ({Movies} movies, {Episodes} episodes created, {Deleted} deleted). This may use significant memory with large libraries. Consider disabling this option and relying on Jellyfin's file monitor instead.", result.MoviesCreated, result.EpisodesCreated, result.FilesDeleted);
+                _logger.LogWarning("Triggering full Jellyfin library scan ({Movies} movies, {Episodes} episodes created, {MoviesUpdated} movies, {EpisodesUpdated} episodes updated, {Deleted} deleted). This may use significant memory with large libraries. Consider disabling this option and relying on Jellyfin's file monitor instead.", result.MoviesCreated, result.EpisodesCreated, result.MoviesUpdated, result.EpisodesUpdated, result.FilesDeleted);
                 await TriggerLibraryScanAsync().ConfigureAwait(false);
             }
         }
@@ -958,6 +979,7 @@ public partial class StrmSyncService
 
         // Thread-safe counters and collections (shared across batches)
         int moviesCreated = 0;
+        int moviesUpdated = 0;
         int moviesSkipped = 0;
         int errors = 0;
         int unmatchedCount = 0;
@@ -1355,6 +1377,7 @@ public partial class StrmSyncService
                     string streamUrl = $"{connectionInfo.BaseUrl}/movie/{connectionInfo.UserName}/{connectionInfo.Password}/{stream.StreamId}.{extension}";
 
                     bool anyCreated = false;
+                    bool anyUpdated = false;
                     bool allSkipped = true;
                     string? firstPosterPath = null;
 
@@ -1372,6 +1395,15 @@ public partial class StrmSyncService
 
                         if (File.Exists(strmPath))
                         {
+                            if (StrmContentMatches(strmPath, streamUrl))
+                            {
+                                continue;
+                            }
+
+                            // Stream URL changed, update the STRM file
+                            await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
+                            anyUpdated = true;
+                            allSkipped = false;
                             continue;
                         }
 
@@ -1455,6 +1487,10 @@ public partial class StrmSyncService
                     {
                         Interlocked.Increment(ref moviesCreated);
                     }
+                    else if (anyUpdated)
+                    {
+                        Interlocked.Increment(ref moviesUpdated);
+                    }
                     else if (allSkipped)
                     {
                         Interlocked.Increment(ref moviesSkipped);
@@ -1477,6 +1513,7 @@ public partial class StrmSyncService
                 {
                     CurrentProgress.IncrementItemsProcessed();
                     CurrentProgress.MoviesCreated = moviesCreated;
+                    CurrentProgress.MoviesUpdated = moviesUpdated;
                 }
             }).ConfigureAwait(false);
 
@@ -1490,6 +1527,7 @@ public partial class StrmSyncService
 
         // Update result with thread-safe counters
         result.MoviesCreated += moviesCreated;
+        result.MoviesUpdated += moviesUpdated;
         result.MoviesSkipped += moviesSkipped;
         result.AddErrors(errors);
         result.AddFailedItems(failedItems);
@@ -1576,6 +1614,7 @@ public partial class StrmSyncService
         int seasonsCreated = 0;
         int seasonsSkipped = 0;
         int episodesCreated = 0;
+        int episodesUpdated = 0;
         int episodesSkipped = 0;
         int errors = 0;
         int smartSkipped = 0;
@@ -2165,18 +2204,26 @@ public partial class StrmSyncService
 
                                 syncedFiles.TryAdd(strmPath, 0);
 
+                                // Build stream URL
+                                string extension = string.IsNullOrEmpty(episode.ContainerExtension) ? "mkv" : episode.ContainerExtension;
+                                string streamUrl = $"{connectionInfo.BaseUrl}/series/{connectionInfo.UserName}/{connectionInfo.Password}/{episode.EpisodeId}.{extension}";
+
                                 if (File.Exists(strmPath))
                                 {
-                                    Interlocked.Increment(ref episodesSkipped);
+                                    if (StrmContentMatches(strmPath, streamUrl))
+                                    {
+                                        Interlocked.Increment(ref episodesSkipped);
+                                        continue;
+                                    }
+
+                                    // Stream URL changed, update the STRM file
+                                    await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
+                                    Interlocked.Increment(ref episodesUpdated);
                                     continue;
                                 }
 
                                 // Create season folder
                                 Directory.CreateDirectory(seasonFolder);
-
-                                // Build stream URL
-                                string extension = string.IsNullOrEmpty(episode.ContainerExtension) ? "mkv" : episode.ContainerExtension;
-                                string streamUrl = $"{connectionInfo.BaseUrl}/series/{connectionInfo.UserName}/{connectionInfo.Password}/{episode.EpisodeId}.{extension}";
 
                                 // Write STRM file
                                 try
@@ -2306,6 +2353,7 @@ public partial class StrmSyncService
                 {
                     CurrentProgress.IncrementItemsProcessed();
                     CurrentProgress.EpisodesCreated = episodesCreated;
+                    CurrentProgress.EpisodesUpdated = episodesUpdated;
                 }
             }).ConfigureAwait(false);
 
@@ -2324,6 +2372,7 @@ public partial class StrmSyncService
         result.SeasonsCreated += seasonsCreated;
         result.SeasonsSkipped += seasonsSkipped;
         result.EpisodesCreated += episodesCreated;
+        result.EpisodesUpdated += episodesUpdated;
         result.EpisodesSkipped += episodesSkipped;
         result.AddErrors(errors);
         result.AddFailedItems(failedItems);
@@ -2389,18 +2438,26 @@ public partial class StrmSyncService
 
                     syncedFiles.TryAdd(strmPath, 0);
 
+                    // Build stream URL
+                    string extension = string.IsNullOrEmpty(episode.ContainerExtension) ? "mkv" : episode.ContainerExtension;
+                    string streamUrl = $"{connectionInfo.BaseUrl}/series/{connectionInfo.UserName}/{connectionInfo.Password}/{episode.EpisodeId}.{extension}";
+
                     if (File.Exists(strmPath))
                     {
-                        result.EpisodesSkipped++;
+                        if (StrmContentMatches(strmPath, streamUrl))
+                        {
+                            result.EpisodesSkipped++;
+                            continue;
+                        }
+
+                        // Stream URL changed, update the STRM file
+                        await File.WriteAllTextAsync(strmPath, streamUrl, cancellationToken).ConfigureAwait(false);
+                        result.EpisodesUpdated++;
                         continue;
                     }
 
                     // Create season folder
                     Directory.CreateDirectory(seasonFolder);
-
-                    // Build stream URL
-                    string extension = string.IsNullOrEmpty(episode.ContainerExtension) ? "mkv" : episode.ContainerExtension;
-                    string streamUrl = $"{connectionInfo.BaseUrl}/series/{connectionInfo.UserName}/{connectionInfo.Password}/{episode.EpisodeId}.{extension}";
 
                     // Write STRM file
                     await File.WriteAllTextAsync(strmPath, streamUrl, cancellationToken).ConfigureAwait(false);
@@ -2642,6 +2699,18 @@ public partial class StrmSyncService
         }
 
         return baseName;
+    }
+
+    private static bool StrmContentMatches(string strmPath, string expectedUrl)
+    {
+        try
+        {
+            return string.Equals(File.ReadAllText(strmPath).TrimEnd(), expectedUrl, StringComparison.Ordinal);
+        }
+        catch (IOException)
+        {
+            return false;
+        }
     }
 
     private static void CollectExistingStrmFiles(string basePath, HashSet<string> files)
@@ -2928,7 +2997,9 @@ public class SyncProgress
     private int _itemsProcessed;
     private int _totalItems;
     private int _moviesCreated;
+    private int _moviesUpdated;
     private int _episodesCreated;
+    private int _episodesUpdated;
     private int _totalCategories;
     private int _categoriesProcessed;
 
@@ -3003,12 +3074,30 @@ public class SyncProgress
     }
 
     /// <summary>
+    /// Gets or sets the number of movies updated (STRM content changed) so far.
+    /// </summary>
+    public int MoviesUpdated
+    {
+        get => Volatile.Read(ref _moviesUpdated);
+        set => Volatile.Write(ref _moviesUpdated, value);
+    }
+
+    /// <summary>
     /// Gets or sets the number of episodes created so far.
     /// </summary>
     public int EpisodesCreated
     {
         get => Volatile.Read(ref _episodesCreated);
         set => Volatile.Write(ref _episodesCreated, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the number of episodes updated (STRM content changed) so far.
+    /// </summary>
+    public int EpisodesUpdated
+    {
+        get => Volatile.Read(ref _episodesUpdated);
+        set => Volatile.Write(ref _episodesUpdated, value);
     }
 
     /// <summary>
@@ -3107,14 +3196,19 @@ public class SyncResult
     public int MoviesSkipped { get; set; }
 
     /// <summary>
+    /// Gets or sets the number of movies updated (STRM content changed).
+    /// </summary>
+    public int MoviesUpdated { get; set; }
+
+    /// <summary>
     /// Gets or sets the number of movies deleted (orphans).
     /// </summary>
     public int MoviesDeleted { get; set; }
 
     /// <summary>
-    /// Gets the total number of movies (created + skipped).
+    /// Gets the total number of movies (created + skipped + updated).
     /// </summary>
-    public int TotalMovies => MoviesCreated + MoviesSkipped;
+    public int TotalMovies => MoviesCreated + MoviesSkipped + MoviesUpdated;
 
     /// <summary>
     /// Gets or sets the number of series created.
@@ -3167,14 +3261,19 @@ public class SyncResult
     public int EpisodesSkipped { get; set; }
 
     /// <summary>
+    /// Gets or sets the number of episodes updated (STRM content changed).
+    /// </summary>
+    public int EpisodesUpdated { get; set; }
+
+    /// <summary>
     /// Gets or sets the number of episodes deleted (orphans).
     /// </summary>
     public int EpisodesDeleted { get; set; }
 
     /// <summary>
-    /// Gets the total number of episodes (created + skipped).
+    /// Gets the total number of episodes (created + skipped + updated).
     /// </summary>
-    public int TotalEpisodes => EpisodesCreated + EpisodesSkipped;
+    public int TotalEpisodes => EpisodesCreated + EpisodesSkipped + EpisodesUpdated;
 
     /// <summary>
     /// Gets or sets the number of files deleted (orphans) - legacy, use specific counts.

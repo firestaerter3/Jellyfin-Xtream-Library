@@ -639,6 +639,12 @@ const XtreamLibraryConfig = {
         if (created.length > 0) {
             html += '<br/>Created: ' + created.join(', ');
         }
+        const updated = [];
+        if ((progress.MoviesUpdated || 0) > 0) updated.push(progress.MoviesUpdated + ' movies');
+        if ((progress.EpisodesUpdated || 0) > 0) updated.push(progress.EpisodesUpdated + ' episodes');
+        if (updated.length > 0) {
+            html += '<br/>Updated: ' + updated.join(', ');
+        }
         html += '</span>';
         statusSpan.innerHTML = html;
     },
@@ -722,14 +728,14 @@ const XtreamLibraryConfig = {
         html += '<br/><span style="color: #aaa;">Duration: ' + duration + '</span><br/><br/>';
         html += '<strong>Movies</strong><br/>';
         html += '&nbsp;&nbsp;Total: ' + (result.TotalMovies || (result.MoviesCreated + result.MoviesSkipped)) + '<br/>';
-        html += '&nbsp;&nbsp;' + result.MoviesCreated + ' added, ' + (result.MoviesDeleted || 0) + ' deleted<br/><br/>';
+        html += '&nbsp;&nbsp;' + result.MoviesCreated + ' added' + ((result.MoviesUpdated || 0) > 0 ? ', ' + result.MoviesUpdated + ' updated' : '') + ', ' + (result.MoviesDeleted || 0) + ' deleted<br/><br/>';
         html += '<strong>Series</strong><br/>';
         html += '&nbsp;&nbsp;Total: ' + (result.TotalSeries || (result.SeriesCreated + result.SeriesSkipped) || 0) + '<br/>';
         html += '&nbsp;&nbsp;' + (result.SeriesCreated || 0) + ' added, ' + (result.SeriesDeleted || 0) + ' deleted<br/>';
         html += '&nbsp;&nbsp;Seasons: ' + (result.TotalSeasons || (result.SeasonsCreated + result.SeasonsSkipped) || 0) + ' total';
         html += ', ' + (result.SeasonsCreated || 0) + ' added, ' + (result.SeasonsDeleted || 0) + ' deleted<br/>';
         html += '&nbsp;&nbsp;Episodes: ' + (result.TotalEpisodes || (result.EpisodesCreated + result.EpisodesSkipped)) + ' total';
-        html += ', ' + result.EpisodesCreated + ' added, ' + (result.EpisodesDeleted || 0) + ' deleted';
+        html += ', ' + result.EpisodesCreated + ' added' + ((result.EpisodesUpdated || 0) > 0 ? ', ' + result.EpisodesUpdated + ' updated' : '') + ', ' + (result.EpisodesDeleted || 0) + ' deleted';
 
         if (result.Errors > 0) {
             html += '<br/><br/><span style="color: orange;"><strong>Errors:</strong> ' + result.Errors + '</span>';
