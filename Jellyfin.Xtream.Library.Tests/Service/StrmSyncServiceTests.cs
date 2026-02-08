@@ -794,16 +794,33 @@ public class StrmSyncServiceTests
     }
 
     [Fact]
-    public void MultiStream_DispatcharrSingleStream_UsesProxyUrl()
+    public void MultiStream_DispatcharrSingleStream_UsesProxyUrlWithUuid()
     {
-        // When Dispatcharr is enabled but only one provider exists,
-        // the fallback uses proxy URL format without stream_id pinning
+        // When Dispatcharr is enabled and a single provider exists,
+        // the proxy URL uses UUID with stream_id pinning (same as multi-provider format)
         string baseUrl = "http://dispatcharr.local:5656";
+        string uuid = "abc-123-def";
         int streamId = 12345;
 
-        string url = $"{baseUrl}/proxy/vod/movie/{streamId}";
+        string url = $"{baseUrl}/proxy/vod/movie/{uuid}?stream_id={streamId}";
 
-        url.Should().Be("http://dispatcharr.local:5656/proxy/vod/movie/12345");
+        url.Should().Be("http://dispatcharr.local:5656/proxy/vod/movie/abc-123-def?stream_id=12345");
+    }
+
+    [Fact]
+    public void MultiStream_DispatcharrApiFails_FallsBackToXtreamUrl()
+    {
+        // When Dispatcharr API fails for a movie (cache miss),
+        // the fallback uses standard Xtream URL format with credentials
+        string baseUrl = "http://dispatcharr.local:5656";
+        string username = "user";
+        string password = "pass";
+        int streamId = 12345;
+        string extension = "mp4";
+
+        string url = $"{baseUrl}/movie/{username}/{password}/{streamId}.{extension}";
+
+        url.Should().Be("http://dispatcharr.local:5656/movie/user/pass/12345.mp4");
     }
 
     #endregion

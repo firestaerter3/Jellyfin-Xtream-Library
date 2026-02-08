@@ -1464,9 +1464,7 @@ public partial class StrmSyncService
                     else
                     {
                         string extension = string.IsNullOrEmpty(stream.ContainerExtension) ? "mp4" : stream.ContainerExtension;
-                        string streamUrl = enableDispatcharrMode
-                            ? $"{connectionInfo.BaseUrl}/proxy/vod/movie/{stream.StreamId}"
-                            : $"{connectionInfo.BaseUrl}/movie/{connectionInfo.UserName}/{connectionInfo.Password}/{stream.StreamId}.{extension}";
+                        string streamUrl = $"{connectionInfo.BaseUrl}/movie/{connectionInfo.UserName}/{connectionInfo.Password}/{stream.StreamId}.{extension}";
                         string strmFileName = BuildMovieStrmFileName(folderName, versionLabel);
                         strmEntries.Add((streamUrl, strmFileName));
                     }
