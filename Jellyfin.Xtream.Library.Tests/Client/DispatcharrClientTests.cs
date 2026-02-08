@@ -50,7 +50,7 @@ public class DispatcharrClientTests : IDisposable
     public async Task TestConnection_ValidCredentials_ReturnsTrue()
     {
         var httpClient = CreateMockHttpClient(
-            ("/api/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })));
+            ("/api/accounts/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })));
 
         var client = new DispatcharrClient(httpClient, _mockLogger.Object);
         client.Configure("admin", "password");
@@ -64,7 +64,7 @@ public class DispatcharrClientTests : IDisposable
     public async Task TestConnection_InvalidCredentials_ReturnsFalse()
     {
         var httpClient = CreateMockHttpClient(
-            ("/api/token/", HttpStatusCode.Unauthorized, "{}"));
+            ("/api/accounts/token/", HttpStatusCode.Unauthorized, "{}"));
 
         var client = new DispatcharrClient(httpClient, _mockLogger.Object);
         client.Configure("admin", "wrongpassword");
@@ -83,12 +83,12 @@ public class DispatcharrClientTests : IDisposable
     {
         var providers = new[]
         {
-            new { id = 1, stream_id = 100, m3u_account = 1 },
-            new { id = 2, stream_id = 200, m3u_account = 2 },
+            new { id = 1, stream_id = 100, m3u_account = new { id = 1, name = "Account1" } },
+            new { id = 2, stream_id = 200, m3u_account = new { id = 2, name = "Account2" } },
         };
 
         var httpClient = CreateMockHttpClient(
-            ("/api/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })),
+            ("/api/accounts/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })),
             ("/api/vod/movies/42/providers/", HttpStatusCode.OK, JsonConvert.SerializeObject(providers)));
 
         var client = new DispatcharrClient(httpClient, _mockLogger.Object);
@@ -105,7 +105,7 @@ public class DispatcharrClientTests : IDisposable
     public async Task GetMovieProviders_NotFound_ReturnsEmpty()
     {
         var httpClient = CreateMockHttpClient(
-            ("/api/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })),
+            ("/api/accounts/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })),
             ("/api/vod/movies/999/providers/", HttpStatusCode.NotFound, "{}"));
 
         var client = new DispatcharrClient(httpClient, _mockLogger.Object);
@@ -126,7 +126,7 @@ public class DispatcharrClientTests : IDisposable
         var detail = new { id = 42, uuid = "abc-123-def", name = "Test Movie" };
 
         var httpClient = CreateMockHttpClient(
-            ("/api/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })),
+            ("/api/accounts/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })),
             ("/api/vod/movies/42/", HttpStatusCode.OK, JsonConvert.SerializeObject(detail)));
 
         var client = new DispatcharrClient(httpClient, _mockLogger.Object);
@@ -143,7 +143,7 @@ public class DispatcharrClientTests : IDisposable
     public async Task GetMovieDetail_NotFound_ReturnsNull()
     {
         var httpClient = CreateMockHttpClient(
-            ("/api/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })),
+            ("/api/accounts/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })),
             ("/api/vod/movies/999/", HttpStatusCode.NotFound, "{}"));
 
         var client = new DispatcharrClient(httpClient, _mockLogger.Object);
@@ -170,7 +170,7 @@ public class DispatcharrClientTests : IDisposable
             callCount++;
             var url = request.RequestUri!.ToString();
 
-            if (url.Contains("/api/token/refresh/"))
+            if (url.Contains("/api/accounts/token/refresh/"))
             {
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
@@ -181,7 +181,7 @@ public class DispatcharrClientTests : IDisposable
                 };
             }
 
-            if (url.Contains("/api/token/"))
+            if (url.Contains("/api/accounts/token/") && !url.Contains("refresh"))
             {
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {

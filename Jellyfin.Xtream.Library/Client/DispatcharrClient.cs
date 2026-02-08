@@ -235,7 +235,7 @@ public class DispatcharrClient : IDispatcharrClient
         {
             var payload = JsonConvert.SerializeObject(new { username = _username, password = _password });
             using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-            using var response = await _httpClient.PostAsync($"{baseUrl}/api/token/", content, cancellationToken).ConfigureAwait(false);
+            using var response = await _httpClient.PostAsync($"{baseUrl}/api/accounts/token/", content, cancellationToken).ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -252,7 +252,7 @@ public class DispatcharrClient : IDispatcharrClient
             {
                 _accessToken = tokenResponse.Access;
                 _refreshToken = tokenResponse.Refresh;
-                _tokenExpiry = DateTime.UtcNow.AddMinutes(4); // Tokens last ~5 min, refresh early
+                _tokenExpiry = DateTime.UtcNow.AddMinutes(25); // Tokens last 30 min, refresh early
                 _logger.LogDebug("Dispatcharr JWT login successful");
             }
 
@@ -278,7 +278,7 @@ public class DispatcharrClient : IDispatcharrClient
         {
             var payload = JsonConvert.SerializeObject(new { refresh = _refreshToken });
             using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-            using var response = await _httpClient.PostAsync($"{baseUrl}/api/token/refresh/", content, cancellationToken).ConfigureAwait(false);
+            using var response = await _httpClient.PostAsync($"{baseUrl}/api/accounts/token/refresh/", content, cancellationToken).ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode)
             {

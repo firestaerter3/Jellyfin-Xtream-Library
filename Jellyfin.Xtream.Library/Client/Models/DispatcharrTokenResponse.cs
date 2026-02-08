@@ -36,7 +36,16 @@ public class DispatcharrMovieProvider
     public int StreamId { get; set; }
 
     [JsonProperty("m3u_account")]
-    public int M3uAccountId { get; set; }
+    public DispatcharrM3uAccount? M3uAccount { get; set; }
+}
+
+public class DispatcharrM3uAccount
+{
+    [JsonProperty("id")]
+    public int Id { get; set; }
+
+    [JsonProperty("name")]
+    public string Name { get; set; } = string.Empty;
 }
 
 public class DispatcharrMovieDetail
