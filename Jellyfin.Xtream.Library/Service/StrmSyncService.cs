@@ -1322,7 +1322,7 @@ public partial class StrmSyncService
                         finally
                         {
                             var count = Interlocked.Increment(ref dpFetched);
-                            CurrentProgress.MoviePhase = $"Fetching providers (batch {batchIndex + 1}/{totalBatches}): {count}/{dpTotal}";
+                            CurrentProgress.MoviePhase = $"Fetching providers (batch {batchIndex + 1}/{totalBatches}): {movieEntry.Stream.Name} ({count}/{dpTotal})";
                         }
                     }).ConfigureAwait(false);
 
