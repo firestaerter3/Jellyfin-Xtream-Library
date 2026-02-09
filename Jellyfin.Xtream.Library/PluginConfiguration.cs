@@ -138,6 +138,12 @@ public class PluginConfiguration : BasePluginConfiguration
     public int MetadataParallelism { get; set; } = 3;
 
     /// <summary>
+    /// Gets or sets custom terms to remove from movie and series titles.
+    /// One term per line. Applied before built-in title cleaning patterns.
+    /// </summary>
+    public string CustomTitleRemoveTerms { get; set; } = string.Empty;
+
+    /// <summary>
     /// Gets or sets a value indicating whether to download artwork from the provider
     /// for content that could not be matched to TMDb/TVDb.
     /// This ensures unmatched content still has posters and thumbnails.

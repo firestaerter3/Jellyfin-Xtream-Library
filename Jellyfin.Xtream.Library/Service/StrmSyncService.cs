@@ -323,7 +323,8 @@ public partial class StrmSyncService
         CancellationToken cancellationToken)
     {
         // Use stored item info to build the STRM file directly
-        string movieName = SanitizeFileName(item.Name);
+        var customTerms = Plugin.Instance.Configuration.CustomTitleRemoveTerms;
+        string movieName = SanitizeFileName(item.Name, customTerms);
         int? year = ExtractYear(item.Name);
         string folderName = year.HasValue ? $"{movieName} ({year})" : movieName;
         string? versionLabel = ExtractVersionLabel(item.Name);
@@ -372,7 +373,8 @@ public partial class StrmSyncService
             return;
         }
 
-        string seriesName = SanitizeFileName(item.Name);
+        var customTerms = Plugin.Instance.Configuration.CustomTitleRemoveTerms;
+        string seriesName = SanitizeFileName(item.Name, customTerms);
         int? year = ExtractYear(item.Name);
         string seriesFolderName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
         string seriesFolder = Path.Combine(seriesPath, seriesFolderName);
@@ -389,7 +391,7 @@ public partial class StrmSyncService
 
             foreach (var episode in episodes)
             {
-                string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode);
+                string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode, customTerms);
                 string strmPath = Path.Combine(seasonFolder, episodeFileName);
 
                 string extension = string.IsNullOrEmpty(episode.ContainerExtension) ? "mkv" : episode.ContainerExtension;
@@ -1159,7 +1161,7 @@ public partial class StrmSyncService
                 // Track existing STRM paths for unchanged movies (orphan protection)
                 foreach (var m in unchangedMovies)
                 {
-                    string movieName = SanitizeFileName(m.Stream.Name);
+                    string movieName = SanitizeFileName(m.Stream.Name, config.CustomTitleRemoveTerms);
                     int? year = ExtractYear(m.Stream.Name);
                     string baseName = year.HasValue ? $"{movieName} ({year})" : movieName;
 
@@ -1215,7 +1217,7 @@ public partial class StrmSyncService
             {
                 var moviesToPreFetch = batchMovies.Where(m =>
                 {
-                    string movieName = SanitizeFileName(m.Stream.Name);
+                    string movieName = SanitizeFileName(m.Stream.Name, config.CustomTitleRemoveTerms);
                     int? year = ExtractYear(m.Stream.Name);
                     string baseName = year.HasValue ? $"{movieName} ({year})" : movieName;
                     if (tmdbOverrides.ContainsKey(baseName))
@@ -1265,7 +1267,7 @@ public partial class StrmSyncService
                             finally
                             {
                                 var count = Interlocked.Increment(ref preFetched);
-                                string name = SanitizeFileName(movieEntry.Stream.Name);
+                                string name = SanitizeFileName(movieEntry.Stream.Name, config.CustomTitleRemoveTerms);
                                 CurrentProgress.MoviePhase = $"Fetching movie info (batch {batchIndex + 1}/{totalBatches}): {name} ({count}/{preFetchTotal})";
                             }
                         }).ConfigureAwait(false);
@@ -1347,7 +1349,7 @@ public partial class StrmSyncService
 
                 try
                 {
-                    string movieName = SanitizeFileName(stream.Name);
+                    string movieName = SanitizeFileName(stream.Name, config.CustomTitleRemoveTerms);
                     int? year = ExtractYear(stream.Name);
                     string baseName = year.HasValue ? $"{movieName} ({year})" : movieName;
                     string? versionLabel = ExtractVersionLabel(stream.Name);
@@ -1889,7 +1891,7 @@ public partial class StrmSyncService
                 // Track existing STRM paths for unchanged series (orphan protection)
                 foreach (var s in unchangedSeries)
                 {
-                    string seriesName = SanitizeFileName(s.Series.Name);
+                    string seriesName = SanitizeFileName(s.Series.Name, config.CustomTitleRemoveTerms);
                     int? year = ExtractYear(s.Series.Name);
                     string baseName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
 
@@ -1961,7 +1963,7 @@ public partial class StrmSyncService
                     }
 
                     // Check if all target folders have matching content
-                    string sName = SanitizeFileName(s.Series.Name);
+                    string sName = SanitizeFileName(s.Series.Name, config.CustomTitleRemoveTerms);
                     int? sYear = ExtractYear(s.Series.Name);
                     string sBase = sYear.HasValue ? $"{sName} ({sYear})" : sName;
 
@@ -2022,7 +2024,7 @@ public partial class StrmSyncService
                             finally
                             {
                                 var count = Interlocked.Increment(ref preFetched);
-                                string name = SanitizeFileName(seriesEntry.Series.Name);
+                                string name = SanitizeFileName(seriesEntry.Series.Name, config.CustomTitleRemoveTerms);
                                 CurrentProgress.SeriesPhase = $"Fetching series info (batch {batchIndex + 1}/{totalBatches}): {name} ({count}/{preFetchTotal})";
                             }
                         }).ConfigureAwait(false);
@@ -2049,7 +2051,7 @@ public partial class StrmSyncService
 
                 try
                 {
-                    string seriesName = SanitizeFileName(series.Name);
+                    string seriesName = SanitizeFileName(series.Name, config.CustomTitleRemoveTerms);
                     int? year = ExtractYear(series.Name);
                     string baseName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
 
@@ -2295,7 +2297,7 @@ public partial class StrmSyncService
 
                             foreach (var episode in episodes)
                             {
-                                string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode);
+                                string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode, config.CustomTitleRemoveTerms);
                                 string strmPath = Path.Combine(seasonFolder, episodeFileName);
 
                                 syncedFiles.TryAdd(strmPath, 0);
@@ -2512,7 +2514,8 @@ public partial class StrmSyncService
             return;
         }
 
-        string seriesName = SanitizeFileName(series.Name);
+        var customTerms = Plugin.Instance.Configuration.CustomTitleRemoveTerms;
+        string seriesName = SanitizeFileName(series.Name, customTerms);
         int? year = ExtractYear(series.Name);
 
         string seriesFolderName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
@@ -2529,7 +2532,7 @@ public partial class StrmSyncService
             {
                 try
                 {
-                    string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode);
+                    string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode, customTerms);
                     string strmPath = Path.Combine(seasonFolder, episodeFileName);
 
                     syncedFiles.TryAdd(strmPath, 0);
@@ -2570,9 +2573,9 @@ public partial class StrmSyncService
         }
     }
 
-    internal static string BuildEpisodeFileName(string seriesName, int seasonNumber, Episode episode)
+    internal static string BuildEpisodeFileName(string seriesName, int seasonNumber, Episode episode, string? customRemoveTerms = null)
     {
-        string episodeTitle = SanitizeFileName(episode.Title);
+        string episodeTitle = SanitizeFileName(episode.Title, customRemoveTerms);
         string seasonStr = seasonNumber.ToString("D2", System.Globalization.CultureInfo.InvariantCulture);
         string episodeStr = episode.EpisodeNum.ToString("D2", System.Globalization.CultureInfo.InvariantCulture);
 
@@ -2584,7 +2587,7 @@ public partial class StrmSyncService
         return $"{seriesName} - S{seasonStr}E{episodeStr} - {episodeTitle}.strm";
     }
 
-    internal static string SanitizeFileName(string? name)
+    internal static string SanitizeFileName(string? name, string? customRemoveTerms = null)
     {
         if (string.IsNullOrEmpty(name))
         {
@@ -2592,6 +2595,15 @@ public partial class StrmSyncService
         }
 
         string cleanName = name;
+
+        // Apply user-defined custom removal terms first
+        if (!string.IsNullOrWhiteSpace(customRemoveTerms))
+        {
+            foreach (var term in ChannelNameCleaner.ParseUserTerms(customRemoveTerms))
+            {
+                cleanName = cleanName.Replace(term, string.Empty, StringComparison.OrdinalIgnoreCase);
+            }
+        }
 
         // Remove prefix language tags like "┃NL┃" or "| NL |" at start of name
         cleanName = PrefixLanguageTagPattern().Replace(cleanName, string.Empty);
@@ -3011,8 +3023,8 @@ public partial class StrmSyncService
     [GeneratedRegex(@"[\|\┃\[]\s*[A-Z]{2,3}\s*[\|\┃\]]", RegexOptions.IgnoreCase)]
     private static partial Regex LanguageTagPattern();
 
-    // Matches language phrases like "(NL GESPROKEN)", "(EN SPOKEN)", "(DUBBED)", "(OV)", "(SUB)", "[NL Gesproken]", "[NL Gepsroken]", etc.
-    [GeneratedRegex(@"[\(\[]\s*(?:NL|EN|DE|FR|ES|IT|PT|RU|PL|JP|KR|CN)\s*(?:GESPROKEN|GEPSROKEN|SPOKEN|DUBBED|SUBS?|SUBBED|OV|OmU|AUDIO)?\s*[\)\]]", RegexOptions.IgnoreCase)]
+    // Matches language phrases like "(NL GESPROKEN)", "(EN SPOKEN)", "(DUBBED)", "(OV)", "(SUB)", "[NL Gesproken]", "[NL Gepsroken]", "(DE-)", "(DE -)", etc.
+    [GeneratedRegex(@"[\(\[]\s*(?:NL|EN|DE|FR|ES|IT|PT|RU|PL|JP|KR|CN)\s*(?:GESPROKEN|GEPSROKEN|SPOKEN|DUBBED|SUBS?|SUBBED|OV|OmU|AUDIO)?-?\s*[\)\]]", RegexOptions.IgnoreCase)]
     private static partial Regex LanguagePhrasePattern();
 
     // Matches bracketed content containing Asian characters (CJK: Chinese, Japanese, Korean)

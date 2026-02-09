@@ -111,11 +111,46 @@ public class StrmSyncServiceTests
     [InlineData("Film (NL DUBBED)", "Film")]
     [InlineData("Show [NL Gesproken]", "Show")]
     [InlineData("Title (DE AUDIO)", "Title")]
+    [InlineData("Movie (DE-)", "Movie")]
+    [InlineData("Movie (DE -)", "Movie")]
+    [InlineData("Movie (NL-)", "Movie")]
     public void SanitizeFileName_LanguagePhrases_RemovesThem(string input, string expected)
     {
         var result = StrmSyncService.SanitizeFileName(input);
 
         result.Should().Be(expected);
+    }
+
+    [Fact]
+    public void SanitizeFileName_CustomRemoveTerms_RemovesThem()
+    {
+        var result = StrmSyncService.SanitizeFileName("Movie [Multi-Sub] Title FHD", "[Multi-Sub]\nFHD");
+
+        result.Should().Be("Movie Title");
+    }
+
+    [Fact]
+    public void SanitizeFileName_CustomRemoveTerms_CaseInsensitive()
+    {
+        var result = StrmSyncService.SanitizeFileName("Movie [multi-sub] Title", "[Multi-Sub]");
+
+        result.Should().Be("Movie Title");
+    }
+
+    [Fact]
+    public void SanitizeFileName_CustomRemoveTerms_NullIgnored()
+    {
+        var result = StrmSyncService.SanitizeFileName("Movie Title", null);
+
+        result.Should().Be("Movie Title");
+    }
+
+    [Fact]
+    public void SanitizeFileName_CustomRemoveTerms_EmptyIgnored()
+    {
+        var result = StrmSyncService.SanitizeFileName("Movie Title", "");
+
+        result.Should().Be("Movie Title");
     }
 
     [Theory]
