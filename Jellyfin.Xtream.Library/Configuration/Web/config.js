@@ -17,6 +17,9 @@ const XtreamLibraryConfig = {
     // Track last clicked checkbox per category type for shift+click range selection
     lastClickedIndex: { vod: null, series: null, live: null },
 
+    // Dashboard polling
+    dashboardProgressInterval: null,
+
     // Tab switching
     switchTab: function (tabName) {
         document.querySelectorAll('.xtream-tab').forEach(function (tab) {
@@ -27,7 +30,14 @@ const XtreamLibraryConfig = {
         document.querySelectorAll('.xtream-tab-content').forEach(function (content) {
             content.classList.remove('active');
         });
-        document.getElementById('tab-' + tabName).classList.add('active');
+        var tabContent = document.getElementById('tab-' + tabName);
+        if (tabContent) {
+            tabContent.classList.add('active');
+        }
+
+        if (tabName === 'dashboard') {
+            this.loadDashboard();
+        }
     },
 
     loadConfig: function () {
@@ -141,6 +151,7 @@ const XtreamLibraryConfig = {
 
         this.loadSyncStatus();
         this.checkRunningSync();
+        this.loadDashboard();
     },
 
     saveConfig: function () {
@@ -1125,6 +1136,362 @@ const XtreamLibraryConfig = {
         }
     },
 
+    // Dashboard methods
+    loadDashboard: function () {
+        var self = this;
+        fetch(ApiClient.getUrl('XtreamLibrary/Dashboard'), {
+            method: 'GET',
+            headers: {
+                'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
+            }
+        }).then(function (r) {
+            return r.ok ? r.json() : null;
+        }).then(function (data) {
+            if (!data) return;
+            self.renderDashboardStatus(data.LastSync, data.Progress);
+            self.renderDashboardSchedule(data);
+            self.renderLibraryStats(data.LibraryStats);
+            self.renderDashboardHistory(data.History);
+
+            if (data.Progress && data.Progress.IsRunning) {
+                self.showDashboardProgress(data.Progress);
+                self.startDashboardProgressPolling();
+                self.updateDashboardSyncButton(true);
+            } else {
+                self.hideDashboardProgress();
+                self.stopDashboardProgressPolling();
+                self.updateDashboardSyncButton(false);
+            }
+
+            // Show/hide retry button
+            var btnRetry = document.getElementById('btnDashboardRetry');
+            var failedCount = document.getElementById('dashboardFailedCount');
+            if (btnRetry && data.LastSync && data.LastSync.FailedItems && data.LastSync.FailedItems.length > 0) {
+                btnRetry.style.display = 'inline-block';
+                if (failedCount) failedCount.textContent = data.LastSync.FailedItems.length;
+            } else if (btnRetry) {
+                btnRetry.style.display = 'none';
+            }
+        }).catch(function (err) {
+            console.error('Dashboard load error:', err);
+        });
+    },
+
+    renderDashboardStatus: function (lastSync, progress) {
+        var container = document.getElementById('dashboardSyncStatus');
+        if (!container) return;
+
+        if (!lastSync) {
+            container.innerHTML = '<span style="opacity: 0.5;">No sync has been performed yet.</span>';
+            return;
+        }
+
+        var statusBadge = lastSync.Success
+            ? '<span class="status-badge status-badge-success">Success</span>'
+            : '<span class="status-badge status-badge-failed">Failed</span>';
+
+        var typeBadge = lastSync.WasIncrementalSync
+            ? '<span class="status-badge status-badge-incremental">Incremental</span>'
+            : '<span class="status-badge status-badge-full">Full Sync</span>';
+
+        if (progress && progress.IsRunning) {
+            statusBadge = '<span class="status-badge status-badge-running">Running</span>';
+        }
+
+        var duration = this.formatDuration(lastSync.StartTime, lastSync.EndTime);
+        var time = new Date(lastSync.StartTime).toLocaleString();
+
+        var html = '<div style="margin-bottom: 10px;">' + statusBadge + ' ' + typeBadge + '</div>';
+        html += '<div style="opacity: 0.7; margin-bottom: 10px;">' + time + ' &middot; ' + duration + '</div>';
+
+        // Stat counters
+        html += '<div>';
+        html += this.renderStatBadge(lastSync.TotalMovies || (lastSync.MoviesCreated + lastSync.MoviesSkipped), 'Movies');
+        html += this.renderStatBadge(lastSync.TotalSeries || (lastSync.SeriesCreated + (lastSync.SeriesSkipped || 0)), 'Series');
+        html += this.renderStatBadge(lastSync.TotalEpisodes || (lastSync.EpisodesCreated + lastSync.EpisodesSkipped), 'Episodes');
+        html += this.renderStatBadge(lastSync.MoviesCreated + (lastSync.SeriesCreated || 0) + lastSync.EpisodesCreated, 'Created');
+        if (lastSync.Errors > 0) {
+            html += '<div class="dashboard-stat" style="border: 1px solid rgba(255,100,100,0.3);">';
+            html += '<span class="stat-value" style="color: #e08282;">' + lastSync.Errors + '</span>';
+            html += '<span class="stat-label">Errors</span></div>';
+        }
+        html += '</div>';
+
+        container.innerHTML = html;
+    },
+
+    renderStatBadge: function (value, label) {
+        return '<div class="dashboard-stat"><span class="stat-value">' + (value || 0) + '</span><span class="stat-label">' + label + '</span></div>';
+    },
+
+    renderDashboardSchedule: function (data) {
+        var container = document.getElementById('dashboardSchedule');
+        if (!container) return;
+
+        var html = '<div style="margin-bottom: 8px;"><strong>Type:</strong> ' + this.escapeHtml(data.ScheduleType) + '</div>';
+        if (data.NextSyncTime) {
+            html += '<div><strong>Next sync:</strong> ' + this.escapeHtml(data.NextSyncDisplay);
+            html += '<br/><span style="opacity: 0.5; font-size: 0.9em;">' + new Date(data.NextSyncTime).toLocaleString() + '</span></div>';
+        } else {
+            html += '<div style="opacity: 0.5;">Next sync time unavailable (no previous sync)</div>';
+        }
+
+        container.innerHTML = html;
+    },
+
+    renderLibraryStats: function (stats) {
+        var container = document.getElementById('dashboardLibraryStats');
+        if (!container) return;
+
+        if (!stats || (stats.TotalMovieFolders === 0 && stats.TotalSeriesFolders === 0)) {
+            container.innerHTML = '<span style="opacity: 0.5;">No library content found. Run a sync first.</span>';
+            return;
+        }
+
+        var html = '';
+
+        if (stats.TotalMovieFolders > 0) {
+            var moviePct = Math.round((stats.MatchedMovies / stats.TotalMovieFolders) * 100);
+            html += '<div class="library-stat-bar">';
+            html += '<span style="width: 80px;">Movies</span>';
+            html += '<div class="bar-container"><div class="bar-fill" style="width: ' + moviePct + '%;"></div></div>';
+            html += '<span style="width: 120px; text-align: right;">' + stats.MatchedMovies + ' / ' + stats.TotalMovieFolders + ' (' + moviePct + '%)</span>';
+            html += '</div>';
+            if (stats.UnmatchedMovies > 0) {
+                html += '<div style="opacity: 0.5; font-size: 0.85em; margin-left: 80px;">' + stats.UnmatchedMovies + ' unmatched</div>';
+            }
+        }
+
+        if (stats.TotalSeriesFolders > 0) {
+            var seriesPct = Math.round((stats.MatchedSeries / stats.TotalSeriesFolders) * 100);
+            html += '<div class="library-stat-bar" style="margin-top: 8px;">';
+            html += '<span style="width: 80px;">Series</span>';
+            html += '<div class="bar-container"><div class="bar-fill" style="width: ' + seriesPct + '%;"></div></div>';
+            html += '<span style="width: 120px; text-align: right;">' + stats.MatchedSeries + ' / ' + stats.TotalSeriesFolders + ' (' + seriesPct + '%)</span>';
+            html += '</div>';
+            if (stats.UnmatchedSeries > 0) {
+                html += '<div style="opacity: 0.5; font-size: 0.85em; margin-left: 80px;">' + stats.UnmatchedSeries + ' unmatched</div>';
+            }
+        }
+
+        container.innerHTML = html;
+    },
+
+    renderDashboardHistory: function (history) {
+        var container = document.getElementById('dashboardHistory');
+        if (!container) return;
+
+        if (!history || history.length === 0) {
+            container.innerHTML = '<span style="opacity: 0.5;">No sync history yet.</span>';
+            return;
+        }
+
+        var self = this;
+        var html = '<table class="dashboard-history-table">';
+        html += '<thead><tr><th>Time</th><th>Status</th><th>Type</th><th>Duration</th><th>Movies</th><th>Episodes</th><th>Errors</th></tr></thead>';
+        html += '<tbody>';
+
+        history.forEach(function (entry) {
+            var time = new Date(entry.StartTime).toLocaleString();
+            var statusBadge = entry.Success
+                ? '<span class="status-badge status-badge-success">OK</span>'
+                : '<span class="status-badge status-badge-failed">Fail</span>';
+            var typeBadge = entry.WasIncrementalSync ? 'Incr' : 'Full';
+            var duration = self.formatDuration(entry.StartTime, entry.EndTime);
+            var movies = entry.TotalMovies || (entry.MoviesCreated + entry.MoviesSkipped);
+            var episodes = entry.TotalEpisodes || (entry.EpisodesCreated + entry.EpisodesSkipped);
+            var errors = entry.Errors || 0;
+
+            html += '<tr>';
+            html += '<td style="white-space: nowrap;">' + time + '</td>';
+            html += '<td>' + statusBadge + '</td>';
+            html += '<td>' + typeBadge + '</td>';
+            html += '<td>' + duration + '</td>';
+            html += '<td>' + movies + '</td>';
+            html += '<td>' + episodes + '</td>';
+            html += '<td>' + (errors > 0 ? '<span style="color: #e08282;">' + errors + '</span>' : '0') + '</td>';
+            html += '</tr>';
+        });
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    },
+
+    showDashboardProgress: function (progress) {
+        var section = document.getElementById('dashboardProgressSection');
+        var content = document.getElementById('dashboardProgressContent');
+        if (!section || !content) return;
+
+        section.style.display = 'block';
+
+        var percentage = 0;
+        if (progress.TotalItems > 0) {
+            percentage = Math.round((progress.ItemsProcessed / progress.TotalItems) * 100);
+        }
+
+        var html = '';
+
+        // Phase text
+        var phase = '';
+        if (progress.MoviePhase || progress.SeriesPhase) {
+            if (progress.MoviePhase) phase += progress.MoviePhase;
+            if (progress.SeriesPhase) {
+                if (progress.MoviePhase) phase += ' | ';
+                phase += progress.SeriesPhase;
+            }
+        } else {
+            phase = progress.Phase || '';
+        }
+        html += '<div style="margin-bottom: 6px;">' + this.escapeHtml(phase) + '</div>';
+
+        // Progress bar
+        html += '<div class="dashboard-progress-bar"><div class="dashboard-progress-fill" style="width: ' + percentage + '%;"></div></div>';
+
+        // Details
+        var details = [];
+        if (progress.TotalCategories > 0) {
+            details.push('Batches: ' + progress.CategoriesProcessed + '/' + progress.TotalCategories);
+        }
+        if (progress.TotalItems > 0) {
+            details.push('Items: ' + progress.ItemsProcessed + '/' + progress.TotalItems + ' (' + percentage + '%)');
+        }
+        if (progress.CurrentItem) {
+            details.push(this.escapeHtml(progress.CurrentItem));
+        }
+        if (details.length > 0) {
+            html += '<div style="opacity: 0.7; font-size: 0.9em;">' + details.join(' &middot; ') + '</div>';
+        }
+
+        // Live counters
+        var counters = [];
+        if (progress.MoviesCreated > 0) counters.push(progress.MoviesCreated + ' movies created');
+        if ((progress.MoviesUpdated || 0) > 0) counters.push(progress.MoviesUpdated + ' movies updated');
+        if (progress.EpisodesCreated > 0) counters.push(progress.EpisodesCreated + ' episodes created');
+        if ((progress.EpisodesUpdated || 0) > 0) counters.push(progress.EpisodesUpdated + ' episodes updated');
+        if (counters.length > 0) {
+            html += '<div style="margin-top: 6px; color: #82e0aa; font-size: 0.9em;">' + counters.join(' &middot; ') + '</div>';
+        }
+
+        content.innerHTML = html;
+    },
+
+    hideDashboardProgress: function () {
+        var section = document.getElementById('dashboardProgressSection');
+        if (section) section.style.display = 'none';
+    },
+
+    startDashboardProgressPolling: function () {
+        var self = this;
+        self.stopDashboardProgressPolling();
+
+        self.dashboardProgressInterval = setInterval(function () {
+            fetch(ApiClient.getUrl('XtreamLibrary/Progress'), {
+                method: 'GET',
+                headers: {
+                    'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
+                }
+            }).then(function (r) {
+                return r.ok ? r.json() : null;
+            }).then(function (progress) {
+                if (progress && progress.IsRunning) {
+                    self.showDashboardProgress(progress);
+                } else {
+                    // Sync finished
+                    self.hideDashboardProgress();
+                    self.stopDashboardProgressPolling();
+                    self.updateDashboardSyncButton(false);
+                    self.loadDashboard();
+                }
+            }).catch(function () {});
+        }, 500);
+    },
+
+    stopDashboardProgressPolling: function () {
+        if (this.dashboardProgressInterval) {
+            clearInterval(this.dashboardProgressInterval);
+            this.dashboardProgressInterval = null;
+        }
+    },
+
+    updateDashboardSyncButton: function (isRunning) {
+        var btn = document.getElementById('btnDashboardSync');
+        if (!btn) return;
+        if (isRunning) {
+            btn.querySelector('span').textContent = 'Cancel Sync';
+            btn.style.background = '#c0392b';
+        } else {
+            btn.querySelector('span').textContent = 'Run Sync Now';
+            btn.style.background = '';
+        }
+    },
+
+    dashboardSync: function () {
+        var self = this;
+        var actionSpan = document.getElementById('dashboardSyncAction');
+
+        // Check if sync is running (button shows "Cancel")
+        var btn = document.getElementById('btnDashboardSync');
+        if (btn && btn.querySelector('span').textContent === 'Cancel Sync') {
+            if (actionSpan) actionSpan.innerHTML = '<span style="color: orange;">Cancelling...</span>';
+            fetch(ApiClient.getUrl('XtreamLibrary/Cancel'), {
+                method: 'POST',
+                headers: { 'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken() }
+            }).then(function () {
+                // The polling will detect completion
+            }).catch(function () {});
+            return;
+        }
+
+        if (actionSpan) actionSpan.innerHTML = '<span style="color: orange;">Starting sync...</span>';
+        self.updateDashboardSyncButton(true);
+
+        fetch(ApiClient.getUrl('XtreamLibrary/Sync'), {
+            method: 'POST',
+            headers: { 'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken() }
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            if (data.Success || (data.Message && data.Message.includes('already in progress'))) {
+                if (actionSpan) actionSpan.innerHTML = '<span style="color: orange;">Sync in progress...</span>';
+                self.startDashboardProgressPolling();
+                // Also update the General tab sync button state
+                self.isSyncing = true;
+                var syncBtn = document.getElementById('btnManualSync');
+                if (syncBtn) {
+                    syncBtn.querySelector('span').textContent = 'Cancel Sync';
+                    syncBtn.style.background = '#c0392b';
+                }
+                self.startProgressPolling();
+                self.pollForCompletion();
+            } else {
+                self.updateDashboardSyncButton(false);
+                if (actionSpan) actionSpan.innerHTML = '<span style="color: red;">' + (data.Message || 'Failed') + '</span>';
+            }
+        }).catch(function (err) {
+            self.updateDashboardSyncButton(false);
+            if (actionSpan) actionSpan.innerHTML = '<span style="color: red;">Failed: ' + (err.message || 'Error') + '</span>';
+        });
+    },
+
+    dashboardRetryFailed: function () {
+        var self = this;
+        var actionSpan = document.getElementById('dashboardSyncAction');
+        if (actionSpan) actionSpan.innerHTML = '<span style="color: orange;">Retrying failed items...</span>';
+
+        fetch(ApiClient.getUrl('XtreamLibrary/RetryFailed'), {
+            method: 'POST',
+            headers: { 'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken() }
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            if (data.Success) {
+                if (actionSpan) actionSpan.innerHTML = '<span style="color: green;">Retry completed!</span>';
+            } else {
+                if (actionSpan) actionSpan.innerHTML = '<span style="color: red;">Retry failed: ' + (data.Error || 'Unknown') + '</span>';
+            }
+            self.loadDashboard();
+            self.loadSyncStatus();
+        }).catch(function (err) {
+            if (actionSpan) actionSpan.innerHTML = '<span style="color: red;">Retry failed: ' + (err.message || 'Error') + '</span>';
+        });
+    },
+
     refreshLiveTvCache: function () {
         const statusSpan = document.getElementById('liveTvCacheStatus');
         statusSpan.innerHTML = '<span style="color: orange;">Refreshing...</span>';
@@ -1196,6 +1563,22 @@ function initXtreamLibraryConfig() {
         btnRetryFailed.addEventListener('click', function (e) {
             e.preventDefault();
             XtreamLibraryConfig.retryFailed();
+        });
+    }
+
+    var btnDashboardSync = document.getElementById('btnDashboardSync');
+    if (btnDashboardSync) {
+        btnDashboardSync.addEventListener('click', function (e) {
+            e.preventDefault();
+            XtreamLibraryConfig.dashboardSync();
+        });
+    }
+
+    var btnDashboardRetry = document.getElementById('btnDashboardRetry');
+    if (btnDashboardRetry) {
+        btnDashboardRetry.addEventListener('click', function (e) {
+            e.preventDefault();
+            XtreamLibraryConfig.dashboardRetryFailed();
         });
     }
 
@@ -1306,6 +1689,9 @@ function initXtreamLibraryConfig() {
         }
         if (XtreamLibraryConfig.completionInterval) {
             clearInterval(XtreamLibraryConfig.completionInterval);
+        }
+        if (XtreamLibraryConfig.dashboardProgressInterval) {
+            clearInterval(XtreamLibraryConfig.dashboardProgressInterval);
         }
     });
 

@@ -186,4 +186,66 @@ public class SyncControllerTests
     }
 
     #endregion
+
+    #region History Tests
+
+    [Fact]
+    public void GetHistory_ReturnsEmptyList_WhenNoSyncs()
+    {
+        var result = _controller.GetHistory();
+
+        var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
+        var history = okResult.Value.Should().BeAssignableTo<IReadOnlyList<SyncResult>>().Subject;
+        history.Should().BeEmpty();
+    }
+
+    #endregion
+
+    #region Dashboard Tests
+
+    [Fact]
+    public void GetDashboard_ReturnsOk_WithExpectedShape()
+    {
+        var result = _controller.GetDashboard();
+
+        var okResult = result.Should().BeOfType<OkObjectResult>().Subject;
+        okResult.Value.Should().NotBeNull();
+
+        // Verify the anonymous object has expected properties
+        var value = okResult.Value!;
+        var type = value.GetType();
+        type.GetProperty("LastSync").Should().NotBeNull();
+        type.GetProperty("Progress").Should().NotBeNull();
+        type.GetProperty("History").Should().NotBeNull();
+        type.GetProperty("ScheduleType").Should().NotBeNull();
+        type.GetProperty("LibraryStats").Should().NotBeNull();
+    }
+
+    #endregion
+
+    #region SyncResult Unmatched Tests
+
+    [Fact]
+    public void SyncResult_UnmatchedCounts_DefaultToZero()
+    {
+        var result = new SyncResult();
+
+        result.MoviesUnmatched.Should().Be(0);
+        result.SeriesUnmatched.Should().Be(0);
+    }
+
+    [Fact]
+    public void SyncResult_UnmatchedCounts_SetCorrectly()
+    {
+        var result = new SyncResult
+        {
+            MoviesUnmatched = 42,
+            SeriesUnmatched = 17,
+        };
+
+        result.MoviesUnmatched.Should().Be(42);
+        result.SeriesUnmatched.Should().Be(17);
+    }
+
+    #endregion
 }

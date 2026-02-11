@@ -85,6 +85,104 @@
         .advancedToggle:hover {
             opacity: 0.8;
         }
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        @media (max-width: 800px) {
+            .dashboard-grid { grid-template-columns: 1fr; }
+        }
+        .dashboard-card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+            padding: 15px;
+        }
+        .dashboard-card h4 {
+            margin: 0 0 12px 0;
+            opacity: 0.8;
+            font-size: 0.95em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+        .status-badge-success { background: #1e3a1e; color: #82e0aa; }
+        .status-badge-failed { background: #3a1e1e; color: #e08282; }
+        .status-badge-running { background: #1e2a3a; color: #82b4e0; }
+        .status-badge-incremental { background: #1a5276; color: #85c1e9; }
+        .status-badge-full { background: #1e3a1e; color: #82e0aa; }
+        .dashboard-stat {
+            display: inline-block;
+            text-align: center;
+            padding: 8px 15px;
+            margin: 4px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 6px;
+        }
+        .dashboard-stat .stat-value {
+            font-size: 1.4em;
+            font-weight: 700;
+            display: block;
+        }
+        .dashboard-stat .stat-label {
+            font-size: 0.8em;
+            opacity: 0.6;
+        }
+        .dashboard-progress-bar {
+            width: 100%;
+            height: 8px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 8px 0;
+        }
+        .dashboard-progress-fill {
+            height: 100%;
+            background: var(--theme-primary-color, #00a4dc);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+        .dashboard-history-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9em;
+        }
+        .dashboard-history-table th,
+        .dashboard-history-table td {
+            padding: 6px 10px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        .dashboard-history-table th {
+            opacity: 0.6;
+            font-weight: 600;
+            font-size: 0.85em;
+            text-transform: uppercase;
+        }
+        .library-stat-bar {
+            display: flex;
+            align-items: center;
+            margin: 6px 0;
+        }
+        .library-stat-bar .bar-container {
+            flex: 1;
+            height: 10px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 5px;
+            overflow: hidden;
+            margin: 0 10px;
+        }
+        .library-stat-bar .bar-fill {
+            height: 100%;
+            background: #27ae60;
+            border-radius: 5px;
+        }
     </style>
     <div data-role="content">
         <div class="content-primary">
@@ -95,14 +193,70 @@
 
                     <!-- Tab Navigation -->
                     <div class="xtream-tabs" role="tablist">
-                        <button type="button" class="xtream-tab active" data-tab="general" role="tab" aria-selected="true" aria-controls="tab-general">General</button>
+                        <button type="button" class="xtream-tab active" data-tab="dashboard" role="tab" aria-selected="true" aria-controls="tab-dashboard">Dashboard</button>
+                        <button type="button" class="xtream-tab" data-tab="general" role="tab" aria-selected="false" aria-controls="tab-general">General</button>
                         <button type="button" class="xtream-tab" data-tab="movies" role="tab" aria-selected="false" aria-controls="tab-movies">Movies</button>
                         <button type="button" class="xtream-tab" data-tab="series" role="tab" aria-selected="false" aria-controls="tab-series">Series</button>
                         <button type="button" class="xtream-tab" data-tab="livetv" role="tab" aria-selected="false" aria-controls="tab-livetv">Live TV</button>
                     </div>
 
+                    <!-- Dashboard Tab -->
+                    <div id="tab-dashboard" class="xtream-tab-content active" role="tabpanel" aria-labelledby="dashboard">
+                        <div class="dashboard-grid">
+                            <!-- Sync Status Card -->
+                            <div class="dashboard-card">
+                                <h4>Sync Status</h4>
+                                <div id="dashboardSyncStatus">
+                                    <span style="opacity: 0.5;">Loading...</span>
+                                </div>
+                            </div>
+
+                            <!-- Schedule Card -->
+                            <div class="dashboard-card">
+                                <h4>Schedule</h4>
+                                <div id="dashboardSchedule">
+                                    <span style="opacity: 0.5;">Loading...</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Live Progress (hidden when not syncing) -->
+                        <div id="dashboardProgressSection" class="dashboard-card" style="display: none; margin-top: 20px;">
+                            <h4>Live Progress</h4>
+                            <div id="dashboardProgressContent"></div>
+                        </div>
+
+                        <!-- Library Stats -->
+                        <div class="dashboard-card" style="margin-top: 20px;">
+                            <h4>Library Stats</h4>
+                            <div id="dashboardLibraryStats">
+                                <span style="opacity: 0.5;">Loading...</span>
+                            </div>
+                        </div>
+
+                        <!-- Quick Actions -->
+                        <div class="dashboard-card" style="margin-top: 20px;">
+                            <h4>Quick Actions</h4>
+                            <button is="emby-button" type="button" id="btnDashboardSync" class="raised button-submit">
+                                <span>Run Sync Now</span>
+                            </button>
+                            <button is="emby-button" type="button" id="btnDashboardRetry" class="raised" style="margin-left: 10px; display: none;">
+                                <span>Retry Failed (<span id="dashboardFailedCount">0</span>)</span>
+                            </button>
+                            <span id="dashboardSyncAction" style="margin-left: 10px;"></span>
+                        </div>
+
+                        <!-- Sync History -->
+                        <div class="dashboard-card" style="margin-top: 20px;">
+                            <h4>Sync History</h4>
+                            <div id="dashboardHistory">
+                                <span style="opacity: 0.5;">No sync history yet.</span>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- General Tab -->
-                    <div id="tab-general" class="xtream-tab-content active" role="tabpanel" aria-labelledby="general">
+                    <div id="tab-general" class="xtream-tab-content" role="tabpanel" aria-labelledby="general">
                         <div class="verticalSection">
                             <h3 class="sectionTitle">Provider Credentials</h3>
                             <div class="inputContainer">

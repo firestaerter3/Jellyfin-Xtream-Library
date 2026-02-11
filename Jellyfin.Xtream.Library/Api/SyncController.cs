@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Mime;
 using System.Threading;
@@ -407,6 +408,84 @@ public class SyncController : ControllerBase
     }
 
     /// <summary>
+    /// Gets the dashboard data including last sync, progress, history, schedule, and library stats.
+    /// </summary>
+    /// <returns>Dashboard data.</returns>
+    [HttpGet("Dashboard")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public ActionResult GetDashboard()
+    {
+        var config = TryGetConfig();
+        var lastSync = _syncService.LastSyncResult;
+        var progress = _syncService.CurrentProgress;
+        var history = _syncService.SyncHistory;
+
+        // Calculate next sync time
+        DateTime? nextSyncTime = null;
+        string nextSyncDisplay = "Unknown";
+        string scheduleType = config?.SyncScheduleType ?? "Interval";
+
+        if (config != null)
+        {
+            if (string.Equals(scheduleType, "Daily", StringComparison.Ordinal))
+            {
+                var now = DateTime.Now;
+                var todaySync = new DateTime(now.Year, now.Month, now.Day, config.SyncDailyHour, config.SyncDailyMinute, 0);
+                nextSyncTime = now < todaySync ? todaySync : todaySync.AddDays(1);
+            }
+            else if (lastSync?.EndTime != null && lastSync.EndTime != default)
+            {
+                nextSyncTime = lastSync.EndTime.ToLocalTime().AddMinutes(config.SyncIntervalMinutes);
+            }
+
+            if (nextSyncTime.HasValue)
+            {
+                var diff = nextSyncTime.Value - DateTime.Now;
+                if (diff.TotalSeconds > 0)
+                {
+                    if (diff.TotalHours >= 1)
+                    {
+                        nextSyncDisplay = $"In {(int)diff.TotalHours}h {diff.Minutes}m";
+                    }
+                    else
+                    {
+                        nextSyncDisplay = $"In {diff.Minutes}m";
+                    }
+                }
+                else
+                {
+                    nextSyncDisplay = "Imminent";
+                }
+            }
+        }
+
+        // Calculate library stats from filesystem
+        var libraryStats = GetLibraryStats(config?.LibraryPath);
+
+        return Ok(new
+        {
+            LastSync = lastSync,
+            Progress = progress,
+            History = history,
+            NextSyncTime = nextSyncTime,
+            NextSyncDisplay = nextSyncDisplay,
+            ScheduleType = scheduleType,
+            LibraryStats = libraryStats,
+        });
+    }
+
+    /// <summary>
+    /// Gets the sync history (last 10 results).
+    /// </summary>
+    /// <returns>List of sync results.</returns>
+    [HttpGet("History")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public ActionResult<IReadOnlyList<SyncResult>> GetHistory()
+    {
+        return Ok(_syncService.SyncHistory);
+    }
+
+    /// <summary>
     /// Deletes all content from the Movies library folder.
     /// Cancels any running sync first and waits for it to stop.
     /// </summary>
@@ -505,6 +584,48 @@ public class SyncController : ControllerBase
     /// More reliable than Directory.Delete(recursive: true) on Linux/Docker where
     /// file watchers can hold handles and cause "Directory not empty" errors.
     /// </summary>
+    private static LibraryStatsDto GetLibraryStats(string? libraryPath)
+    {
+        var stats = new LibraryStatsDto();
+        if (string.IsNullOrEmpty(libraryPath))
+        {
+            return stats;
+        }
+
+        CountFolders(Path.Combine(libraryPath, "Movies"), out int movieTotal, out int movieMatched);
+        stats.TotalMovieFolders = movieTotal;
+        stats.MatchedMovies = movieMatched;
+        stats.UnmatchedMovies = movieTotal - movieMatched;
+
+        CountFolders(Path.Combine(libraryPath, "Series"), out int seriesTotal, out int seriesMatched);
+        stats.TotalSeriesFolders = seriesTotal;
+        stats.MatchedSeries = seriesMatched;
+        stats.UnmatchedSeries = seriesTotal - seriesMatched;
+
+        return stats;
+    }
+
+    private static void CountFolders(string path, out int total, out int matched)
+    {
+        total = 0;
+        matched = 0;
+        if (!Directory.Exists(path))
+        {
+            return;
+        }
+
+        foreach (var dir in Directory.EnumerateDirectories(path))
+        {
+            total++;
+            var name = Path.GetFileName(dir);
+            if (name.Contains("[tmdbid-", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("[tvdbid-", StringComparison.OrdinalIgnoreCase))
+            {
+                matched++;
+            }
+        }
+    }
+
     private static void ForceDeleteDirectoryContents(string directoryPath)
     {
         var di = new System.IO.DirectoryInfo(directoryPath);
@@ -613,4 +734,40 @@ public class CategoryDto
     /// Gets or sets the category name.
     /// </summary>
     public string CategoryName { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Library statistics showing matched vs unmatched content.
+/// </summary>
+public class LibraryStatsDto
+{
+    /// <summary>
+    /// Gets or sets the total number of movie folders.
+    /// </summary>
+    public int TotalMovieFolders { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of movies matched to TMDb/TVDb.
+    /// </summary>
+    public int MatchedMovies { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of unmatched movies.
+    /// </summary>
+    public int UnmatchedMovies { get; set; }
+
+    /// <summary>
+    /// Gets or sets the total number of series folders.
+    /// </summary>
+    public int TotalSeriesFolders { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of series matched to TMDb/TVDb.
+    /// </summary>
+    public int MatchedSeries { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of unmatched series.
+    /// </summary>
+    public int UnmatchedSeries { get; set; }
 }

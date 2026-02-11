@@ -48,6 +48,8 @@ public partial class StrmSyncService
     private readonly DeltaCalculator _deltaCalculator;
     private readonly ILogger<StrmSyncService> _logger;
     private readonly object _ctsLock = new();
+    private readonly List<SyncResult> _syncHistory = new();
+    private readonly object _syncHistoryLock = new();
     private CancellationTokenSource? _currentSyncCts;
     private bool _syncSuppressed;
 
@@ -93,6 +95,20 @@ public partial class StrmSyncService
     /// Gets the list of failed items from the last sync that can be retried.
     /// </summary>
     public IReadOnlyList<FailedItem> FailedItems => LastSyncResult?.FailedItems ?? Array.Empty<FailedItem>();
+
+    /// <summary>
+    /// Gets the sync history (last 10 results, most recent first).
+    /// </summary>
+    public IReadOnlyList<SyncResult> SyncHistory
+    {
+        get
+        {
+            lock (_syncHistoryLock)
+            {
+                return _syncHistory.ToList();
+            }
+        }
+    }
 
     /// <summary>
     /// Cancels the currently running sync operation, if any.
@@ -920,7 +936,20 @@ public partial class StrmSyncService
         }
 
         LastSyncResult = result;
+        RecordSyncHistory(result);
         return result;
+    }
+
+    private void RecordSyncHistory(SyncResult result)
+    {
+        lock (_syncHistoryLock)
+        {
+            _syncHistory.Insert(0, result);
+            while (_syncHistory.Count > 10)
+            {
+                _syncHistory.RemoveAt(_syncHistory.Count - 1);
+            }
+        }
     }
 
     private async Task SyncMoviesAsync(
@@ -1629,6 +1658,7 @@ public partial class StrmSyncService
         result.MoviesSkipped += moviesSkipped;
         result.AddErrors(errors);
         result.AddFailedItems(failedItems);
+        result.MoviesUnmatched = unmatchedCount;
 
         // Log unmatched movies
         if (unmatchedCount > 0)
@@ -2474,6 +2504,7 @@ public partial class StrmSyncService
         result.EpisodesSkipped += episodesSkipped;
         result.AddErrors(errors);
         result.AddFailedItems(failedItems);
+        result.SeriesUnmatched = unmatchedCount;
 
         if (smartSkipped > 0)
         {
@@ -3459,6 +3490,16 @@ public class SyncResult
     /// Gets the duration of the sync operation.
     /// </summary>
     public TimeSpan Duration => EndTime - StartTime;
+
+    /// <summary>
+    /// Gets or sets the number of movies that could not be matched to TMDb.
+    /// </summary>
+    public int MoviesUnmatched { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of series that could not be matched to TVDb.
+    /// </summary>
+    public int SeriesUnmatched { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether this sync was incremental (vs full).
