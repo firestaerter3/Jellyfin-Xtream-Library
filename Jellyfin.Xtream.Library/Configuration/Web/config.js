@@ -67,7 +67,8 @@ const XtreamLibraryConfig = {
             document.getElementById('txtMetadataParallelism').value = config.MetadataParallelism || 3;
 
             // Custom title removal terms
-            document.getElementById('txtCustomTitleRemoveTerms').value = config.CustomTitleRemoveTerms || '';
+            var txtCustomTerms = document.getElementById('txtCustomTitleRemoveTerms');
+            if (txtCustomTerms) txtCustomTerms.value = config.CustomTitleRemoveTerms || '';
             document.getElementById('txtSyncParallelism').value = config.SyncParallelism || 10;
             document.getElementById('txtCategoryBatchSize').value = config.CategoryBatchSize || 25;
 
@@ -193,7 +194,8 @@ const XtreamLibraryConfig = {
             config.CategoryBatchSize = parseInt(document.getElementById('txtCategoryBatchSize').value) || 25;
 
             // Custom title removal terms
-            config.CustomTitleRemoveTerms = document.getElementById('txtCustomTitleRemoveTerms').value;
+            var txtCustomTermsSave = document.getElementById('txtCustomTitleRemoveTerms');
+            if (txtCustomTermsSave) config.CustomTitleRemoveTerms = txtCustomTermsSave.value;
 
             // Rate limiting
             config.RequestDelayMs = parseInt(document.getElementById('txtRequestDelayMs').value) || 50;
