@@ -191,8 +191,11 @@ public class XtreamTunerHostTests : IDisposable
         source.IsRemote.Should().BeTrue();
         source.IsInfiniteStream.Should().BeTrue();
         source.SupportsDirectPlay.Should().BeFalse();
-        source.SupportsDirectStream.Should().BeFalse();
+        source.SupportsDirectStream.Should().BeTrue();
         source.SupportsTranscoding.Should().BeTrue();
+        source.AnalyzeDurationMs.Should().Be(500);
+        source.IgnoreDts.Should().BeTrue();
+        source.GenPtsInput.Should().BeTrue();
         source.Container.Should().Be("mpegts");
         source.Path.Should().Contain("/live/testuser/testpass/100.m3u8");
     }
