@@ -126,7 +126,7 @@ public class XtreamTunerHost : ITunerHost
     {
         if (!TryParseStreamId(channelId, out var parsedStreamId))
         {
-            throw new ArgumentException($"Channel ID '{channelId}' is not owned by this tuner", nameof(channelId));
+            return Task.FromResult<ILiveStream>(null!);
         }
 
         var config = Plugin.Instance.Configuration;
