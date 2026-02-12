@@ -14,6 +14,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -42,7 +43,9 @@ public class XtreamTunerHost : ITunerHost
     internal const string TunerType = "xtream-library";
 
     private const string ChannelIdPrefix = "xtream_";
+    private const string JellyfinTunerPrefix = "hdhr_";
 
+    private readonly ConcurrentDictionary<string, int> _channelNumberToStreamId = new();
     private readonly LiveTvService _liveTvService;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<XtreamTunerHost> _logger;
@@ -86,8 +89,13 @@ public class XtreamTunerHost : ITunerHost
 
         var channels = await _liveTvService.GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
 
+        _channelNumberToStreamId.Clear();
+
         return channels.Select(channel =>
         {
+            var channelNumber = channel.Num.ToString(CultureInfo.InvariantCulture);
+            _channelNumberToStreamId[channelNumber] = channel.StreamId;
+
             var cleanName = ChannelNameCleaner.CleanChannelName(
                 channel.Name,
                 config.ChannelRemoveTerms,
@@ -97,7 +105,7 @@ public class XtreamTunerHost : ITunerHost
             {
                 Id = ChannelIdPrefix + channel.StreamId.ToString(CultureInfo.InvariantCulture),
                 Name = cleanName,
-                Number = channel.Num.ToString(CultureInfo.InvariantCulture),
+                Number = channelNumber,
                 ImageUrl = string.IsNullOrEmpty(channel.StreamIcon) ? null : channel.StreamIcon,
                 ChannelType = ChannelType.TV,
                 TunerHostId = Type,
@@ -148,16 +156,24 @@ public class XtreamTunerHost : ITunerHost
         return Task.FromResult(new List<TunerHostInfo>());
     }
 
-    private static bool TryParseStreamId(string channelId, out int streamId)
+    private bool TryParseStreamId(string channelId, out int streamId)
     {
         streamId = 0;
 
-        if (!channelId.StartsWith(ChannelIdPrefix, StringComparison.Ordinal))
+        // Our own prefix: xtream_<streamId>
+        if (channelId.StartsWith(ChannelIdPrefix, StringComparison.Ordinal))
         {
-            return false;
+            return int.TryParse(channelId.AsSpan(ChannelIdPrefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out streamId);
         }
 
-        return int.TryParse(channelId.AsSpan(ChannelIdPrefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out streamId);
+        // Jellyfin remaps tuner channel IDs to hdhr_<channelNumber>
+        if (channelId.StartsWith(JellyfinTunerPrefix, StringComparison.Ordinal))
+        {
+            var channelNumber = channelId.Substring(JellyfinTunerPrefix.Length);
+            return _channelNumberToStreamId.TryGetValue(channelNumber, out streamId);
+        }
+
+        return false;
     }
 
     private static string BuildStreamUrl(PluginConfiguration config, int streamId)
