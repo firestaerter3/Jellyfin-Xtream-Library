@@ -169,8 +169,11 @@ public class XtreamTunerHost : ITunerHost
             IsRemote = true,
             IsInfiniteStream = true,
             SupportsDirectPlay = false,
-            SupportsDirectStream = false,
+            SupportsDirectStream = true,
             SupportsTranscoding = true,
+            AnalyzeDurationMs = 500,
+            IgnoreDts = true,
+            GenPtsInput = true,
             MediaStreams = new List<MediaStream>
             {
                 new MediaStream
