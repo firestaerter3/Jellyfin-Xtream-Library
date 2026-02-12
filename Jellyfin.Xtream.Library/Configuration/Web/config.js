@@ -116,6 +116,7 @@ const XtreamLibraryConfig = {
 
             // Live TV settings
             document.getElementById('chkEnableLiveTv').checked = config.EnableLiveTv || false;
+            document.getElementById('chkEnableNativeTuner').checked = config.EnableNativeTuner || false;
             document.getElementById('chkEnableEpg').checked = config.EnableEpg !== false;
             document.getElementById('selLiveTvOutputFormat').value = config.LiveTvOutputFormat || 'm3u8';
             document.getElementById('chkIncludeAdultChannels').checked = config.IncludeAdultChannels || false;
@@ -236,6 +237,7 @@ const XtreamLibraryConfig = {
 
             // Live TV settings
             config.EnableLiveTv = document.getElementById('chkEnableLiveTv').checked;
+            config.EnableNativeTuner = document.getElementById('chkEnableNativeTuner').checked;
             config.EnableEpg = document.getElementById('chkEnableEpg').checked;
             config.LiveTvOutputFormat = document.getElementById('selLiveTvOutputFormat').value;
             config.IncludeAdultChannels = document.getElementById('chkIncludeAdultChannels').checked;

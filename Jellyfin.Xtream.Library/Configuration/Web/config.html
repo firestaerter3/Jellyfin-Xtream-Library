@@ -772,6 +772,16 @@
                             </div>
                             <div class="checkboxContainer checkboxContainer-withDescription">
                                 <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkEnableNativeTuner" name="EnableNativeTuner" />
+                                    <span>Enable Native Tuner (faster channel switching)</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Registers a custom tuner type that skips FFmpeg probing, cutting channel switch time roughly in half.
+                                    After enabling, add "Xtream Library" tuner in Dashboard &rarr; Live TV &rarr; Tuner Devices.
+                                </div>
+                            </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
                                     <input is="emby-checkbox" type="checkbox" id="chkEnableEpg" name="EnableEpg" />
                                     <span>Enable EPG</span>
                                 </label>

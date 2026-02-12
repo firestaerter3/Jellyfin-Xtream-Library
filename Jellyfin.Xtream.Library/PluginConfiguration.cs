@@ -268,6 +268,13 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool EnableLiveTv { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether the native tuner host is enabled.
+    /// When enabled, registers a custom ITunerHost that skips FFmpeg stream probing
+    /// for faster channel switching. Requires adding "Xtream Library" tuner in Live TV settings.
+    /// </summary>
+    public bool EnableNativeTuner { get; set; }
+
+    /// <summary>
     /// Gets or sets the array of selected Live TV category IDs.
     /// Empty array means include all Live TV categories.
     /// </summary>

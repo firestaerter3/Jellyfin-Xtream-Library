@@ -17,6 +17,7 @@ using Jellyfin.Xtream.Library.Client;
 using Jellyfin.Xtream.Library.Service;
 using Jellyfin.Xtream.Library.Tasks;
 using MediaBrowser.Controller;
+using MediaBrowser.Controller.LiveTv;
 using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -39,6 +40,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<DeltaCalculator>();
         serviceCollection.AddSingleton<StrmSyncService>();
         serviceCollection.AddSingleton<LiveTvService>();
+        serviceCollection.AddSingleton<ITunerHost, XtreamTunerHost>();
         serviceCollection.AddSingleton<IScheduledTask, SyncLibraryTask>();
     }
 }

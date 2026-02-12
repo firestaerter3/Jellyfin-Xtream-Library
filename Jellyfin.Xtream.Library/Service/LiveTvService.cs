@@ -169,7 +169,7 @@ public class LiveTvService : IDisposable
         _logger.LogInformation("Live TV cache invalidated");
     }
 
-    private async Task<List<LiveStreamInfo>> GetFilteredChannelsAsync(CancellationToken cancellationToken)
+    internal async Task<List<LiveStreamInfo>> GetFilteredChannelsAsync(CancellationToken cancellationToken)
     {
         var config = Plugin.Instance.Configuration;
         var connectionInfo = Plugin.Instance.Creds;
@@ -282,7 +282,7 @@ public class LiveTvService : IDisposable
         return sb.ToString();
     }
 
-    private static string BuildStreamUrl(PluginConfiguration config, LiveStreamInfo channel)
+    internal static string BuildStreamUrl(PluginConfiguration config, LiveStreamInfo channel)
     {
         var extension = string.Equals(config.LiveTvOutputFormat, "ts", StringComparison.OrdinalIgnoreCase) ? "ts" : "m3u8";
         return string.Create(CultureInfo.InvariantCulture, $"{config.BaseUrl}/live/{config.Username}/{config.Password}/{channel.StreamId}.{extension}");
