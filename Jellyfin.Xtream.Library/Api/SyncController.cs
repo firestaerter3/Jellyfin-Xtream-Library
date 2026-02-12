@@ -616,14 +616,39 @@ public class SyncController : ControllerBase
 
         foreach (var dir in Directory.EnumerateDirectories(path))
         {
-            total++;
             var name = Path.GetFileName(dir);
-            if (name.Contains("[tmdbid-", StringComparison.OrdinalIgnoreCase) ||
-                name.Contains("[tvdbid-", StringComparison.OrdinalIgnoreCase))
+            if (IsContentFolder(name))
             {
-                matched++;
+                total++;
+                if (name.Contains("[tmdbid-", StringComparison.OrdinalIgnoreCase) ||
+                    name.Contains("[tvdbid-", StringComparison.OrdinalIgnoreCase))
+                {
+                    matched++;
+                }
+            }
+            else
+            {
+                // Group folder (e.g., "Kids", "Generic") — count its children
+                foreach (var subDir in Directory.EnumerateDirectories(dir))
+                {
+                    total++;
+                    var subName = Path.GetFileName(subDir);
+                    if (subName.Contains("[tmdbid-", StringComparison.OrdinalIgnoreCase) ||
+                        subName.Contains("[tvdbid-", StringComparison.OrdinalIgnoreCase))
+                    {
+                        matched++;
+                    }
+                }
             }
         }
+    }
+
+    private static bool IsContentFolder(string name)
+    {
+        // Content folders contain a year in parentheses, e.g., "Movie Name (2024)" or metadata IDs
+        return name.Contains("[tmdbid-", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("[tvdbid-", StringComparison.OrdinalIgnoreCase) ||
+               System.Text.RegularExpressions.Regex.IsMatch(name, @"\(\d{4}\)");
     }
 
     private static void ForceDeleteDirectoryContents(string directoryPath)
