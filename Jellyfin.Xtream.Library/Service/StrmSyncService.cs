@@ -25,8 +25,10 @@ using System.Threading.Tasks;
 using Jellyfin.Xtream.Library.Client;
 using Jellyfin.Xtream.Library.Client.Models;
 using Jellyfin.Xtream.Library.Service.Models;
+using MediaBrowser.Controller;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
 
 namespace Jellyfin.Xtream.Library.Service;
 
@@ -46,10 +48,12 @@ public partial class StrmSyncService
     private readonly IMetadataLookupService _metadataLookup;
     private readonly SnapshotService _snapshotService;
     private readonly DeltaCalculator _deltaCalculator;
+    private readonly IServerApplicationPaths _appPaths;
     private readonly ILogger<StrmSyncService> _logger;
     private readonly object _ctsLock = new();
     private readonly List<SyncResult> _syncHistory = new();
     private readonly object _syncHistoryLock = new();
+    private bool _historyLoaded;
     private CancellationTokenSource? _currentSyncCts;
     private bool _syncSuppressed;
 
@@ -62,6 +66,7 @@ public partial class StrmSyncService
     /// <param name="metadataLookup">The metadata lookup service.</param>
     /// <param name="snapshotService">The snapshot persistence service.</param>
     /// <param name="deltaCalculator">The delta calculator for incremental sync.</param>
+    /// <param name="appPaths">The application paths service.</param>
     /// <param name="logger">The logger instance.</param>
     public StrmSyncService(
         IXtreamClient client,
@@ -70,6 +75,7 @@ public partial class StrmSyncService
         IMetadataLookupService metadataLookup,
         SnapshotService snapshotService,
         DeltaCalculator deltaCalculator,
+        IServerApplicationPaths appPaths,
         ILogger<StrmSyncService> logger)
     {
         _client = client;
@@ -78,6 +84,7 @@ public partial class StrmSyncService
         _metadataLookup = metadataLookup;
         _snapshotService = snapshotService;
         _deltaCalculator = deltaCalculator;
+        _appPaths = appPaths;
         _logger = logger;
     }
 
@@ -90,6 +97,8 @@ public partial class StrmSyncService
     /// Gets the current sync progress.
     /// </summary>
     public SyncProgress CurrentProgress { get; } = new SyncProgress();
+
+    private string SyncHistoryPath => Path.Combine(_appPaths.DataPath, "xtream-library", "sync_history.json");
 
     /// <summary>
     /// Gets the list of failed items from the last sync that can be retried.
@@ -105,6 +114,7 @@ public partial class StrmSyncService
         {
             lock (_syncHistoryLock)
             {
+                EnsureHistoryLoaded();
                 return _syncHistory.ToList();
             }
         }
@@ -944,11 +954,73 @@ public partial class StrmSyncService
     {
         lock (_syncHistoryLock)
         {
+            EnsureHistoryLoaded();
             _syncHistory.Insert(0, result);
             while (_syncHistory.Count > 10)
             {
                 _syncHistory.RemoveAt(_syncHistory.Count - 1);
             }
+
+            PersistHistory();
+        }
+    }
+
+    /// <summary>
+    /// Loads sync history from disk if not already loaded. Must be called within _syncHistoryLock.
+    /// </summary>
+    private void EnsureHistoryLoaded()
+    {
+        if (_historyLoaded)
+        {
+            return;
+        }
+
+        _historyLoaded = true;
+
+        try
+        {
+            var path = SyncHistoryPath;
+            if (!File.Exists(path))
+            {
+                return;
+            }
+
+            var json = File.ReadAllText(path);
+            var entries = JsonConvert.DeserializeObject<List<SyncResult>>(json);
+            if (entries != null)
+            {
+                _syncHistory.Clear();
+                _syncHistory.AddRange(entries);
+                _logger.LogInformation("Loaded {Count} sync history entries from disk", entries.Count);
+
+                // Restore LastSyncResult from history if not set (e.g., after restart)
+                if (LastSyncResult == null && _syncHistory.Count > 0)
+                {
+                    LastSyncResult = _syncHistory[0];
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load sync history from disk");
+        }
+    }
+
+    /// <summary>
+    /// Persists sync history to disk. Must be called within _syncHistoryLock.
+    /// </summary>
+    private void PersistHistory()
+    {
+        try
+        {
+            var path = SyncHistoryPath;
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var json = JsonConvert.SerializeObject(_syncHistory, Formatting.Indented);
+            File.WriteAllText(path, json);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist sync history to disk");
         }
     }
 
@@ -3473,8 +3545,9 @@ public class SyncResult
     }
 
     /// <summary>
-    /// Gets the list of failed items.
+    /// Gets the list of failed items. Not persisted to disk.
     /// </summary>
+    [JsonIgnore]
     public IReadOnlyList<FailedItem> FailedItems
     {
         get
@@ -3489,6 +3562,7 @@ public class SyncResult
     /// <summary>
     /// Gets the duration of the sync operation.
     /// </summary>
+    [JsonIgnore]
     public TimeSpan Duration => EndTime - StartTime;
 
     /// <summary>
