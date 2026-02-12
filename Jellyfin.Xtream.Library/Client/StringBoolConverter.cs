@@ -14,6 +14,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Globalization;
 using Newtonsoft.Json;
 
 namespace Jellyfin.Xtream.Library.Client;
@@ -37,7 +38,13 @@ public class StringBoolConverter : JsonConverter
             return false;
         }
 
-        return "1".Equals((string)reader.Value, StringComparison.Ordinal);
+        return reader.TokenType switch
+        {
+            JsonToken.String => "1".Equals((string)reader.Value!, StringComparison.Ordinal),
+            JsonToken.Integer => Convert.ToInt64(reader.Value, CultureInfo.InvariantCulture) == 1,
+            JsonToken.Boolean => (bool)reader.Value!,
+            _ => false,
+        };
     }
 
     /// <inheritdoc />
