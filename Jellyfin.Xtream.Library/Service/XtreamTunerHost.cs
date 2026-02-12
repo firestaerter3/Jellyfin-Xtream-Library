@@ -108,8 +108,12 @@ public class XtreamTunerHost : ITunerHost
     /// <inheritdoc />
     public Task<List<MediaSourceInfo>> GetChannelStreamMediaSources(string channelId, CancellationToken cancellationToken)
     {
+        if (!TryParseStreamId(channelId, out var streamId))
+        {
+            return Task.FromResult(new List<MediaSourceInfo>());
+        }
+
         var config = Plugin.Instance.Configuration;
-        var streamId = ParseStreamId(channelId);
         var streamUrl = BuildStreamUrl(config, streamId);
 
         var mediaSource = CreateMediaSourceInfo(streamId, streamUrl);
@@ -120,8 +124,12 @@ public class XtreamTunerHost : ITunerHost
     /// <inheritdoc />
     public Task<ILiveStream> GetChannelStream(string channelId, string streamId, IList<ILiveStream> currentLiveStreams, CancellationToken cancellationToken)
     {
+        if (!TryParseStreamId(channelId, out var parsedStreamId))
+        {
+            throw new ArgumentException($"Channel ID '{channelId}' is not owned by this tuner", nameof(channelId));
+        }
+
         var config = Plugin.Instance.Configuration;
-        var parsedStreamId = ParseStreamId(channelId);
         var streamUrl = BuildStreamUrl(config, parsedStreamId);
 
         var mediaSource = CreateMediaSourceInfo(parsedStreamId, streamUrl);
@@ -140,13 +148,16 @@ public class XtreamTunerHost : ITunerHost
         return Task.FromResult(new List<TunerHostInfo>());
     }
 
-    private static int ParseStreamId(string channelId)
+    private static bool TryParseStreamId(string channelId, out int streamId)
     {
-        var idStr = channelId.StartsWith(ChannelIdPrefix, StringComparison.Ordinal)
-            ? channelId.Substring(ChannelIdPrefix.Length)
-            : channelId;
+        streamId = 0;
 
-        return int.Parse(idStr, CultureInfo.InvariantCulture);
+        if (!channelId.StartsWith(ChannelIdPrefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return int.TryParse(channelId.AsSpan(ChannelIdPrefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out streamId);
     }
 
     private static string BuildStreamUrl(PluginConfiguration config, int streamId)

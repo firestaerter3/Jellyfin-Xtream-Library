@@ -240,6 +240,14 @@ public class XtreamTunerHostTests : IDisposable
         result[0].Path.Should().Contain("/live/testuser/testpass/100.ts");
     }
 
+    [Fact]
+    public async Task GetChannelStreamMediaSources_ReturnsEmpty_ForNonXtreamChannelId()
+    {
+        var result = await _tunerHost.GetChannelStreamMediaSources("m3u_016d53793ce443da", CancellationToken.None);
+
+        result.Should().BeEmpty();
+    }
+
     #endregion
 
     #region DiscoverDevices
