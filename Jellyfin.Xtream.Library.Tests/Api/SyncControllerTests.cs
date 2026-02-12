@@ -60,6 +60,7 @@ public class SyncControllerTests
             _mockMetadataLookup.Object,
             snapshotService,
             deltaCalculator,
+            appPathsMock.Object,
             _mockSyncServiceLogger.Object);
 
         _controller = new SyncController(
