@@ -1288,8 +1288,12 @@ const XtreamLibraryConfig = {
 
         var self = this;
         var html = '<table class="dashboard-history-table">';
-        html += '<thead><tr><th>Time</th><th>Status</th><th>Type</th><th>Duration</th><th>Added</th><th>Deleted</th><th>Errors</th></tr></thead>';
+        html += '<thead><tr><th>Time</th><th>Status</th><th>Type</th><th>Duration</th><th></th><th>Added</th><th>Deleted</th><th>Errors</th></tr></thead>';
         html += '<tbody>';
+
+        var colorNum = function (val, color) {
+            return val > 0 ? '<span style="color: ' + color + ';">' + val + '</span>' : '0';
+        };
 
         history.forEach(function (entry) {
             var time = new Date(entry.StartTime).toLocaleString();
@@ -1298,18 +1302,25 @@ const XtreamLibraryConfig = {
                 : '<span class="status-badge status-badge-failed">Fail</span>';
             var typeBadge = entry.WasIncrementalSync ? 'Incr' : 'Full';
             var duration = self.formatDuration(entry.StartTime, entry.EndTime);
-            var added = (entry.MoviesCreated || 0) + (entry.EpisodesCreated || 0);
-            var deleted = (entry.MoviesDeleted || 0) + (entry.EpisodesDeleted || 0);
             var errors = entry.Errors || 0;
 
+            // Movies row
             html += '<tr>';
-            html += '<td style="white-space: nowrap;">' + time + '</td>';
-            html += '<td>' + statusBadge + '</td>';
-            html += '<td>' + typeBadge + '</td>';
-            html += '<td>' + duration + '</td>';
-            html += '<td>' + (added > 0 ? '<span style="color: #82e0aa;">' + added + '</span>' : '0') + '</td>';
-            html += '<td>' + (deleted > 0 ? '<span style="color: #e0c882;">' + deleted + '</span>' : '0') + '</td>';
-            html += '<td>' + (errors > 0 ? '<span style="color: #e08282;">' + errors + '</span>' : '0') + '</td>';
+            html += '<td rowspan="2" style="white-space: nowrap; vertical-align: middle;">' + time + '</td>';
+            html += '<td rowspan="2" style="vertical-align: middle;">' + statusBadge + '</td>';
+            html += '<td rowspan="2" style="vertical-align: middle;">' + typeBadge + '</td>';
+            html += '<td rowspan="2" style="vertical-align: middle;">' + duration + '</td>';
+            html += '<td style="opacity: 0.6; font-size: 0.85em;">Movies</td>';
+            html += '<td>' + colorNum(entry.MoviesCreated || 0, '#82e0aa') + '</td>';
+            html += '<td>' + colorNum(entry.MoviesDeleted || 0, '#e0c882') + '</td>';
+            html += '<td rowspan="2" style="vertical-align: middle;">' + colorNum(errors, '#e08282') + '</td>';
+            html += '</tr>';
+
+            // Series row
+            html += '<tr>';
+            html += '<td style="opacity: 0.6; font-size: 0.85em;">Series</td>';
+            html += '<td>' + colorNum((entry.SeriesCreated || 0) + (entry.EpisodesCreated || 0), '#82e0aa') + '</td>';
+            html += '<td>' + colorNum((entry.SeriesDeleted || 0) + (entry.EpisodesDeleted || 0), '#e0c882') + '</td>';
             html += '</tr>';
         });
 
