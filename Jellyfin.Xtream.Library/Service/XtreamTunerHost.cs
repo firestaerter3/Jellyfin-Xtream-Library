@@ -126,7 +126,7 @@ public class XtreamTunerHost : ITunerHost
     {
         if (!TryParseStreamId(channelId, out var parsedStreamId))
         {
-            return Task.FromResult<ILiveStream>(null!);
+            throw new System.IO.FileNotFoundException($"Channel {channelId} not found in Xtream tuner");
         }
 
         var config = Plugin.Instance.Configuration;
