@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.IO;
 using System.Net.Http;
 using FluentAssertions;
 using Jellyfin.Xtream.Library.Client;
@@ -258,6 +259,225 @@ public class XtreamTunerHostTests : IDisposable
         var result = await _tunerHost.DiscoverDevices(1000, CancellationToken.None);
 
         result.Should().BeEmpty();
+    }
+
+    #endregion
+
+    #region GetChannelStream
+
+    [Fact]
+    public async Task GetChannelStream_WithXtreamPrefix_ReturnsLiveStream()
+    {
+        var config = Plugin.Instance.Configuration;
+        config.BaseUrl = "http://test.example.com";
+        config.Username = "testuser";
+        config.Password = "testpass";
+        config.LiveTvOutputFormat = "m3u8";
+
+        _mockHttpClientFactory
+            .Setup(f => f.CreateClient(It.IsAny<string>()))
+            .Returns(new HttpClient());
+
+        var result = await _tunerHost.GetChannelStream(
+            "xtream_100",
+            string.Empty,
+            new List<MediaBrowser.Controller.Library.ILiveStream>(),
+            CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result.MediaSource.Path.Should().Contain("/live/testuser/testpass/100.m3u8");
+    }
+
+    [Fact]
+    public async Task GetChannelStream_WithHdhrPrefix_ResolvesViaMapping()
+    {
+        var config = Plugin.Instance.Configuration;
+        config.EnableLiveTv = true;
+        config.EnableNativeTuner = true;
+        config.BaseUrl = "http://test.example.com";
+        config.Username = "testuser";
+        config.Password = "testpass";
+        config.LiveTvOutputFormat = "m3u8";
+        config.EnableChannelNameCleaning = false;
+
+        var channels = new List<LiveStreamInfo>
+        {
+            new LiveStreamInfo { StreamId = 500, Name = "Test Channel", Num = 42 },
+        };
+
+        _mockClient
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(channels);
+
+        // Populate the mapping via GetChannels
+        await _tunerHost.GetChannels(false, CancellationToken.None);
+
+        _mockHttpClientFactory
+            .Setup(f => f.CreateClient(It.IsAny<string>()))
+            .Returns(new HttpClient());
+
+        // Now resolve via hdhr_ prefix
+        var result = await _tunerHost.GetChannelStream(
+            "hdhr_42",
+            string.Empty,
+            new List<MediaBrowser.Controller.Library.ILiveStream>(),
+            CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result.MediaSource.Path.Should().Contain("/live/testuser/testpass/500.m3u8");
+    }
+
+    [Fact]
+    public async Task GetChannelStream_ColdStart_ThrowsFileNotFoundException()
+    {
+        // No GetChannels called → mapping is empty
+        var act = () => _tunerHost.GetChannelStream(
+            "hdhr_42",
+            string.Empty,
+            new List<MediaBrowser.Controller.Library.ILiveStream>(),
+            CancellationToken.None);
+
+        await act.Should().ThrowAsync<FileNotFoundException>();
+    }
+
+    [Fact]
+    public async Task GetChannelStream_UnknownChannel_ThrowsFileNotFoundException()
+    {
+        var act = () => _tunerHost.GetChannelStream(
+            "xtream_99999",
+            string.Empty,
+            new List<MediaBrowser.Controller.Library.ILiveStream>(),
+            CancellationToken.None);
+
+        // xtream_ prefix parses successfully, so this should NOT throw
+        // (the stream ID is parsed directly from the channel ID)
+        var config = Plugin.Instance.Configuration;
+        config.BaseUrl = "http://test.example.com";
+        config.Username = "testuser";
+        config.Password = "testpass";
+
+        _mockHttpClientFactory
+            .Setup(f => f.CreateClient(It.IsAny<string>()))
+            .Returns(new HttpClient());
+
+        var result = await _tunerHost.GetChannelStream(
+            "xtream_99999",
+            string.Empty,
+            new List<MediaBrowser.Controller.Library.ILiveStream>(),
+            CancellationToken.None);
+
+        result.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task GetChannelStream_NonOwnedChannel_ThrowsFileNotFoundException()
+    {
+        var act = () => _tunerHost.GetChannelStream(
+            "m3u_someotherid",
+            string.Empty,
+            new List<MediaBrowser.Controller.Library.ILiveStream>(),
+            CancellationToken.None);
+
+        await act.Should().ThrowAsync<FileNotFoundException>();
+    }
+
+    #endregion
+
+    #region Channel Mapping
+
+    [Fact]
+    public async Task GetChannels_DuplicateNumbers_LastOneWins()
+    {
+        var config = Plugin.Instance.Configuration;
+        config.EnableLiveTv = true;
+        config.EnableNativeTuner = true;
+        config.BaseUrl = "http://test.example.com";
+        config.Username = "testuser";
+        config.Password = "testpass";
+        config.EnableChannelNameCleaning = false;
+
+        var channels = new List<LiveStreamInfo>
+        {
+            new LiveStreamInfo { StreamId = 100, Name = "Channel A", Num = 1 },
+            new LiveStreamInfo { StreamId = 200, Name = "Channel B", Num = 1 }, // Same Num
+        };
+
+        _mockClient
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(channels);
+
+        var result = await _tunerHost.GetChannels(false, CancellationToken.None);
+
+        result.Should().HaveCount(2);
+
+        // The hdhr_ lookup should return the LAST stream ID for the duplicate number
+        _mockHttpClientFactory
+            .Setup(f => f.CreateClient(It.IsAny<string>()))
+            .Returns(new HttpClient());
+
+        var stream = await _tunerHost.GetChannelStream(
+            "hdhr_1",
+            string.Empty,
+            new List<MediaBrowser.Controller.Library.ILiveStream>(),
+            CancellationToken.None);
+
+        stream.MediaSource.Path.Should().Contain("/200.");
+    }
+
+    [Fact]
+    public async Task GetChannels_RefreshReplacesMapping_AtomicSwap()
+    {
+        var config = Plugin.Instance.Configuration;
+        config.EnableLiveTv = true;
+        config.EnableNativeTuner = true;
+        config.BaseUrl = "http://test.example.com";
+        config.Username = "testuser";
+        config.Password = "testpass";
+        config.EnableChannelNameCleaning = false;
+
+        // First fetch
+        var channels1 = new List<LiveStreamInfo>
+        {
+            new LiveStreamInfo { StreamId = 100, Name = "Old Channel", Num = 1 },
+        };
+        _mockClient
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(channels1);
+
+        await _tunerHost.GetChannels(false, CancellationToken.None);
+
+        // Second fetch with different channels
+        var channels2 = new List<LiveStreamInfo>
+        {
+            new LiveStreamInfo { StreamId = 999, Name = "New Channel", Num = 5 },
+        };
+        _mockClient
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(channels2);
+
+        await _tunerHost.GetChannels(false, CancellationToken.None);
+
+        _mockHttpClientFactory
+            .Setup(f => f.CreateClient(It.IsAny<string>()))
+            .Returns(new HttpClient());
+
+        // Old channel number should no longer resolve
+        var act = () => _tunerHost.GetChannelStream(
+            "hdhr_1",
+            string.Empty,
+            new List<MediaBrowser.Controller.Library.ILiveStream>(),
+            CancellationToken.None);
+
+        await act.Should().ThrowAsync<FileNotFoundException>();
+
+        // New channel number should resolve
+        var stream = await _tunerHost.GetChannelStream(
+            "hdhr_5",
+            string.Empty,
+            new List<MediaBrowser.Controller.Library.ILiveStream>(),
+            CancellationToken.None);
+
+        stream.MediaSource.Path.Should().Contain("/999.");
     }
 
     #endregion

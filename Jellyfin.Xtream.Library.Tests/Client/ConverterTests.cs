@@ -120,6 +120,50 @@ public class ConverterTests
         result!.Value.Should().BeFalse();
     }
 
+    [Fact]
+    public void StringBoolConverter_Integer1_ReturnsTrue()
+    {
+        var json = "{\"value\": 1}";
+
+        var result = JsonConvert.DeserializeObject<TestBoolWrapper>(json);
+
+        result.Should().NotBeNull();
+        result!.Value.Should().BeTrue();
+    }
+
+    [Fact]
+    public void StringBoolConverter_Integer0_ReturnsFalse()
+    {
+        var json = "{\"value\": 0}";
+
+        var result = JsonConvert.DeserializeObject<TestBoolWrapper>(json);
+
+        result.Should().NotBeNull();
+        result!.Value.Should().BeFalse();
+    }
+
+    [Fact]
+    public void StringBoolConverter_BooleanTrue_ReturnsTrue()
+    {
+        var json = "{\"value\": true}";
+
+        var result = JsonConvert.DeserializeObject<TestBoolWrapper>(json);
+
+        result.Should().NotBeNull();
+        result!.Value.Should().BeTrue();
+    }
+
+    [Fact]
+    public void StringBoolConverter_BooleanFalse_ReturnsFalse()
+    {
+        var json = "{\"value\": false}";
+
+        var result = JsonConvert.DeserializeObject<TestBoolWrapper>(json);
+
+        result.Should().NotBeNull();
+        result!.Value.Should().BeFalse();
+    }
+
     #endregion
 
     #region Base64Converter Tests

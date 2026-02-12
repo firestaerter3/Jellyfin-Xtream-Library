@@ -14,7 +14,6 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -45,10 +44,10 @@ public class XtreamTunerHost : ITunerHost
     private const string ChannelIdPrefix = "xtream_";
     private const string JellyfinTunerPrefix = "hdhr_";
 
-    private readonly ConcurrentDictionary<string, int> _channelNumberToStreamId = new();
     private readonly LiveTvService _liveTvService;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<XtreamTunerHost> _logger;
+    private volatile Dictionary<string, int> _channelNumberToStreamId = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="XtreamTunerHost"/> class.
@@ -89,12 +88,21 @@ public class XtreamTunerHost : ITunerHost
 
         var channels = await _liveTvService.GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
 
-        _channelNumberToStreamId.Clear();
+        var newMap = new Dictionary<string, int>(channels.Count);
 
-        return channels.Select(channel =>
+        var result = channels.Select(channel =>
         {
             var channelNumber = channel.Num.ToString(CultureInfo.InvariantCulture);
-            _channelNumberToStreamId[channelNumber] = channel.StreamId;
+
+            if (!newMap.TryAdd(channelNumber, channel.StreamId))
+            {
+                _logger.LogWarning(
+                    "Duplicate channel number {Num} — stream {OldStreamId} overwritten by {NewStreamId}",
+                    channelNumber,
+                    newMap[channelNumber],
+                    channel.StreamId);
+                newMap[channelNumber] = channel.StreamId;
+            }
 
             var cleanName = ChannelNameCleaner.CleanChannelName(
                 channel.Name,
@@ -111,6 +119,11 @@ public class XtreamTunerHost : ITunerHost
                 TunerHostId = Type,
             };
         }).ToList();
+
+        _channelNumberToStreamId = newMap;
+        _logger.LogDebug("Channel number mapping updated with {Count} entries", newMap.Count);
+
+        return result;
     }
 
     /// <inheritdoc />
@@ -170,7 +183,30 @@ public class XtreamTunerHost : ITunerHost
         if (channelId.StartsWith(JellyfinTunerPrefix, StringComparison.Ordinal))
         {
             var channelNumber = channelId.Substring(JellyfinTunerPrefix.Length);
-            return _channelNumberToStreamId.TryGetValue(channelNumber, out streamId);
+            var currentMap = _channelNumberToStreamId;
+
+            if (currentMap.TryGetValue(channelNumber, out streamId))
+            {
+                _logger.LogDebug("Resolved {ChannelId} via hdhr_ prefix to stream {StreamId}", channelId, streamId);
+                return true;
+            }
+
+            if (currentMap.Count == 0)
+            {
+                _logger.LogWarning(
+                    "Channel {ChannelId} lookup failed — channel mapping is empty (GetChannels has not run yet). Guide refresh will populate it.",
+                    channelId);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Channel {ChannelId} not found in mapping ({MapCount} entries). Channel number {ChannelNumber} may not exist.",
+                    channelId,
+                    currentMap.Count,
+                    channelNumber);
+            }
+
+            return false;
         }
 
         return false;
