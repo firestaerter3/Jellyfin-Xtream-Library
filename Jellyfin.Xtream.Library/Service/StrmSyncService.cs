@@ -86,6 +86,13 @@ public partial class StrmSyncService
         _deltaCalculator = deltaCalculator;
         _appPaths = appPaths;
         _logger = logger;
+
+        // Restore LastSyncResult from disk so the dashboard shows
+        // the most recent sync result immediately after restart.
+        lock (_syncHistoryLock)
+        {
+            EnsureHistoryLoaded();
+        }
     }
 
     /// <summary>
