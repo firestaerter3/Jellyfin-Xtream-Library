@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Collections.Concurrent;
 using FluentAssertions;
 using Jellyfin.Xtream.Library.Client.Models;
 using Jellyfin.Xtream.Library.Service;
@@ -856,6 +857,97 @@ public class StrmSyncServiceTests
         string url = $"{baseUrl}/movie/{username}/{password}/{streamId}.{extension}";
 
         url.Should().Be("http://dispatcharr.local:5656/movie/user/pass/12345.mp4");
+    }
+
+    #endregion
+
+    #region Cross-Batch Category Tracking Tests
+
+    [Fact]
+    public void CrossBatchCategoryTracking_GlobalMap_PreservesCategoriesAcrossBatches()
+    {
+        // Reproduces the bug where series appearing in multiple category batches
+        // lost their secondary category IDs because batchCategoryMap was per-batch.
+        // With globalCategoryMap, a series first seen in Generic (batch 1) correctly
+        // accumulates Kids (batch 2) category when it reappears.
+        var processedSeriesIds = new ConcurrentDictionary<int, bool>();
+        var globalCategoryMap = new ConcurrentDictionary<int, HashSet<int>>();
+
+        int seriesId = 42;
+        int genericCategoryId = 3720;
+        int kidsCategoryId = 3735;
+
+        // Batch 1: Series first appears in Generic category
+        if (processedSeriesIds.TryAdd(seriesId, true))
+        {
+            var categorySet = new HashSet<int> { genericCategoryId };
+            globalCategoryMap[seriesId] = categorySet;
+        }
+
+        // Batch 2: Same series appears in Kids category
+        if (processedSeriesIds.TryAdd(seriesId, true))
+        {
+            // Should NOT enter here — series already processed
+            Assert.Fail("Series should already be in processedSeriesIds");
+        }
+        else if (globalCategoryMap.TryGetValue(seriesId, out var existingCategories))
+        {
+            lock (existingCategories)
+            {
+                existingCategories.Add(kidsCategoryId);
+            }
+        }
+
+        // Verify both categories are tracked
+        globalCategoryMap.Should().ContainKey(seriesId);
+        globalCategoryMap[seriesId].Should().BeEquivalentTo(new[] { genericCategoryId, kidsCategoryId });
+    }
+
+    [Fact]
+    public void CrossBatchCategoryTracking_PerBatchMap_LosesCategoriesAcrossBatches()
+    {
+        // Demonstrates the old bug: per-batch map cannot find the series in a
+        // different batch, so the second category is silently dropped.
+        var processedSeriesIds = new ConcurrentDictionary<int, bool>();
+
+        int seriesId = 42;
+        int genericCategoryId = 3720;
+        int kidsCategoryId = 3735;
+
+        HashSet<int>? resultCategories = null;
+
+        // Batch 1: Series first appears in Generic category
+        {
+            var batchCategoryMap = new ConcurrentDictionary<int, HashSet<int>>();
+            if (processedSeriesIds.TryAdd(seriesId, true))
+            {
+                var categorySet = new HashSet<int> { genericCategoryId };
+                batchCategoryMap[seriesId] = categorySet;
+                resultCategories = categorySet;
+            }
+        }
+
+        // Batch 2: Same series appears in Kids category — but batchCategoryMap is new
+        {
+            var batchCategoryMap = new ConcurrentDictionary<int, HashSet<int>>();
+            if (processedSeriesIds.TryAdd(seriesId, true))
+            {
+                Assert.Fail("Series should already be in processedSeriesIds");
+            }
+            else if (batchCategoryMap.TryGetValue(seriesId, out var existingCategories))
+            {
+                // This branch is never reached — batchCategoryMap is empty for batch 2
+                lock (existingCategories)
+                {
+                    existingCategories.Add(kidsCategoryId);
+                }
+            }
+        }
+
+        // With per-batch map, only the first category survives
+        resultCategories.Should().NotBeNull();
+        resultCategories.Should().BeEquivalentTo(new[] { genericCategoryId });
+        resultCategories.Should().NotContain(kidsCategoryId, "per-batch map loses cross-batch categories (the bug)");
     }
 
     #endregion

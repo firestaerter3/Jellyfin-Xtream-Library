@@ -1887,6 +1887,12 @@ public partial class StrmSyncService
 
         int preApiSkipped = 0;
 
+        // Track category membership across ALL batches to prevent cross-batch category loss.
+        // A series appearing in both Generic (batch 1) and Kids (batch 7) must accumulate
+        // both category IDs, otherwise orphan protection only checks one folder and deletes
+        // the other copy's episodes as "orphans".
+        var globalCategoryMap = new ConcurrentDictionary<int, HashSet<int>>();
+
         // Process categories in batches to reduce memory usage
         for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
         {
@@ -1910,7 +1916,6 @@ public partial class StrmSyncService
 
             // Collect series from this batch of categories
             var batchSeries = new List<(Series Series, HashSet<int> CategoryIds)>();
-            var batchCategoryMap = new ConcurrentDictionary<int, HashSet<int>>();
             var seriesBag = new ConcurrentBag<(Series Series, int CategoryId)>();
 
             await Parallel.ForEachAsync(
@@ -1948,10 +1953,10 @@ public partial class StrmSyncService
                 if (processedSeriesIds.TryAdd(series.SeriesId, true))
                 {
                     var categorySet = new HashSet<int> { categoryId };
-                    batchCategoryMap[series.SeriesId] = categorySet;
+                    globalCategoryMap[series.SeriesId] = categorySet;
                     batchSeries.Add((series, categorySet));
                 }
-                else if (batchCategoryMap.TryGetValue(series.SeriesId, out var existingCategories))
+                else if (globalCategoryMap.TryGetValue(series.SeriesId, out var existingCategories))
                 {
                     lock (existingCategories)
                     {
