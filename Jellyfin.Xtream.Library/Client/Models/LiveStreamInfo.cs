@@ -42,7 +42,7 @@ public class LiveStreamInfo
     public string EpgChannelId { get; set; } = string.Empty;
 
     [JsonProperty("added")]
-    public string Added { get; set; } = string.Empty;
+    public long Added { get; set; }
 
     [JsonProperty("category_id")]
     public int? CategoryId { get; set; }
@@ -63,4 +63,7 @@ public class LiveStreamInfo
     [JsonProperty("is_adult")]
     [JsonConverter(typeof(StringBoolConverter))]
     public bool IsAdult { get; set; }
+
+    [JsonProperty("stream_stats")]
+    public StreamStatsInfo? StreamStats { get; set; }
 }

@@ -175,7 +175,7 @@ public class XtreamTunerHostTests : IDisposable
     #region GetChannelStreamMediaSources
 
     [Fact]
-    public async Task GetChannelStreamMediaSources_ReturnsSingleSource_WithProbingDisabled()
+    public async Task GetChannelStreamMediaSources_WithoutStats_ReturnsSingleSource_WithProbingEnabled()
     {
         var config = Plugin.Instance.Configuration;
         config.BaseUrl = "http://test.example.com";
@@ -188,7 +188,7 @@ public class XtreamTunerHostTests : IDisposable
         result.Should().HaveCount(1);
 
         var source = result[0];
-        source.SupportsProbing.Should().BeFalse();
+        source.SupportsProbing.Should().BeTrue();
         source.IsRemote.Should().BeTrue();
         source.IsInfiniteStream.Should().BeTrue();
         source.SupportsDirectPlay.Should().BeFalse();
@@ -202,7 +202,7 @@ public class XtreamTunerHostTests : IDisposable
     }
 
     [Fact]
-    public async Task GetChannelStreamMediaSources_HasVideoAndAudioStreams()
+    public async Task GetChannelStreamMediaSources_WithoutStats_HasDefaultVideoAndAudioStreams()
     {
         var config = Plugin.Instance.Configuration;
         config.BaseUrl = "http://test.example.com";
@@ -214,17 +214,74 @@ public class XtreamTunerHostTests : IDisposable
         var source = result[0];
         source.MediaStreams.Should().HaveCount(2);
 
+        var video = source.MediaStreams[0];
+        video.Type.Should().Be(MediaStreamType.Video);
+        video.Index.Should().Be(0);
+        video.IsInterlaced.Should().BeFalse();
+        video.Codec.Should().BeNull();
+
+        var audio = source.MediaStreams[1];
+        audio.Type.Should().Be(MediaStreamType.Audio);
+        audio.Index.Should().Be(1);
+        audio.Codec.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetChannelStreamMediaSources_WithStats_HasProbingDisabledAndMediaStreams()
+    {
+        var config = Plugin.Instance.Configuration;
+        config.EnableLiveTv = true;
+        config.EnableNativeTuner = true;
+        config.BaseUrl = "http://test.example.com";
+        config.Username = "testuser";
+        config.Password = "testpass";
+        config.EnableChannelNameCleaning = false;
+
+        var channels = new List<LiveStreamInfo>
+        {
+            new LiveStreamInfo
+            {
+                StreamId = 100,
+                Name = "Test Channel",
+                Num = 1,
+                StreamStats = new StreamStatsInfo
+                {
+                    VideoCodec = "H264",
+                    AudioCodec = "aac",
+                    Resolution = "1920x1080",
+                    SourceFps = 25.0,
+                    Bitrate = 5000,
+                },
+            },
+        };
+
+        _mockClient
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(channels);
+
+        // Populate stats via GetChannels
+        await _tunerHost.GetChannels(false, CancellationToken.None);
+
+        var result = await _tunerHost.GetChannelStreamMediaSources("xtream_100", CancellationToken.None);
+
+        var source = result[0];
+        source.SupportsProbing.Should().BeFalse();
+        source.AnalyzeDurationMs.Should().Be(0);
+
+        source.MediaStreams.Should().HaveCount(2);
+
         var video = source.MediaStreams.First(s => s.Type == MediaStreamType.Video);
         video.Codec.Should().Be("h264");
         video.Width.Should().Be(1920);
         video.Height.Should().Be(1080);
-        video.IsDefault.Should().BeTrue();
+        video.IsInterlaced.Should().BeFalse();
+        video.RealFrameRate.Should().Be(25.0f);
+        video.BitRate.Should().Be(5000000);
 
+        // Audio stream has no codec — forces transcode to avoid AAC ADTS→fMP4 copy issue
         var audio = source.MediaStreams.First(s => s.Type == MediaStreamType.Audio);
-        audio.Codec.Should().Be("aac");
-        audio.Channels.Should().Be(2);
-        audio.SampleRate.Should().Be(44100);
-        audio.IsDefault.Should().BeTrue();
+        audio.Index.Should().Be(1);
+        audio.Codec.Should().BeNull();
     }
 
     [Fact]

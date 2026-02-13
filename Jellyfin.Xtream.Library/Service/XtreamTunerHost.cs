@@ -20,6 +20,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Xtream.Library.Client.Models;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.LiveTv;
 using MediaBrowser.Model.Dto;
@@ -44,10 +45,15 @@ public class XtreamTunerHost : ITunerHost
     private const string ChannelIdPrefix = "xtream_";
     private const string JellyfinTunerPrefix = "hdhr_";
 
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
+
     private readonly LiveTvService _liveTvService;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<XtreamTunerHost> _logger;
     private volatile Dictionary<string, int> _channelNumberToStreamId = new();
+    private volatile Dictionary<int, StreamStatsInfo> _streamStats = new();
+    private List<ChannelInfo>? _cachedChannels;
+    private DateTime _cacheTime = DateTime.MinValue;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="XtreamTunerHost"/> class.
@@ -84,11 +90,20 @@ public class XtreamTunerHost : ITunerHost
             return new List<ChannelInfo>();
         }
 
-        _logger.LogDebug("Fetching channels for Xtream native tuner");
+        // Return cached channels if available and not expired
+        if (enableCache && _cachedChannels != null && DateTime.UtcNow - _cacheTime < CacheDuration)
+        {
+            _logger.LogDebug("Returning cached channel list ({Count} channels)", _cachedChannels.Count);
+            return _cachedChannels;
+        }
+
+        _logger.LogInformation("Fetching channels from Xtream API for native tuner");
 
         var channels = await _liveTvService.GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
 
         var newMap = new Dictionary<string, int>(channels.Count);
+        var newStats = new Dictionary<int, StreamStatsInfo>(channels.Count);
+        int statsCount = 0;
 
         var result = channels.Select(channel =>
         {
@@ -102,6 +117,12 @@ public class XtreamTunerHost : ITunerHost
                     newMap[channelNumber],
                     channel.StreamId);
                 newMap[channelNumber] = channel.StreamId;
+            }
+
+            if (channel.StreamStats != null)
+            {
+                newStats[channel.StreamId] = channel.StreamStats;
+                statsCount++;
             }
 
             var cleanName = ChannelNameCleaner.CleanChannelName(
@@ -121,7 +142,10 @@ public class XtreamTunerHost : ITunerHost
         }).ToList();
 
         _channelNumberToStreamId = newMap;
-        _logger.LogDebug("Channel number mapping updated with {Count} entries", newMap.Count);
+        _streamStats = newStats;
+        _cachedChannels = result;
+        _cacheTime = DateTime.UtcNow;
+        _logger.LogInformation("Channel list cached with {Count} channels ({StatsCount} with stream stats)", result.Count, statsCount);
 
         return result;
     }
@@ -136,8 +160,9 @@ public class XtreamTunerHost : ITunerHost
 
         var config = Plugin.Instance.Configuration;
         var streamUrl = BuildStreamUrl(config, streamId);
+        _streamStats.TryGetValue(streamId, out var stats);
 
-        var mediaSource = CreateMediaSourceInfo(streamId, streamUrl);
+        var mediaSource = CreateMediaSourceInfo(streamId, streamUrl, stats, _logger);
 
         return Task.FromResult(new List<MediaSourceInfo> { mediaSource });
     }
@@ -152,8 +177,9 @@ public class XtreamTunerHost : ITunerHost
 
         var config = Plugin.Instance.Configuration;
         var streamUrl = BuildStreamUrl(config, parsedStreamId);
+        _streamStats.TryGetValue(parsedStreamId, out var stats);
 
-        var mediaSource = CreateMediaSourceInfo(parsedStreamId, streamUrl);
+        var mediaSource = CreateMediaSourceInfo(parsedStreamId, streamUrl, stats, _logger);
 
         var httpClient = _httpClientFactory.CreateClient();
         ILiveStream liveStream = new XtreamLiveStream(mediaSource, httpClient);
@@ -218,46 +244,115 @@ public class XtreamTunerHost : ITunerHost
         return string.Create(CultureInfo.InvariantCulture, $"{config.BaseUrl}/live/{config.Username}/{config.Password}/{streamId}.{extension}");
     }
 
-    private static MediaSourceInfo CreateMediaSourceInfo(int streamId, string streamUrl)
+    private static MediaSourceInfo CreateMediaSourceInfo(int streamId, string streamUrl, StreamStatsInfo? stats, ILogger logger)
     {
         var sourceId = "xtream_live_" + streamId.ToString(CultureInfo.InvariantCulture);
+        bool hasStats = stats?.VideoCodec != null;
 
-        return new MediaSourceInfo
+        var mediaSource = new MediaSourceInfo
         {
             Id = sourceId,
             Path = streamUrl,
             Protocol = MediaProtocol.Http,
             Container = "mpegts",
-            SupportsProbing = false,
+            SupportsProbing = !hasStats,
             IsRemote = true,
             IsInfiniteStream = true,
             SupportsDirectPlay = false,
             SupportsDirectStream = true,
             SupportsTranscoding = true,
-            AnalyzeDurationMs = 500,
+            AnalyzeDurationMs = hasStats ? 0 : 500,
             IgnoreDts = true,
             GenPtsInput = true,
-            MediaStreams = new List<MediaStream>
+        };
+
+        if (hasStats)
+        {
+            var mediaStreams = new List<MediaStream>();
+
+            // Parse resolution (e.g. "1920x1080")
+            int width = 0, height = 0;
+            if (!string.IsNullOrEmpty(stats!.Resolution))
+            {
+                var parts = stats.Resolution.Split('x');
+                if (parts.Length == 2)
+                {
+                    int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out width);
+                    int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out height);
+                }
+            }
+
+            // Map Dispatcharr codec names to Jellyfin codec names
+            var videoCodec = MapVideoCodec(stats.VideoCodec!);
+
+            var videoStream = new MediaStream
+            {
+                Type = MediaStreamType.Video,
+                Index = 0,
+                Codec = videoCodec,
+                Width = width > 0 ? width : null,
+                Height = height > 0 ? height : null,
+                IsInterlaced = false,
+                RealFrameRate = stats.SourceFps.HasValue ? (float)stats.SourceFps.Value : null,
+                AverageFrameRate = stats.SourceFps.HasValue ? (float)stats.SourceFps.Value : null,
+                BitRate = stats.Bitrate.HasValue ? stats.Bitrate.Value * 1000 : null,
+            };
+            mediaStreams.Add(videoStream);
+
+            // Add audio stream without codec to ensure audio is included in output.
+            // Omitting codec forces Jellyfin to transcode audio (fast) rather than copy,
+            // which avoids the AAC ADTS→fMP4 issue (missing aac_adtstoasc BSF).
+            mediaStreams.Add(new MediaStream
+            {
+                Type = MediaStreamType.Audio,
+                Index = 1,
+            });
+
+            mediaSource.MediaStreams = mediaStreams;
+
+            logger.LogDebug(
+                "Stream {StreamId}: using stats — {VideoCodec} {Width}x{Height} @{Fps}fps, audio {AudioCodec}",
+                streamId,
+                videoCodec,
+                width,
+                height,
+                stats.SourceFps,
+                stats.AudioCodec ?? "unknown");
+        }
+        else
+        {
+            // No stats — provide defaults with IsInterlaced=false.
+            // Codec is left null: Jellyfin will transcode video (no stream copy without known codec)
+            // but without yadif deinterlacing, transcode runs at ~2.5x vs ~0.7x with yadif.
+            // Audio stream with null codec ensures audio is included and transcoded.
+            mediaSource.MediaStreams = new List<MediaStream>
             {
                 new MediaStream
                 {
                     Type = MediaStreamType.Video,
-                    Codec = "h264",
                     Index = 0,
-                    Width = 1920,
-                    Height = 1080,
-                    IsDefault = true,
+                    IsInterlaced = false,
                 },
                 new MediaStream
                 {
                     Type = MediaStreamType.Audio,
-                    Codec = "aac",
                     Index = 1,
-                    Channels = 2,
-                    SampleRate = 44100,
-                    IsDefault = true,
                 },
-            },
+            };
+            logger.LogDebug("Stream {StreamId}: no stats available, will probe", streamId);
+        }
+
+        return mediaSource;
+    }
+
+    private static string MapVideoCodec(string dispatcharrCodec)
+    {
+        return dispatcharrCodec.ToUpperInvariant() switch
+        {
+            "H264" or "AVC" => "h264",
+            "HEVC" or "H265" => "hevc",
+            "MPEG2VIDEO" => "mpeg2video",
+            _ => dispatcharrCodec.ToLowerInvariant(),
         };
     }
 }
