@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 120" width="400" height="120">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00A4DC;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#6B4FA0;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#AA5CC3;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#00A4DC;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Icon: TV/monitor with stream lines -->
+  <g transform="translate(20, 15)">
+    <!-- Monitor body -->
+    <rect x="5" y="5" width="75" height="55" rx="8" ry="8" fill="none" stroke="url(#bg)" stroke-width="4"/>
+    <!-- Screen -->
+    <rect x="12" y="12" width="61" height="41" rx="3" ry="3" fill="url(#bg)" opacity="0.15"/>
+    <!-- Stream/play lines inside screen -->
+    <line x1="25" y1="24" x2="58" y2="24" stroke="url(#accent)" stroke-width="3" stroke-linecap="round"/>
+    <line x1="25" y1="33" x2="52" y2="33" stroke="url(#accent)" stroke-width="3" stroke-linecap="round" opacity="0.7"/>
+    <line x1="25" y1="42" x2="46" y2="42" stroke="url(#accent)" stroke-width="3" stroke-linecap="round" opacity="0.4"/>
+    <!-- Monitor stand -->
+    <line x1="42" y1="62" x2="42" y2="75" stroke="url(#bg)" stroke-width="3" stroke-linecap="round"/>
+    <line x1="28" y1="75" x2="56" y2="75" stroke="url(#bg)" stroke-width="3" stroke-linecap="round"/>
+    <!-- Signal waves (right side) -->
+    <path d="M 68 20 Q 78 32 68 44" fill="none" stroke="#AA5CC3" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>
+    <path d="M 73 15 Q 87 32 73 49" fill="none" stroke="#AA5CC3" stroke-width="2.5" stroke-linecap="round" opacity="0.35"/>
+  </g>
+
+  <!-- Text: Xtream Library -->
+  <text x="120" y="52" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="30" font-weight="700" fill="#333333">
+    <tspan fill="url(#bg)">Xtream</tspan>
+    <tspan dx="6" fill="#555555">Library</tspan>
+  </text>
+  <!-- Subtitle -->
+  <text x="120" y="76" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="14" fill="#888888">
+    Jellyfin Plugin
+  </text>
+</svg>

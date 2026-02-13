@@ -1,6 +1,10 @@
+<p align="center">
+  <img src="images/logo.svg" alt="Xtream Library" width="400"/>
+</p>
+
 # Jellyfin Xtream Library
 
-A Jellyfin plugin that syncs Xtream VOD and Series content to native Jellyfin libraries via STRM files. Universal client compatibility, full metadata support, and automatic library integration.
+A Jellyfin plugin that syncs Xtream VOD, Series, and Live TV content to native Jellyfin libraries. STRM-based movies and series with universal client compatibility, plus a native Live TV tuner with full EPG support.
 
 ## Features
 
@@ -10,13 +14,28 @@ A Jellyfin plugin that syncs Xtream VOD and Series content to native Jellyfin li
 - **Universal Compatibility**: Works with all Jellyfin clients including Swiftfin, Infuse, and web
 - **Automatic Metadata**: Jellyfin fetches rich metadata from TMDB/TVDb
 
+### Live TV
+- **Native Tuner Host**: Registers as a Jellyfin tuner — no M3U tuner plugin needed
+- **EPG / Programme Guide**: XMLTV endpoint with configurable days (1-14) and parallel fetching
+- **Pre-Populated Stream Stats**: Fetches codec, resolution, fps, and bitrate from provider to skip FFmpeg probing
+- **Catchup / Timeshift**: Replay past programmes with configurable catchup window (1-30 days)
+- **Channel Name Cleaning**: Strips tags like `| HD |`, `[NL]`, `UK:`, codec info, and resolution suffixes
+- **Channel Name Overrides**: Override name, number, or logo per channel (`StreamId=Name|Number|LogoUrl`)
+- **Adult Channel Filtering**: Exclude adult channels from guide and playlist
+- **Category Selection**: Filter Live TV channels by category (empty = all)
+- **Dispatcharr Integration**: Enhanced stream stats and multi-variant stream support
+
 ### Sync Options
-- **Category Filtering**: Select specific VOD and Series categories to sync
+- **Category Filtering**: Select specific VOD, Series, and Live TV categories to sync
 - **Shift+Click Selection**: Quickly select ranges of categories
-- **Parallel Sync**: Configurable parallelism (up to 3x faster syncs)
-- **Smart Skip**: Skip API calls for content that already has STRM files
+- **Incremental Sync**: Only fetches changed content after the first full sync (delta-based with checksums)
+- **Parallel Sync**: Configurable parallelism (1-20 concurrent requests)
+- **Category Batching**: Process categories in configurable batch sizes to control memory usage
+- **Smart Skip**: Skip API calls for series that already have STRM files
+- **Rate Limiting**: Configurable delay between API requests with automatic retry on HTTP 429
 - **Real-Time Progress**: Live sync status showing categories, items, and created counts
 - **Cancel Sync**: Stop sync mid-operation with the Cancel button
+- **Retry Failed Items**: Re-attempt items that failed in the last sync
 - **Scheduled Sync**: Choose between interval-based (every X minutes) or daily (specific time)
 
 ### Metadata Matching
@@ -41,7 +60,8 @@ A Jellyfin plugin that syncs Xtream VOD and Series content to native Jellyfin li
 ### Library Management
 - **Orphan Cleanup**: Removes STRM files for content no longer on the provider
 - **Safety Protection**: Skips cleanup if >20% would be deleted (provider glitch protection)
-- **Delete All Content**: One-click button to clear libraries before re-syncing
+- **Separate Clean Buttons**: Delete Movies or Series library content independently
+- **Sync History**: View last 10 sync runs with timestamps and stats
 - **Library Scan Trigger**: Automatically triggers Jellyfin scan after sync
 
 ## Why This Plugin?
@@ -55,7 +75,7 @@ The standard Xtream channel-based plugin presents content as Jellyfin "Channels"
 | Metadata | Plugin-managed | Jellyfin (TMDB/TVDb) |
 | Collections | Not supported | Full support |
 | Watch status | Channel-specific | Standard library |
-| Live TV | Supported | Not supported |
+| Live TV | Supported | Supported (native tuner + EPG) |
 
 ## Installation
 
@@ -120,6 +140,18 @@ For automatic TMDb/TVDb ID lookup:
    - Movies: `The Matrix (1999)=603`
    - Series: `Breaking Bad (2008)=81189`
 
+### Live TV Setup
+
+1. Go to the **Live TV** tab in plugin settings
+2. Enable **Live TV**
+3. Click **Load Categories** and select the Live TV categories you want
+4. Enable **Native Tuner** to register as a Jellyfin tuner (recommended)
+5. Enable **EPG** for programme guide data (fetches XMLTV automatically)
+6. Optionally enable **Catchup** for timeshift replay support
+7. Click **Save**
+
+Once enabled, go to **Dashboard → Live TV** in Jellyfin — the Xtream Library tuner and guide data will appear automatically.
+
 ### First Sync
 
 1. Click **Run Sync Now**
@@ -166,11 +198,22 @@ For automatic TMDb/TVDb ID lookup:
 | `/XtreamLibrary/Cancel` | POST | Cancel running sync |
 | `/XtreamLibrary/Status` | GET | Get last sync result |
 | `/XtreamLibrary/Progress` | GET | Get real-time sync progress |
-| `/XtreamLibrary/TestConnection` | POST | Test provider connection |
+| `/XtreamLibrary/History` | GET | Sync history (last 10 runs) |
+| `/XtreamLibrary/Dashboard` | GET | Dashboard data (sync, progress, history, stats) |
+| `/XtreamLibrary/FailedItems` | GET | Failed items from last sync |
+| `/XtreamLibrary/RetryFailed` | POST | Retry failed items |
+| `/XtreamLibrary/TestConnection` | POST | Test Xtream provider connection |
+| `/XtreamLibrary/TestDispatcharr` | POST | Test Dispatcharr API connection |
 | `/XtreamLibrary/Categories/Vod` | GET | Fetch VOD categories |
 | `/XtreamLibrary/Categories/Series` | GET | Fetch Series categories |
+| `/XtreamLibrary/Categories/Live` | GET | Fetch Live TV categories |
+| `/XtreamLibrary/CleanMovies` | POST | Delete all Movies library content |
+| `/XtreamLibrary/CleanSeries` | POST | Delete all Series library content |
 | `/XtreamLibrary/ClearMetadataCache` | POST | Clear metadata lookup cache |
-| `/XtreamLibrary/CleanLibraries` | POST | Delete all library content |
+| `/XtreamLibrary/LiveTv/RefreshCache` | POST | Refresh Live TV M3U/EPG cache |
+| `/XtreamLibrary/LiveTv.m3u` | GET | M3U playlist (no auth) |
+| `/XtreamLibrary/Epg.xml` | GET | XMLTV EPG data (no auth) |
+| `/XtreamLibrary/Catchup.m3u` | GET | Catch-up channels M3U (no auth) |
 
 ## Scheduled Task
 
@@ -185,6 +228,8 @@ Trigger manually from **Dashboard → Scheduled Tasks**.
 - Jellyfin 10.11.0 or later
 - .NET 9.0 runtime
 - Xtream-compatible provider
+- Xtream provider with Live TV streams (for Live TV features)
+- Dispatcharr (optional, for enhanced stream stats and multi-variant streams)
 
 ## Troubleshooting
 
@@ -212,10 +257,18 @@ Trigger manually from **Dashboard → Scheduled Tasks**.
 
 ### Sync is slow
 
-1. Increase sync parallelism (default: 3)
+1. Increase sync parallelism (default: 10)
 2. Enable "Smart Skip Existing" to skip unchanged content
 3. Disable "Proactive Media Info" if not needed
 4. Select only the categories you need
+
+### Live TV not showing channels
+
+1. Verify Live TV is enabled in plugin settings
+2. Check that at least one Live TV category is selected
+3. Ensure the native tuner is enabled
+4. Go to Dashboard → Live TV and check that the tuner is detected
+5. Refresh the Live TV cache from plugin settings
 
 ## License
 
