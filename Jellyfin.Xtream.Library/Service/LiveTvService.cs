@@ -337,10 +337,11 @@ public class LiveTvService : IDisposable
                 var channelId = !string.IsNullOrEmpty(program.ChannelId) ? program.ChannelId : program.EpgId;
 
                 sb.Append(CultureInfo.InvariantCulture, $"  <programme start=\"{startStr}\" stop=\"{stopStr}\" channel=\"{EscapeXml(channelId)}\">\n");
-                sb.Append(CultureInfo.InvariantCulture, $"    <title>{EscapeXml(program.Title)}</title>\n");
-                if (!string.IsNullOrEmpty(program.Description))
+                sb.Append(CultureInfo.InvariantCulture, $"    <title>{EscapeXml(DecodeBase64(program.Title))}</title>\n");
+                var desc = DecodeBase64(program.Description);
+                if (!string.IsNullOrEmpty(desc))
                 {
-                    sb.Append(CultureInfo.InvariantCulture, $"    <desc>{EscapeXml(program.Description)}</desc>\n");
+                    sb.Append(CultureInfo.InvariantCulture, $"    <desc>{EscapeXml(desc)}</desc>\n");
                 }
 
                 sb.AppendLine("  </programme>");
@@ -433,6 +434,24 @@ public class LiveTvService : IDisposable
             .Replace(">", "&gt;", StringComparison.Ordinal)
             .Replace("\"", "&quot;", StringComparison.Ordinal)
             .Replace("'", "&apos;", StringComparison.Ordinal);
+    }
+
+    private static string DecodeBase64(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            return Encoding.UTF8.GetString(Convert.FromBase64String(value));
+        }
+        catch (FormatException)
+        {
+            // Not base64-encoded, return as-is
+            return value;
+        }
     }
 
     private static string EscapeAttribute(string value)
