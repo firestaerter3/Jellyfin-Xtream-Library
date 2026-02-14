@@ -573,6 +573,19 @@
                         </div>
 
                         <div class="verticalSection">
+                            <h3 class="sectionTitle">Diagnostics</h3>
+                            <div>
+                                <button is="emby-button" type="button" id="btnDownloadLog" class="raised">
+                                    <span>Download Log</span>
+                                </button>
+                                <span id="downloadLogStatus" style="margin-left: 10px;"></span>
+                            </div>
+                            <div class="fieldDescription">
+                                Downloads plugin log entries with credentials and IP addresses redacted. Safe to share for debugging.
+                            </div>
+                        </div>
+
+                        <div class="verticalSection">
                             <h3 class="sectionTitle">Manual Sync</h3>
                             <div>
                                 <button is="emby-button" type="button" id="btnManualSync" class="raised button-submit">

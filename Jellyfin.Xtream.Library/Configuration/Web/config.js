@@ -1507,6 +1507,36 @@ const XtreamLibraryConfig = {
         });
     },
 
+    downloadLog: function () {
+        var statusSpan = document.getElementById('downloadLogStatus');
+        statusSpan.innerHTML = '<span style="color: orange;">Preparing...</span>';
+
+        fetch(ApiClient.getUrl('XtreamLibrary/DownloadLog'), {
+            method: 'GET',
+            headers: {
+                'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
+            }
+        }).then(function (response) {
+            if (!response.ok) {
+                throw new Error('HTTP ' + response.status);
+            }
+            return response.blob();
+        }).then(function (blob) {
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'xtream-library-log.txt';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            statusSpan.innerHTML = '<span style="color: green;">Downloaded!</span>';
+        }).catch(function (error) {
+            console.error('DownloadLog error:', error);
+            statusSpan.innerHTML = '<span style="color: red;">Failed: ' + (error.message || 'Check console') + '</span>';
+        });
+    },
+
     refreshLiveTvCache: function () {
         const statusSpan = document.getElementById('liveTvCacheStatus');
         statusSpan.innerHTML = '<span style="color: orange;">Refreshing...</span>';
@@ -1655,6 +1685,14 @@ function initXtreamLibraryConfig() {
         btnCleanSeries.addEventListener('click', function (e) {
             e.preventDefault();
             XtreamLibraryConfig.cleanSeries();
+        });
+    }
+
+    var btnDownloadLog = document.getElementById('btnDownloadLog');
+    if (btnDownloadLog) {
+        btnDownloadLog.addEventListener('click', function (e) {
+            e.preventDefault();
+            XtreamLibraryConfig.downloadLog();
         });
     }
 
