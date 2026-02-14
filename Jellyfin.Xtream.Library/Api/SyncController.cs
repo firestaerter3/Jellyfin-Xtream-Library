@@ -18,10 +18,13 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Mime;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Xtream.Library.Client;
 using Jellyfin.Xtream.Library.Service;
+using MediaBrowser.Controller;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -44,6 +47,7 @@ public class SyncController : ControllerBase
     private readonly IDispatcharrClient _dispatcharrClient;
     private readonly IMetadataLookupService _metadataLookup;
     private readonly SnapshotService _snapshotService;
+    private readonly IServerApplicationPaths _appPaths;
     private readonly ILogger<SyncController> _logger;
 
     /// <summary>
@@ -54,6 +58,7 @@ public class SyncController : ControllerBase
     /// <param name="dispatcharrClient">The Dispatcharr REST API client.</param>
     /// <param name="metadataLookup">The metadata lookup service.</param>
     /// <param name="snapshotService">The snapshot service.</param>
+    /// <param name="appPaths">The server application paths.</param>
     /// <param name="logger">The logger instance.</param>
     public SyncController(
         StrmSyncService syncService,
@@ -61,6 +66,7 @@ public class SyncController : ControllerBase
         IDispatcharrClient dispatcharrClient,
         IMetadataLookupService metadataLookup,
         SnapshotService snapshotService,
+        IServerApplicationPaths appPaths,
         ILogger<SyncController> logger)
     {
         _syncService = syncService;
@@ -68,6 +74,7 @@ public class SyncController : ControllerBase
         _dispatcharrClient = dispatcharrClient;
         _metadataLookup = metadataLookup;
         _snapshotService = snapshotService;
+        _appPaths = appPaths;
         _logger = logger;
     }
 
@@ -509,6 +516,105 @@ public class SyncController : ControllerBase
     public async Task<ActionResult> CleanSeries()
     {
         return await CleanLibraryFolder("Series").ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Downloads plugin log entries with sensitive values redacted.
+    /// </summary>
+    /// <returns>A text file containing filtered and redacted log lines.</returns>
+    [HttpGet("DownloadLog")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    [Produces("text/plain")]
+    public ActionResult DownloadLog()
+    {
+        try
+        {
+            var logDir = _appPaths.LogDirectoryPath;
+            if (string.IsNullOrEmpty(logDir) || !Directory.Exists(logDir))
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, "Log directory not found.");
+            }
+
+            var logFiles = Directory.GetFiles(logDir, "log_*.log");
+            if (logFiles.Length == 0)
+            {
+                return File(Encoding.UTF8.GetBytes("No log files found."), "text/plain", "xtream-library-log.txt");
+            }
+
+            var config = TryGetConfig();
+            var sb = new StringBuilder();
+
+            foreach (var logFile in logFiles.OrderBy(f => f))
+            {
+                foreach (var line in System.IO.File.ReadLines(logFile))
+                {
+                    if (line.Contains("Jellyfin.Xtream.Library", StringComparison.Ordinal))
+                    {
+                        sb.AppendLine(RedactLogLine(line, config));
+                    }
+                }
+            }
+
+            if (sb.Length == 0)
+            {
+                sb.AppendLine("No Jellyfin.Xtream.Library log entries found.");
+            }
+
+            return File(Encoding.UTF8.GetBytes(sb.ToString()), "text/plain", "xtream-library-log.txt");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to generate log download");
+            return StatusCode(StatusCodes.Status500InternalServerError, "Failed to read log files.");
+        }
+    }
+
+    private static string RedactLogLine(string line, PluginConfiguration? config)
+    {
+        var result = line;
+
+        // Redact known config values
+        if (config != null)
+        {
+            if (!string.IsNullOrEmpty(config.BaseUrl))
+            {
+                result = result.Replace(config.BaseUrl, "[REDACTED_URL]", StringComparison.Ordinal);
+            }
+
+            if (!string.IsNullOrEmpty(config.Username))
+            {
+                result = result.Replace(config.Username, "[REDACTED_USER]", StringComparison.Ordinal);
+            }
+
+            if (!string.IsNullOrEmpty(config.Password))
+            {
+                result = result.Replace(config.Password, "[REDACTED_PASS]", StringComparison.Ordinal);
+            }
+
+            if (!string.IsNullOrEmpty(config.DispatcharrApiUser))
+            {
+                result = result.Replace(config.DispatcharrApiUser, "[REDACTED_USER]", StringComparison.Ordinal);
+            }
+
+            if (!string.IsNullOrEmpty(config.DispatcharrApiPass))
+            {
+                result = result.Replace(config.DispatcharrApiPass, "[REDACTED_PASS]", StringComparison.Ordinal);
+            }
+
+            if (!string.IsNullOrEmpty(config.UserAgent))
+            {
+                result = result.Replace(config.UserAgent, "[REDACTED_UA]", StringComparison.Ordinal);
+            }
+        }
+
+        // Safety-net regex: URLs with embedded credentials
+        result = Regex.Replace(result, @"://[^@]+@", "://[REDACTED]@");
+
+        // Safety-net regex: IP addresses (with optional port)
+        result = Regex.Replace(result, @"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?\b", "[REDACTED_IP]");
+
+        return result;
     }
 
     private async Task<ActionResult> CleanLibraryFolder(string folderName)

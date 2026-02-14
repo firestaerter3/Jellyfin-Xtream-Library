@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.IO;
 using FluentAssertions;
 using Jellyfin.Xtream.Library.Api;
 using Jellyfin.Xtream.Library.Client;
@@ -69,6 +70,7 @@ public class SyncControllerTests
             mockDispatcharrClient.Object,
             _mockMetadataLookup.Object,
             snapshotService,
+            appPathsMock.Object,
             _mockControllerLogger.Object);
     }
 
@@ -220,6 +222,71 @@ public class SyncControllerTests
         type.GetProperty("History").Should().NotBeNull();
         type.GetProperty("ScheduleType").Should().NotBeNull();
         type.GetProperty("LibraryStats").Should().NotBeNull();
+    }
+
+    #endregion
+
+    #region DownloadLog Tests
+
+    [Fact]
+    public void DownloadLog_ReturnsFileResult_WithRedactedContent()
+    {
+        // Arrange: create a temp log directory with a sample log file
+        var logDir = Path.Combine(Path.GetTempPath(), "xtream-test-logs-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(logDir);
+
+        try
+        {
+            var logContent = "[2024-01-01 10:00:00] [INF] [Jellyfin.Xtream.Library] Sync started\n"
+                + "[2024-01-01 10:00:01] [INF] [SomeOtherPlugin] This should be filtered out\n"
+                + "[2024-01-01 10:00:02] [INF] [Jellyfin.Xtream.Library] Connecting to 192.168.1.100:8080\n";
+            File.WriteAllText(Path.Combine(logDir, "log_20240101.log"), logContent);
+
+            // Create a controller with the temp log directory
+            var appPathsMock = new Mock<IServerApplicationPaths>();
+            appPathsMock.Setup(p => p.LogDirectoryPath).Returns(logDir);
+            appPathsMock.Setup(p => p.DataPath).Returns("/tmp");
+
+            var snapshotService = new SnapshotService(appPathsMock.Object, NullLogger<SnapshotService>.Instance);
+            var deltaCalculator = new DeltaCalculator(NullLogger<DeltaCalculator>.Instance);
+            var mockDispatcharrClient = new Mock<IDispatcharrClient>();
+            var syncService = new StrmSyncService(
+                _mockClient.Object,
+                mockDispatcharrClient.Object,
+                _mockLibraryManager.Object,
+                _mockMetadataLookup.Object,
+                snapshotService,
+                deltaCalculator,
+                appPathsMock.Object,
+                _mockSyncServiceLogger.Object);
+
+            var controller = new SyncController(
+                syncService,
+                _mockClient.Object,
+                mockDispatcharrClient.Object,
+                _mockMetadataLookup.Object,
+                snapshotService,
+                appPathsMock.Object,
+                _mockControllerLogger.Object);
+
+            // Act
+            var result = controller.DownloadLog();
+
+            // Assert
+            var fileResult = result.Should().BeOfType<FileContentResult>().Subject;
+            fileResult.ContentType.Should().Be("text/plain");
+            fileResult.FileDownloadName.Should().Be("xtream-library-log.txt");
+
+            var content = System.Text.Encoding.UTF8.GetString(fileResult.FileContents);
+            content.Should().Contain("Jellyfin.Xtream.Library");
+            content.Should().NotContain("SomeOtherPlugin");
+            content.Should().Contain("[REDACTED_IP]");
+            content.Should().NotContain("192.168.1.100");
+        }
+        finally
+        {
+            Directory.Delete(logDir, true);
+        }
     }
 
     #endregion
