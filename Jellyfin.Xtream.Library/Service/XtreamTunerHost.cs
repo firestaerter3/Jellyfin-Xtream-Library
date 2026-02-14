@@ -151,11 +151,13 @@ public class XtreamTunerHost : ITunerHost
     }
 
     /// <inheritdoc />
-    public Task<List<MediaSourceInfo>> GetChannelStreamMediaSources(string channelId, CancellationToken cancellationToken)
+    public async Task<List<MediaSourceInfo>> GetChannelStreamMediaSources(string channelId, CancellationToken cancellationToken)
     {
+        await EnsureChannelsLoadedAsync(cancellationToken).ConfigureAwait(false);
+
         if (!TryParseStreamId(channelId, out var streamId))
         {
-            return Task.FromResult(new List<MediaSourceInfo>());
+            return new List<MediaSourceInfo>();
         }
 
         var config = Plugin.Instance.Configuration;
@@ -164,12 +166,14 @@ public class XtreamTunerHost : ITunerHost
 
         var mediaSource = CreateMediaSourceInfo(streamId, streamUrl, stats, _logger);
 
-        return Task.FromResult(new List<MediaSourceInfo> { mediaSource });
+        return new List<MediaSourceInfo> { mediaSource };
     }
 
     /// <inheritdoc />
-    public Task<ILiveStream> GetChannelStream(string channelId, string streamId, IList<ILiveStream> currentLiveStreams, CancellationToken cancellationToken)
+    public async Task<ILiveStream> GetChannelStream(string channelId, string streamId, IList<ILiveStream> currentLiveStreams, CancellationToken cancellationToken)
     {
+        await EnsureChannelsLoadedAsync(cancellationToken).ConfigureAwait(false);
+
         if (!TryParseStreamId(channelId, out var parsedStreamId))
         {
             throw new System.IO.FileNotFoundException($"Channel {channelId} not found in Xtream tuner");
@@ -186,13 +190,22 @@ public class XtreamTunerHost : ITunerHost
 
         _logger.LogInformation("Opening live stream for channel {ChannelId} (stream {StreamId})", channelId, parsedStreamId);
 
-        return Task.FromResult(liveStream);
+        return liveStream;
     }
 
     /// <inheritdoc />
     public Task<List<TunerHostInfo>> DiscoverDevices(int discoveryDurationMs, CancellationToken cancellationToken)
     {
         return Task.FromResult(new List<TunerHostInfo>());
+    }
+
+    private async Task EnsureChannelsLoadedAsync(CancellationToken cancellationToken)
+    {
+        if (_cachedChannels == null)
+        {
+            _logger.LogInformation("Channel cache empty (first use after restart), fetching channels from Dispatcharr");
+            await GetChannels(true, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private bool TryParseStreamId(string channelId, out int streamId)
