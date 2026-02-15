@@ -2029,6 +2029,17 @@ public partial class StrmSyncService
                         var lookupKey = seriesBasePath + "|" + baseName;
                         if (seriesFolderLookup.TryGetValue(lookupKey, out var match))
                         {
+                            // Count episodes and seasons for skipped series (dashboard totals)
+                            Interlocked.Add(ref episodesSkipped, match.Count);
+                            try
+                            {
+                                Interlocked.Add(ref seasonsSkipped, Directory.GetDirectories(match.Path, "Season *").Length);
+                            }
+                            catch (Exception)
+                            {
+                                // Ignore filesystem errors
+                            }
+
                             try
                             {
                                 foreach (var strm in Directory.GetFiles(match.Path, "*.strm", SearchOption.AllDirectories))
@@ -2194,6 +2205,8 @@ public partial class StrmSyncService
                         }
 
                         bool allFoldersComplete = true;
+                        int preSkipEpisodes = 0;
+                        int preSkipSeasons = 0;
                         foreach (var targetFolder in preCheckFolders)
                         {
                             string seriesBasePath = string.IsNullOrEmpty(targetFolder)
@@ -2207,6 +2220,15 @@ public partial class StrmSyncService
                                 match.Count >= hintEntry.EpisodeCount)
                             {
                                 foundMatch = true;
+                                preSkipEpisodes += match.Count;
+                                try
+                                {
+                                    preSkipSeasons += Directory.GetDirectories(match.Path, "Season *").Length;
+                                }
+                                catch (Exception)
+                                {
+                                    // Ignore filesystem errors
+                                }
 
                                 // Add existing files to synced set (for orphan protection)
                                 try
@@ -2235,6 +2257,8 @@ public partial class StrmSyncService
                             Interlocked.Increment(ref seriesSkipped);
                             Interlocked.Increment(ref smartSkipped);
                             Interlocked.Increment(ref preApiSkipped);
+                            Interlocked.Add(ref episodesSkipped, preSkipEpisodes);
+                            Interlocked.Add(ref seasonsSkipped, preSkipSeasons);
 
                             // Re-use snapshot data for snapshot building (avoid API call)
                             allCollectedSeries.Add(series);
