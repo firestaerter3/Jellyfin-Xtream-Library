@@ -30,6 +30,7 @@ namespace Jellyfin.Xtream.Library;
 public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 {
     private static volatile Plugin? _instance;
+    private ConnectionInfo? _cachedCreds;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Plugin"/> class.
@@ -55,8 +56,24 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
     /// <summary>
     /// Gets the Xtream connection info with credentials from configuration.
+    /// Cached to avoid allocating a new object on every access during sync loops.
     /// </summary>
-    public ConnectionInfo Creds => new(Configuration.BaseUrl, Configuration.Username, Configuration.Password);
+    public ConnectionInfo Creds
+    {
+        get
+        {
+            var config = Configuration;
+            if (_cachedCreds == null ||
+                _cachedCreds.BaseUrl != config.BaseUrl ||
+                _cachedCreds.UserName != config.Username ||
+                _cachedCreds.Password != config.Password)
+            {
+                _cachedCreds = new ConnectionInfo(config.BaseUrl, config.Username, config.Password);
+            }
+
+            return _cachedCreds;
+        }
+    }
 
     private static PluginPageInfo CreateStatic(string name) => new()
     {

@@ -103,11 +103,19 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
 
     private void EnsureUserAgent()
     {
-        if (!_userAgentConfigured)
+        if (_userAgentConfigured)
         {
-            var config = Plugin.Instance?.Configuration;
-            UpdateUserAgent(config?.UserAgent);
+            return;
         }
+
+        // Set User-Agent before any requests are in flight
+        var config = Plugin.Instance?.Configuration;
+        UpdateUserAgent(config?.UserAgent);
+    }
+
+    private static string EncodeCredentials(ConnectionInfo connectionInfo)
+    {
+        return $"username={Uri.EscapeDataString(connectionInfo.UserName)}&password={Uri.EscapeDataString(connectionInfo.Password)}";
     }
 
     /// <summary>
@@ -164,7 +172,8 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
                 return (T)(object)new SeriesStreamInfo();
             }
 
-            return JsonConvert.DeserializeObject<T>(jsonContent, _serializerSettings)!;
+            return JsonConvert.DeserializeObject<T>(jsonContent, _serializerSettings)
+                ?? throw new JsonException($"Xtream API returned null for {typeof(T).Name} from {uri}");
         }
         catch (JsonException ex)
         {
@@ -217,37 +226,37 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
     public Task<PlayerApi> GetUserAndServerInfoAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken) =>
         QueryApi<PlayerApi>(
           connectionInfo,
-          $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}",
+          $"/player_api.php?{EncodeCredentials(connectionInfo)}",
           cancellationToken);
 
     public Task<List<Category>> GetVodCategoryAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken) =>
          QueryApi<List<Category>>(
            connectionInfo,
-           $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}&action=get_vod_categories",
+           $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_vod_categories",
            cancellationToken);
 
     public Task<List<StreamInfo>> GetVodStreamsByCategoryAsync(ConnectionInfo connectionInfo, int categoryId, CancellationToken cancellationToken) =>
          QueryApi<List<StreamInfo>>(
            connectionInfo,
-           $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}&action=get_vod_streams&category_id={categoryId}",
+           $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_vod_streams&category_id={categoryId}",
            cancellationToken);
 
     public Task<List<Category>> GetSeriesCategoryAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken) =>
          QueryApi<List<Category>>(
            connectionInfo,
-           $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}&action=get_series_categories",
+           $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_series_categories",
            cancellationToken);
 
     public Task<List<Series>> GetSeriesByCategoryAsync(ConnectionInfo connectionInfo, int categoryId, CancellationToken cancellationToken) =>
          QueryApi<List<Series>>(
            connectionInfo,
-           $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}&action=get_series&category_id={categoryId}",
+           $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_series&category_id={categoryId}",
            cancellationToken);
 
     public Task<SeriesStreamInfo> GetSeriesStreamsBySeriesAsync(ConnectionInfo connectionInfo, int seriesId, CancellationToken cancellationToken) =>
          QueryApi<SeriesStreamInfo>(
            connectionInfo,
-           $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}&action=get_series_info&series_id={seriesId}",
+           $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_series_info&series_id={seriesId}",
            cancellationToken);
 
     public async Task<VodInfoResponse?> GetVodInfoAsync(ConnectionInfo connectionInfo, int vodId, CancellationToken cancellationToken)
@@ -256,7 +265,7 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
         {
             return await QueryApi<VodInfoResponse>(
                 connectionInfo,
-                $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}&action=get_vod_info&vod_id={vodId}",
+                $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_vod_info&vod_id={vodId}",
                 cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -269,36 +278,20 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
     public Task<List<Category>> GetLiveCategoryAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken) =>
         QueryApi<List<Category>>(
             connectionInfo,
-            $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}&action=get_live_categories",
+            $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_live_categories",
             cancellationToken);
 
     public Task<List<LiveStreamInfo>> GetLiveStreamsByCategoryAsync(ConnectionInfo connectionInfo, int categoryId, CancellationToken cancellationToken) =>
         QueryApi<List<LiveStreamInfo>>(
             connectionInfo,
-            $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}&action=get_live_streams&category_id={categoryId}",
+            $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_live_streams&category_id={categoryId}",
             cancellationToken);
 
     public Task<List<LiveStreamInfo>> GetAllLiveStreamsAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken) =>
         QueryApi<List<LiveStreamInfo>>(
             connectionInfo,
-            $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}&action=get_live_streams",
+            $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_live_streams",
             cancellationToken);
-
-    public async Task<EpgListings?> GetShortEpgAsync(ConnectionInfo connectionInfo, int streamId, int limit, CancellationToken cancellationToken)
-    {
-        try
-        {
-            return await QueryApi<EpgListings>(
-                connectionInfo,
-                $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}&action=get_short_epg&stream_id={streamId}&limit={limit}",
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            logger.LogDebug(ex, "Failed to fetch short EPG for stream ID {StreamId}", streamId);
-            return null;
-        }
-    }
 
     public async Task<EpgListings?> GetSimpleDataTableAsync(ConnectionInfo connectionInfo, int streamId, CancellationToken cancellationToken)
     {
@@ -306,7 +299,7 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
         {
             return await QueryApi<EpgListings>(
                 connectionInfo,
-                $"/player_api.php?username={connectionInfo.UserName}&password={connectionInfo.Password}&action=get_simple_data_table&stream_id={streamId}",
+                $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_simple_data_table&stream_id={streamId}",
                 cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
