@@ -106,14 +106,14 @@ public class StrmSyncServiceTests
     }
 
     [Theory]
-    [InlineData("Alpha and Omega (NL GESPROKEN)", "Alpha and Omega")]
-    [InlineData("Movie (EN SPOKEN)", "Movie")]
-    [InlineData("Film (NL DUBBED)", "Film")]
-    [InlineData("Show [NL Gesproken]", "Show")]
+    [InlineData("Alpha and Omega (EN SPOKEN)", "Alpha and Omega")]
+    [InlineData("Movie (UK DUBBED)", "Movie")]
+    [InlineData("Film (DE DUBBED)", "Film")]
+    [InlineData("Show [FR Audio]", "Show")]
     [InlineData("Title (DE AUDIO)", "Title")]
     [InlineData("Movie (DE-)", "Movie")]
     [InlineData("Movie (DE -)", "Movie")]
-    [InlineData("Movie (NL-)", "Movie")]
+    [InlineData("Movie (EN-)", "Movie")]
     public void SanitizeFileName_LanguagePhrases_RemovesThem(string input, string expected)
     {
         var result = StrmSyncService.SanitizeFileName(input);
@@ -210,9 +210,9 @@ public class StrmSyncServiceTests
     [Fact]
     public void SanitizeFileName_CombinedTags_RemovesAll()
     {
-        var result = StrmSyncService.SanitizeFileName("Baas In Eigen Bos 2 HEVC 1080p BluRay (NL GESPROKEN) (2020)");
+        var result = StrmSyncService.SanitizeFileName("The Great Escape 2 HEVC 1080p BluRay (EN SPOKEN) (2020)");
 
-        result.Should().Be("Baas In Eigen Bos 2");
+        result.Should().Be("The Great Escape 2");
     }
 
     [Fact]
@@ -224,9 +224,9 @@ public class StrmSyncServiceTests
     }
 
     [Theory]
-    [InlineData("┃NL┃ Ascendance of a Bookworm", "Ascendance of a Bookworm")]
-    [InlineData("┃NL┃Campfire Cooking", "Campfire Cooking")]
-    [InlineData("| NL | Some Show", "Some Show")]
+    [InlineData("┃UK┃ Ascendance of a Bookworm", "Ascendance of a Bookworm")]
+    [InlineData("┃UK┃Campfire Cooking", "Campfire Cooking")]
+    [InlineData("| EN | Some Show", "Some Show")]
     public void SanitizeFileName_PrefixLanguageTags_RemovesThem(string input, string expected)
     {
         var result = StrmSyncService.SanitizeFileName(input);
@@ -246,9 +246,9 @@ public class StrmSyncServiceTests
     }
 
     [Fact]
-    public void SanitizeFileName_MisspelledGesproken_RemovesIt()
+    public void SanitizeFileName_BracketedLanguagePhrase_RemovesIt()
     {
-        var result = StrmSyncService.SanitizeFileName("Barbie: Dreamtopia Special [NL Gepsroken]");
+        var result = StrmSyncService.SanitizeFileName("Barbie: Dreamtopia Special [EN Spoken]");
 
         result.Should().Be("Barbie: Dreamtopia Special");
     }
@@ -256,7 +256,7 @@ public class StrmSyncServiceTests
     [Fact]
     public void SanitizeFileName_ComplexAnimeTitle_CleansAll()
     {
-        var result = StrmSyncService.SanitizeFileName("┃NL┃ Ascendance of a Bookworm[本好きの下剋上 司書になるためには手段を選んでいられません]");
+        var result = StrmSyncService.SanitizeFileName("┃UK┃ Ascendance of a Bookworm[本好きの下剋上 司書になるためには手段を選んでいられません]");
 
         result.Should().Be("Ascendance of a Bookworm");
     }
@@ -680,7 +680,7 @@ public class StrmSyncServiceTests
     [Fact]
     public void ExtractVersionLabel_HEVC_ReturnsHEVC()
     {
-        var result = StrmSyncService.ExtractVersionLabel("┃NL┃ Gladiator HEVC");
+        var result = StrmSyncService.ExtractVersionLabel("┃UK┃ Gladiator HEVC");
 
         result.Should().Be("HEVC");
     }
@@ -688,7 +688,7 @@ public class StrmSyncServiceTests
     [Fact]
     public void ExtractVersionLabel_4K_Returns4K()
     {
-        var result = StrmSyncService.ExtractVersionLabel("┃NL┃ Movie [4K]");
+        var result = StrmSyncService.ExtractVersionLabel("┃UK┃ Movie [4K]");
 
         result.Should().Be("4K");
     }

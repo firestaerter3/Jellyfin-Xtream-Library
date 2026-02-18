@@ -523,7 +523,7 @@ public partial class StrmSyncService
             return string.Empty;
         }
 
-        // Remove common prefixes like "|NL|", "┃NL┃", etc.
+        // Remove common prefixes like "|UK|", "┃US┃", etc.
         var normalized = Regex.Replace(name, @"^[\|\┃][A-Z]+[\|\┃]\s*", string.Empty, RegexOptions.None, TimeSpan.FromSeconds(1));
 
         // Remove year suffix like "(2024)" for comparison
@@ -2664,13 +2664,13 @@ public partial class StrmSyncService
             }
         }
 
-        // Remove prefix language tags like "┃NL┃" or "| NL |" at start of name
+        // Remove prefix language tags like "┃UK┃" or "| EN |" at start of name
         cleanName = PrefixLanguageTagPattern().Replace(cleanName, string.Empty);
 
-        // Remove language/country tags like "| NL |", "┃NL┃", "[NL]", "| EN |", etc.
+        // Remove language/country tags like "| UK |", "┃EN┃", "[DE]", "| FR |", etc.
         cleanName = LanguageTagPattern().Replace(cleanName, string.Empty);
 
-        // Remove language phrases like "(NL GESPROKEN)", "(EN SPOKEN)", "(DUBBED)", "[NL Gesproken]", "[NL Gepsroken]", etc.
+        // Remove language phrases like "(EN SPOKEN)", "(DE DUBBED)", "(OV)", "[FR Audio]", etc.
         cleanName = LanguagePhrasePattern().Replace(cleanName, string.Empty);
 
         // Remove bracketed content with Asian characters (Japanese/Chinese original titles)
@@ -3075,16 +3075,16 @@ public partial class StrmSyncService
     [GeneratedRegex(@"\s{2,}")]
     private static partial Regex MultipleSpacesPattern();
 
-    // Matches prefix language tags like "┃NL┃" or "| NL |" at start of name
+    // Matches prefix language tags like "┃UK┃" or "| EN |" at start of name
     [GeneratedRegex(@"^[\|\┃]\s*[A-Z]{2,3}\s*[\|\┃]\s*", RegexOptions.IgnoreCase)]
     private static partial Regex PrefixLanguageTagPattern();
 
-    // Matches language tags like "| NL |", "┃NL┃", "[NL]", "| EN |", "| DE |", etc.
+    // Matches language tags like "| UK |", "┃US┃", "[EN]", "| DE |", "| FR |", etc.
     [GeneratedRegex(@"[\|\┃\[]\s*[A-Z]{2,3}\s*[\|\┃\]]", RegexOptions.IgnoreCase)]
     private static partial Regex LanguageTagPattern();
 
-    // Matches language phrases like "(NL GESPROKEN)", "(EN SPOKEN)", "(DUBBED)", "(OV)", "(SUB)", "[NL Gesproken]", "[NL Gepsroken]", "(DE-)", "(DE -)", etc.
-    [GeneratedRegex(@"[\(\[]\s*(?:NL|EN|DE|FR|ES|IT|PT|RU|PL|JP|KR|CN)\s*(?:GESPROKEN|GEPSROKEN|SPOKEN|DUBBED|SUBS?|SUBBED|OV|OmU|AUDIO)?-?\s*[\)\]]", RegexOptions.IgnoreCase)]
+    // Matches language phrases like "(EN SPOKEN)", "(DE DUBBED)", "(OV)", "(SUB)", "[FR Audio]", "(ES-)", etc.
+    [GeneratedRegex(@"[\(\[]\s*(?:EN|UK|DE|FR|ES|IT|NL|PT|RU|PL|JP|KR|CN)\s*(?:SPOKEN|DUBBED|GESPROKEN|GEPSROKEN|SUBS?|SUBBED|OV|OmU|AUDIO)?-?\s*[\)\]]", RegexOptions.IgnoreCase)]
     private static partial Regex LanguagePhrasePattern();
 
     // Matches bracketed content containing Asian characters (CJK: Chinese, Japanese, Korean)

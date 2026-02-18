@@ -27,7 +27,7 @@ public static partial class ChannelNameCleaner
     private static readonly char[] LineSeparators = ['\n', '\r'];
 
     // Country/region prefixes (common IPTV naming conventions)
-    [GeneratedRegex(@"^(UK|US|DE|FR|NL|ES|IT|CA|AU|BE|CH|AT|PT|BR|MX|AR|PL|CZ|RO|HU|TR|GR|SE|NO|DK|FI|IE|IN|PK|AF|ZA|AE|SA|EG|MA|NG|KE|JP|KR|CN|TW|HK|SG|MY|TH|VN|PH|ID|NZ|RU|UA|BY|KZ|IL|IR|IQ)\s*[:\|\-]\s*", RegexOptions.IgnoreCase, "en-US")]
+    [GeneratedRegex(@"^(UK|US|DE|FR|ES|IT|NL|CA|AU|BE|CH|AT|PT|BR|MX|AR|PL|CZ|RO|HU|TR|GR|SE|NO|DK|FI|IE|IN|PK|AF|ZA|AE|SA|EG|MA|NG|KE|JP|KR|CN|TW|HK|SG|MY|TH|VN|PH|ID|NZ|RU|UA|BY|KZ|IL|IR|IQ)\s*[:\|\-]\s*", RegexOptions.IgnoreCase, "en-US")]
     private static partial Regex CountryPrefixRegex();
 
     // Quality tags with separators: | HD |, | FHD |, | 4K |, etc.

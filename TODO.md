@@ -32,7 +32,7 @@ Planned features and known limitations for Jellyfin Xtream Library.
 
 Current sanitization handles:
 - Year tags: `(2024)`
-- Language tags: `| NL |`, `┃NL┃`, `[EN]`, `(NL GESPROKEN)`, `[NL Gepsroken]`
+- Language tags: `| EN |`, `┃UK┃`, `[DE]`, `(EN SPOKEN)`, `[FR Audio]`
 - Codec tags: `HEVC`, `x264`, `x265`, `H.264`
 - Quality tags: `4K`, `1080p`, `720p`, `HDR`, `UHD`
 - Source tags: `BluRay`, `WEBRip`, `HDTV`, `REMUX`
@@ -67,7 +67,7 @@ Current sanitization handles:
 
 - [x] Tabbed configuration UI (General, Movies, Series tabs)
 - [x] Detailed sync statistics (series, seasons, episodes with added/deleted counts)
-- [x] Prefix language tag stripping (`┃NL┃` at start of names)
+- [x] Prefix language tag stripping (`┃UK┃` at start of names)
 - [x] Asian bracketed text removal for better metadata matching
 - [x] Auto-load categories when credentials are configured
 
