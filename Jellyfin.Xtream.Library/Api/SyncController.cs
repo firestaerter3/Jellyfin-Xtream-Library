@@ -42,6 +42,7 @@ namespace Jellyfin.Xtream.Library.Api;
 [Produces(MediaTypeNames.Application.Json)]
 public class SyncController : ControllerBase
 {
+    private static readonly Regex YearInParensRegex = new(@"\(\d{4}\)", RegexOptions.Compiled);
     private readonly StrmSyncService _syncService;
     private readonly IXtreamClient _client;
     private readonly IDispatcharrClient _dispatcharrClient;
@@ -88,7 +89,7 @@ public class SyncController : ControllerBase
         {
             return Plugin.Instance.Configuration;
         }
-        catch (InvalidOperationException)
+        catch (Exception)
         {
             return null;
         }
@@ -663,7 +664,7 @@ public class SyncController : ControllerBase
             {
                 var strms = System.IO.Directory.GetFiles(folderPath, "*.strm", System.IO.SearchOption.AllDirectories);
                 deleted = strms.Length;
-                ForceDeleteDirectoryContents(folderPath);
+                await ForceDeleteDirectoryContentsAsync(folderPath).ConfigureAwait(false);
                 _logger.LogInformation("Deleted {Count} items from {Path}", deleted, folderPath);
             }
 
@@ -686,9 +687,8 @@ public class SyncController : ControllerBase
     }
 
     /// <summary>
-    /// Deletes all contents of a directory without deleting the directory itself.
-    /// More reliable than Directory.Delete(recursive: true) on Linux/Docker where
-    /// file watchers can hold handles and cause "Directory not empty" errors.
+    /// Computes library statistics by counting matched and unmatched content folders
+    /// within the Movies and Series library directories.
     /// </summary>
     private static LibraryStatsDto GetLibraryStats(string? libraryPath)
     {
@@ -754,10 +754,10 @@ public class SyncController : ControllerBase
         // Content folders contain a year in parentheses, e.g., "Movie Name (2024)" or metadata IDs
         return name.Contains("[tmdbid-", StringComparison.OrdinalIgnoreCase) ||
                name.Contains("[tvdbid-", StringComparison.OrdinalIgnoreCase) ||
-               System.Text.RegularExpressions.Regex.IsMatch(name, @"\(\d{4}\)");
+               YearInParensRegex.IsMatch(name);
     }
 
-    private static void ForceDeleteDirectoryContents(string directoryPath)
+    private static async Task ForceDeleteDirectoryContentsAsync(string directoryPath)
     {
         var di = new System.IO.DirectoryInfo(directoryPath);
 
@@ -770,7 +770,7 @@ public class SyncController : ControllerBase
             catch (System.IO.IOException)
             {
                 // Retry once after a brief delay (file watcher may release handle)
-                System.Threading.Thread.Sleep(50);
+                await Task.Delay(50).ConfigureAwait(false);
                 file.Delete();
             }
         }

@@ -40,6 +40,12 @@ public interface IXtreamClient
     /// </summary>
     int RetryDelayMs { get; set; }
 
+    /// <summary>
+    /// Updates the User-Agent header based on plugin configuration.
+    /// </summary>
+    /// <param name="customUserAgent">Optional custom user agent string.</param>
+    void UpdateUserAgent(string? customUserAgent = null);
+
     Task<PlayerApi> GetUserAndServerInfoAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken);
 
     Task<List<Category>> GetVodCategoryAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken);
@@ -59,8 +65,6 @@ public interface IXtreamClient
     Task<List<LiveStreamInfo>> GetLiveStreamsByCategoryAsync(ConnectionInfo connectionInfo, int categoryId, CancellationToken cancellationToken);
 
     Task<List<LiveStreamInfo>> GetAllLiveStreamsAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken);
-
-    Task<EpgListings?> GetShortEpgAsync(ConnectionInfo connectionInfo, int streamId, int limit, CancellationToken cancellationToken);
 
     Task<EpgListings?> GetSimpleDataTableAsync(ConnectionInfo connectionInfo, int streamId, CancellationToken cancellationToken);
 }

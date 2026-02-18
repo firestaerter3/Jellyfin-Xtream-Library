@@ -141,6 +141,16 @@ public class DispatcharrClient : IDispatcharrClient
         int retryCount = 0;
         int maxRetries = 3;
         int currentDelay = 1000;
+        try
+        {
+            var pluginConfig = Plugin.Instance.Configuration;
+            maxRetries = pluginConfig.MaxRetries;
+            currentDelay = pluginConfig.RetryDelayMs;
+        }
+        catch (Exception)
+        {
+            // Plugin not initialized (e.g. in tests) — use defaults
+        }
 
         while (true)
         {

@@ -55,7 +55,7 @@ public partial class StrmSyncService
     private readonly object _syncHistoryLock = new();
     private bool _historyLoaded;
     private CancellationTokenSource? _currentSyncCts;
-    private bool _syncSuppressed;
+    private volatile bool _syncSuppressed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StrmSyncService"/> class.
@@ -925,6 +925,7 @@ public partial class StrmSyncService
             _logger.LogError(ex, "Sync failed with error");
             result.Error = ex.Message;
             result.EndTime = DateTime.UtcNow;
+            result.Success = false;
         }
         finally
         {
@@ -1249,7 +1250,6 @@ public partial class StrmSyncService
             // Incremental sync: filter to only new/modified movies
             if (previousSnapshot != null)
             {
-                var originalCount = batchMovies.Count;
                 var unchangedMovies = new List<(StreamInfo Stream, HashSet<int> CategoryIds)>();
                 batchMovies = batchMovies.Where(m =>
                 {
@@ -1583,6 +1583,7 @@ public partial class StrmSyncService
                     bool anyUpdated = false;
                     bool allSkipped = true;
                     string? firstPosterPath = null;
+                    string? firstTargetFolder = targetFolders.Count > 0 ? targetFolders.First() : null;
 
                     // Sync to each target folder
                     foreach (var targetFolder in targetFolders)
@@ -1633,7 +1634,7 @@ public partial class StrmSyncService
                         } // end strmEntries foreach
 
                         // Write NFO if proactive media info enabled (only for first target folder)
-                        if (anyCreated && enableProactiveMediaInfo && targetFolders.First() == targetFolder)
+                        if (anyCreated && enableProactiveMediaInfo && firstTargetFolder == targetFolder)
                         {
                             try
                             {
@@ -1663,7 +1664,7 @@ public partial class StrmSyncService
                         }
 
                         // Download artwork for unmatched movies (only for first target folder)
-                        if (targetFolders.First() == targetFolder &&
+                        if (firstTargetFolder == targetFolder &&
                             !providerTmdbId.HasValue && !autoLookupTmdbId.HasValue && !tmdbOverrides.ContainsKey(baseName) &&
                             config.DownloadArtworkForUnmatched && !string.IsNullOrEmpty(stream.StreamIcon))
                         {
@@ -1978,7 +1979,6 @@ public partial class StrmSyncService
             // Incremental sync: filter to only new/modified series
             if (previousSnapshot != null)
             {
-                var originalCount = batchSeries.Count;
                 var unchangedSeries = new List<(Series Series, HashSet<int> CategoryIds)>();
                 batchSeries = batchSeries.Where(s =>
                 {
@@ -2409,6 +2409,7 @@ public partial class StrmSyncService
 
                     bool seriesHasNewEpisodes = false;
                     var pendingImageDownloads = new List<(string Url, string Path)>();
+                    string? firstSeriesTargetFolder = targetFolders.Count > 0 ? targetFolders.First() : null;
 
                     // Sync to each target folder
                     foreach (var targetFolder in targetFolders)
@@ -2471,7 +2472,7 @@ public partial class StrmSyncService
                                 }
 
                                 // Write NFO with media info if enabled (only for first target folder)
-                                if (enableProactiveMediaInfo && targetFolders.First() == targetFolder && episode.Info != null)
+                                if (enableProactiveMediaInfo && firstSeriesTargetFolder == targetFolder && episode.Info != null)
                                 {
                                     var nfoFileName = Path.GetFileNameWithoutExtension(episodeFileName) + ".nfo";
                                     var nfoPath = Path.Combine(seasonFolder, nfoFileName);
@@ -2629,82 +2630,6 @@ public partial class StrmSyncService
         }
 
         CurrentProgress.SeriesPhase = string.Empty;
-    }
-
-    private async Task SyncSingleSeriesAsync(
-        ConnectionInfo connectionInfo,
-        string seriesPath,
-        Series series,
-        ConcurrentDictionary<string, byte> syncedFiles,
-        SyncResult result,
-        CancellationToken cancellationToken)
-    {
-        // This method is now only used as fallback - main logic moved to parallel SyncSeriesAsync
-        var seriesInfo = await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, series.SeriesId, cancellationToken).ConfigureAwait(false);
-
-        if (seriesInfo.Episodes == null || seriesInfo.Episodes.Count == 0)
-        {
-            _logger.LogDebug("Series {SeriesName} has no episodes, skipping", series.Name);
-            return;
-        }
-
-        var customTerms = Plugin.Instance.Configuration.CustomTitleRemoveTerms;
-        string seriesName = SanitizeFileName(series.Name, customTerms);
-        int? year = ExtractYear(series.Name);
-
-        string seriesFolderName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
-        string seriesFolder = Path.Combine(seriesPath, seriesFolderName);
-
-        foreach (var seasonEntry in seriesInfo.Episodes)
-        {
-            int seasonNumber = seasonEntry.Key;
-            var episodes = seasonEntry.Value;
-
-            string seasonFolder = Path.Combine(seriesFolder, $"Season {seasonNumber}");
-
-            foreach (var episode in episodes)
-            {
-                try
-                {
-                    string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode, customTerms);
-                    string strmPath = Path.Combine(seasonFolder, episodeFileName);
-
-                    syncedFiles.TryAdd(strmPath, 0);
-
-                    // Build stream URL
-                    string extension = string.IsNullOrEmpty(episode.ContainerExtension) ? "mkv" : episode.ContainerExtension;
-                    string streamUrl = $"{connectionInfo.BaseUrl}/series/{connectionInfo.UserName}/{connectionInfo.Password}/{episode.EpisodeId}.{extension}";
-
-                    if (File.Exists(strmPath))
-                    {
-                        if (StrmContentMatches(strmPath, streamUrl))
-                        {
-                            result.EpisodesSkipped++;
-                            continue;
-                        }
-
-                        // Stream URL changed, update the STRM file
-                        await File.WriteAllTextAsync(strmPath, streamUrl, cancellationToken).ConfigureAwait(false);
-                        result.EpisodesUpdated++;
-                        continue;
-                    }
-
-                    // Create season folder
-                    Directory.CreateDirectory(seasonFolder);
-
-                    // Write STRM file
-                    await File.WriteAllTextAsync(strmPath, streamUrl, cancellationToken).ConfigureAwait(false);
-                    result.EpisodesCreated++;
-
-                    _logger.LogDebug("Created episode STRM: {StrmPath}", strmPath);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to create STRM for episode: {SeriesName} S{Season}E{Episode}", series.Name, seasonNumber, episode.EpisodeNum);
-                    result.Errors++;
-                }
-            }
-        }
     }
 
     internal static string BuildEpisodeFileName(string seriesName, int seasonNumber, Episode episode, string? customRemoveTerms = null)
@@ -3029,20 +2954,21 @@ public partial class StrmSyncService
             {
                 try
                 {
-                    // Check if this is a season folder (parent is a series folder)
                     string? parentDir = Path.GetDirectoryName(directory);
                     string folderName = Path.GetFileName(directory);
 
+                    // Check if this is a season folder (starts with "Season ")
                     if (parentDir != null &&
-                        Path.GetDirectoryName(parentDir)?.Equals(seriesPath, StringComparison.OrdinalIgnoreCase) == true &&
                         folderName.StartsWith("Season ", StringComparison.OrdinalIgnoreCase))
                     {
                         result.SeasonsDeleted++;
                     }
                     else if (parentDir != null &&
-                             parentDir.Equals(seriesPath, StringComparison.OrdinalIgnoreCase))
+                             (parentDir.Equals(seriesPath, StringComparison.OrdinalIgnoreCase) ||
+                              Path.GetDirectoryName(parentDir)?.Equals(seriesPath, StringComparison.OrdinalIgnoreCase) == true))
                     {
-                        // This is a series folder (direct child of seriesPath)
+                        // Series folder: direct child of seriesPath (Single mode)
+                        // or child of a subfolder under seriesPath (Multiple mode)
                         result.SeriesDeleted++;
                     }
 
@@ -3288,31 +3214,56 @@ public class SyncProgress
     private int _episodesUpdated;
     private int _totalCategories;
     private int _categoriesProcessed;
+    private volatile bool _isRunning;
+    private volatile string _phase = string.Empty;
+    private volatile string _moviePhase = string.Empty;
+    private volatile string _seriesPhase = string.Empty;
+    private volatile string _currentItem = string.Empty;
 
     /// <summary>
     /// Gets or sets a value indicating whether a sync is currently in progress.
     /// </summary>
-    public bool IsRunning { get; set; }
+    public bool IsRunning
+    {
+        get => _isRunning;
+        set => _isRunning = value;
+    }
 
     /// <summary>
     /// Gets or sets the current phase of the sync (used for sequential phases like cleanup/retry).
     /// </summary>
-    public string Phase { get; set; } = string.Empty;
+    public string Phase
+    {
+        get => _phase;
+        set => _phase = value;
+    }
 
     /// <summary>
     /// Gets or sets the current movie sync phase (used during concurrent sync).
     /// </summary>
-    public string MoviePhase { get; set; } = string.Empty;
+    public string MoviePhase
+    {
+        get => _moviePhase;
+        set => _moviePhase = value;
+    }
 
     /// <summary>
     /// Gets or sets the current series sync phase (used during concurrent sync).
     /// </summary>
-    public string SeriesPhase { get; set; } = string.Empty;
+    public string SeriesPhase
+    {
+        get => _seriesPhase;
+        set => _seriesPhase = value;
+    }
 
     /// <summary>
     /// Gets or sets the current item being processed.
     /// </summary>
-    public string CurrentItem { get; set; } = string.Empty;
+    public string CurrentItem
+    {
+        get => _currentItem;
+        set => _currentItem = value;
+    }
 
     /// <summary>
     /// Gets or sets the total number of categories to process.
@@ -3406,22 +3357,6 @@ public class SyncProgress
     public void AddTotalItems(int count)
     {
         Interlocked.Add(ref _totalItems, count);
-    }
-
-    /// <summary>
-    /// Atomically increments the MoviesCreated counter.
-    /// </summary>
-    public void IncrementMoviesCreated()
-    {
-        Interlocked.Increment(ref _moviesCreated);
-    }
-
-    /// <summary>
-    /// Atomically increments the EpisodesCreated counter.
-    /// </summary>
-    public void IncrementEpisodesCreated()
-    {
-        Interlocked.Increment(ref _episodesCreated);
     }
 
     /// <summary>

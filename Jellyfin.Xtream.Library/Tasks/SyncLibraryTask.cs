@@ -105,9 +105,8 @@ public class SyncLibraryTask : IScheduledTask, IConfigurableScheduledTask
         {
             // Wait for progress task to complete
             await progressTask.ConfigureAwait(false);
+            progress.Report(100);
         }
-
-        progress.Report(100);
     }
 
     /// <summary>
