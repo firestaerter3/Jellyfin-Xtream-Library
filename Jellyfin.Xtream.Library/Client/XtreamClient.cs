@@ -49,6 +49,7 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
         Error = NullableEventHandler(logger),
     };
 
+    private readonly object _userAgentLock = new();
     private volatile bool _userAgentConfigured;
 
     /// <summary>
@@ -72,19 +73,32 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
     /// <param name="customUserAgent">Optional custom user agent string.</param>
     public void UpdateUserAgent(string? customUserAgent = null)
     {
-        client.DefaultRequestHeaders.UserAgent.Clear();
-        if (string.IsNullOrWhiteSpace(customUserAgent))
+        lock (_userAgentLock)
         {
-            ProductHeaderValue header = new ProductHeaderValue("Jellyfin.Xtream.Library", Assembly.GetExecutingAssembly().GetName().Version?.ToString());
-            ProductInfoHeaderValue userAgent = new ProductInfoHeaderValue(header);
-            client.DefaultRequestHeaders.UserAgent.Add(userAgent);
-        }
-        else
-        {
-            client.DefaultRequestHeaders.Add("User-Agent", customUserAgent);
-        }
+            client.DefaultRequestHeaders.UserAgent.Clear();
+            if (string.IsNullOrWhiteSpace(customUserAgent))
+            {
+                var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0.0";
+                client.DefaultRequestHeaders.UserAgent.Add(
+                    new ProductInfoHeaderValue(new ProductHeaderValue("Jellyfin.Xtream.Library", version)));
+            }
+            else
+            {
+                // Use typed API only — mixing Add("User-Agent", ...) with UserAgent collection corrupts headers
+                if (ProductInfoHeaderValue.TryParse(customUserAgent, out var parsed))
+                {
+                    client.DefaultRequestHeaders.UserAgent.Add(parsed);
+                }
+                else
+                {
+                    // Wrap as comment token for non-standard user agent strings
+                    client.DefaultRequestHeaders.UserAgent.Add(
+                        new ProductInfoHeaderValue($"({customUserAgent})"));
+                }
+            }
 
-        _userAgentConfigured = true;
+            _userAgentConfigured = true;
+        }
     }
 
     private void EnsureUserAgent()
