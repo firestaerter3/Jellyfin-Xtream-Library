@@ -19,7 +19,7 @@ A Jellyfin plugin that syncs Xtream VOD, Series, and Live TV content to native J
 - **EPG / Programme Guide**: XMLTV endpoint with configurable days (1-14) and parallel fetching
 - **Pre-Populated Stream Stats**: Fetches codec, resolution, fps, and bitrate from provider to skip FFmpeg probing
 - **Catchup / Timeshift**: Replay past programmes with configurable catchup window (1-30 days)
-- **Channel Name Cleaning**: Strips tags like `| HD |`, `[NL]`, `UK:`, codec info, and resolution suffixes
+- **Channel Name Cleaning**: Strips tags like `| HD |`, `[EN]`, `UK:`, codec info, and resolution suffixes
 - **Channel Name Overrides**: Override name, number, or logo per channel (`StreamId=Name|Number|LogoUrl`)
 - **Adult Channel Filtering**: Exclude adult channels from guide and playlist
 - **Category Selection**: Filter Live TV channels by category (empty = all)
@@ -41,7 +41,7 @@ A Jellyfin plugin that syncs Xtream VOD, Series, and Live TV content to native J
 ### Metadata Matching
 - **Automatic TMDb/TVDb Lookup**: Uses Jellyfin's configured metadata providers to find IDs
 - **Manual ID Overrides**: Force specific TMDb/TVDb IDs for content that doesn't match
-- **Language Tag Stripping**: Removes tags like `| NL |`, `[EN]`, `(NL GESPROKEN)` for better matching
+- **Language Tag Stripping**: Removes tags like `| EN |`, `[DE]`, `(EN SPOKEN)` for better matching
 - **Folder Name Formatting**: Creates folders like `Movie Name (2023) [tmdbid-12345]` for reliable matching
 
 ### Content Organization

@@ -28,7 +28,7 @@ public class ChannelNameCleanerTests
     [InlineData("US: CNN", "CNN")]
     [InlineData("DE: ARD", "ARD")]
     [InlineData("FR: TF1", "TF1")]
-    [InlineData("NL: RTL 4", "RTL 4")]
+    [InlineData("UK: ITV 4", "ITV 4")]
     [InlineData("UK | BBC Two", "BBC Two")]
     [InlineData("US - Fox News", "Fox News")]
     public void CleanChannelName_RemovesCountryPrefixes(string input, string expected)
@@ -129,7 +129,7 @@ public class ChannelNameCleanerTests
 
     [Theory]
     [InlineData("UK: BBC One | HD | HEVC", "BBC One")]
-    [InlineData("NL | RTL 4 FHD", "RTL 4")]
+    [InlineData("UK | ITV 4 FHD", "ITV 4")]
     [InlineData("US: CNN [HD] 1080p", "CNN")]
     [InlineData("| Sports 1 | H.264", "Sports 1")]
     [InlineData("DE: ZDF | 4K | H.265", "ZDF")]
