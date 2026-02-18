@@ -312,7 +312,7 @@ public class LiveTvService : IDisposable
                 config.ChannelRemoveTerms,
                 config.EnableChannelNameCleaning);
 
-            var channelId = !string.IsNullOrEmpty(channel.EpgChannelId) ? channel.EpgChannelId : channel.StreamId.ToString(CultureInfo.InvariantCulture);
+            var channelId = XtreamTunerHost.ChannelIdPrefix + channel.StreamId.ToString(CultureInfo.InvariantCulture);
 
             sb.Append(CultureInfo.InvariantCulture, $"  <channel id=\"{EscapeXml(channelId)}\">\n");
             sb.Append(CultureInfo.InvariantCulture, $"    <display-name>{EscapeXml(cleanName)}</display-name>\n");
@@ -378,15 +378,12 @@ public class LiveTvService : IDisposable
                     return new List<EpgProgram>();
                 }
 
-                // Map channel ID
-                var channelId = !string.IsNullOrEmpty(channel.EpgChannelId) ? channel.EpgChannelId : channel.StreamId.ToString(CultureInfo.InvariantCulture);
+                // Map channel ID to match the native tuner's xtream_ prefix
+                var channelId = XtreamTunerHost.ChannelIdPrefix + channel.StreamId.ToString(CultureInfo.InvariantCulture);
 
                 foreach (var program in epgListings.Listings)
                 {
-                    if (string.IsNullOrEmpty(program.ChannelId))
-                    {
-                        program.ChannelId = channelId;
-                    }
+                    program.ChannelId = channelId;
                 }
 
                 // Filter to our time range

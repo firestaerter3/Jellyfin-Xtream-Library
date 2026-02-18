@@ -42,7 +42,7 @@ public class XtreamTunerHost : ITunerHost
     /// </summary>
     internal const string TunerType = "xtream-library";
 
-    private const string ChannelIdPrefix = "xtream_";
+    internal const string ChannelIdPrefix = "xtream_";
     private const string JellyfinTunerPrefix = "hdhr_";
 
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
