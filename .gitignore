@@ -56,6 +56,9 @@ Thumbs.db
 # Test results
 TestResults/
 
+# Playwright MCP logs
+.playwright-mcp/
+
 # Local dev notes
 CLAUDE.local.md
 *.local.md
