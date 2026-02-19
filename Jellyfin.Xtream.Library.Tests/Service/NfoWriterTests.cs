@@ -53,7 +53,7 @@ public class NfoWriterTests : IDisposable
         var video = new VideoInfo { CodecName = "h264", Width = 1920, Height = 1080, AspectRatio = "16:9" };
         var audio = new AudioInfo { CodecName = "aac", Channels = 6 };
 
-        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "Test Movie", video, audio, 7200, CancellationToken.None);
+        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "Test Movie", video, audio, 7200, null, CancellationToken.None);
 
         result.Should().BeTrue();
         File.Exists(nfoPath).Should().BeTrue();
@@ -70,11 +70,50 @@ public class NfoWriterTests : IDisposable
     }
 
     [Fact]
-    public async Task WriteMovieNfo_NullVideoAndAudio_ReturnsFalse()
+    public async Task WriteMovieNfo_WithTmdbId_WritesUniqueIdTag()
     {
-        var nfoPath = Path.Combine(_tempDirectory, "movie_no_media.nfo");
+        var nfoPath = Path.Combine(_tempDirectory, "movie_tmdb.nfo");
 
-        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "Test Movie", null, null, null, CancellationToken.None);
+        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "The Matrix", null, null, null, 603, CancellationToken.None);
+
+        result.Should().BeTrue();
+        File.Exists(nfoPath).Should().BeTrue();
+
+        var xml = XDocument.Load(nfoPath);
+        xml.Root!.Name.LocalName.Should().Be("movie");
+        xml.Root.Element("title")!.Value.Should().Be("The Matrix");
+        var uniqueid = xml.Root.Element("uniqueid");
+        uniqueid.Should().NotBeNull();
+        uniqueid!.Value.Should().Be("603");
+        uniqueid.Attribute("type")!.Value.Should().Be("tmdb");
+        uniqueid.Attribute("default")!.Value.Should().Be("true");
+        xml.Root.Element("fileinfo").Should().BeNull();  // No media info, no fileinfo element
+    }
+
+    [Fact]
+    public async Task WriteMovieNfo_WithTmdbIdAndMediaInfo_WritesUniqueIdAndFileInfo()
+    {
+        var nfoPath = Path.Combine(_tempDirectory, "movie_tmdb_media.nfo");
+        var video = new VideoInfo { CodecName = "h264", Width = 1920, Height = 1080 };
+        var audio = new AudioInfo { CodecName = "aac", Channels = 6 };
+
+        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "The Matrix", video, audio, 8160, 603, CancellationToken.None);
+
+        result.Should().BeTrue();
+
+        var xml = XDocument.Load(nfoPath);
+        var uniqueid = xml.Root!.Element("uniqueid");
+        uniqueid.Should().NotBeNull();
+        uniqueid!.Value.Should().Be("603");
+        xml.Root.Element("fileinfo").Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task WriteMovieNfo_NullTmdbIdAndNullMedia_ReturnsFalse()
+    {
+        var nfoPath = Path.Combine(_tempDirectory, "movie_no_data.nfo");
+
+        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "Test Movie", null, null, null, null, CancellationToken.None);
 
         result.Should().BeFalse();
         File.Exists(nfoPath).Should().BeFalse();
@@ -86,7 +125,7 @@ public class NfoWriterTests : IDisposable
         var nfoPath = Path.Combine(_tempDirectory, "movie_video_only.nfo");
         var video = new VideoInfo { CodecName = "h265", Width = 3840, Height = 2160 };
 
-        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "4K Movie", video, null, 5400, CancellationToken.None);
+        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "4K Movie", video, null, 5400, null, CancellationToken.None);
 
         result.Should().BeTrue();
         File.Exists(nfoPath).Should().BeTrue();
@@ -108,12 +147,87 @@ public class NfoWriterTests : IDisposable
             video,
             null,
             null,
+            null,
             CancellationToken.None);
 
         result.Should().BeTrue();
 
         var xml = XDocument.Load(nfoPath);
         xml.Root!.Element("title")!.Value.Should().Be("Movie with <Special> & \"Chars\"");
+    }
+
+    #endregion
+
+    #region Show NFO Tests
+
+    [Fact]
+    public async Task WriteShowNfo_WithTvdbId_WritesPrimaryIdentifier()
+    {
+        var nfoPath = Path.Combine(_tempDirectory, "tvshow.nfo");
+
+        var result = await NfoWriter.WriteShowNfoAsync(nfoPath, "Breaking Bad", null, 81189, CancellationToken.None);
+
+        result.Should().BeTrue();
+        File.Exists(nfoPath).Should().BeTrue();
+
+        var xml = XDocument.Load(nfoPath);
+        xml.Root!.Name.LocalName.Should().Be("tvshow");
+        xml.Root.Element("title")!.Value.Should().Be("Breaking Bad");
+        var uniqueid = xml.Root.Element("uniqueid");
+        uniqueid.Should().NotBeNull();
+        uniqueid!.Value.Should().Be("81189");
+        uniqueid.Attribute("type")!.Value.Should().Be("tvdb");
+        uniqueid.Attribute("default")!.Value.Should().Be("true");
+    }
+
+    [Fact]
+    public async Task WriteShowNfo_WithTmdbIdOnly_WritesTmdbAsDefault()
+    {
+        var nfoPath = Path.Combine(_tempDirectory, "tvshow_tmdb.nfo");
+
+        var result = await NfoWriter.WriteShowNfoAsync(nfoPath, "Stranger Things", 66732, null, CancellationToken.None);
+
+        result.Should().BeTrue();
+
+        var xml = XDocument.Load(nfoPath);
+        var uniqueid = xml.Root!.Element("uniqueid");
+        uniqueid.Should().NotBeNull();
+        uniqueid!.Value.Should().Be("66732");
+        uniqueid.Attribute("type")!.Value.Should().Be("tmdb");
+        uniqueid.Attribute("default")!.Value.Should().Be("true");
+    }
+
+    [Fact]
+    public async Task WriteShowNfo_WithBothIds_WritesTvdbAsDefaultAndTmdbAsSecondary()
+    {
+        var nfoPath = Path.Combine(_tempDirectory, "tvshow_both.nfo");
+
+        var result = await NfoWriter.WriteShowNfoAsync(nfoPath, "Breaking Bad", 1396, 81189, CancellationToken.None);
+
+        result.Should().BeTrue();
+
+        var xml = XDocument.Load(nfoPath);
+        var uniqueids = xml.Root!.Elements("uniqueid").ToList();
+        uniqueids.Should().HaveCount(2);
+
+        var tvdb = uniqueids.First(e => e.Attribute("type")!.Value == "tvdb");
+        tvdb.Value.Should().Be("81189");
+        tvdb.Attribute("default")!.Value.Should().Be("true");
+
+        var tmdb = uniqueids.First(e => e.Attribute("type")!.Value == "tmdb");
+        tmdb.Value.Should().Be("1396");
+        tmdb.Attribute("default").Should().BeNull();
+    }
+
+    [Fact]
+    public async Task WriteShowNfo_NoIds_ReturnsFalse()
+    {
+        var nfoPath = Path.Combine(_tempDirectory, "tvshow_no_ids.nfo");
+
+        var result = await NfoWriter.WriteShowNfoAsync(nfoPath, "Unknown Show", null, null, CancellationToken.None);
+
+        result.Should().BeFalse();
+        File.Exists(nfoPath).Should().BeFalse();
     }
 
     #endregion

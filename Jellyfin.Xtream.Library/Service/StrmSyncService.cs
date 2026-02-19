@@ -1633,34 +1633,47 @@ public partial class StrmSyncService
                         _logger.LogDebug("Created movie STRM: {StrmPath}", strmPath);
                         } // end strmEntries foreach
 
-                        // Write NFO if proactive media info enabled (only for first target folder)
-                        if (anyCreated && enableProactiveMediaInfo && firstTargetFolder == targetFolder)
+                        // Write NFO with provider ID and/or media info (only for first target folder)
+                        if (anyCreated && firstTargetFolder == targetFolder)
                         {
-                            try
-                            {
-                                // Reuse vodInfo if already fetched, otherwise fetch now
-                                if (vodInfo == null)
-                                {
-                                    vodInfo = await _client.GetVodInfoAsync(connectionInfo, stream.StreamId, ct)
-                                        .ConfigureAwait(false);
-                                }
+                            int? effectiveTmdbId = tmdbOverrides.TryGetValue(baseName, out int overrideTmdbId)
+                                ? overrideTmdbId
+                                : (providerTmdbId ?? autoLookupTmdbId);
 
-                                if (vodInfo?.Info != null)
+                            VideoInfo? nfoVideo = null;
+                            AudioInfo? nfoAudio = null;
+                            int? nfoDurationSecs = null;
+
+                            if (enableProactiveMediaInfo)
+                            {
+                                try
                                 {
-                                    var nfoPath = Path.Combine(movieFolder, $"{folderName}.nfo");
-                                    await NfoWriter.WriteMovieNfoAsync(
-                                        nfoPath,
-                                        movieName,
-                                        vodInfo.Info.Video,
-                                        vodInfo.Info.Audio,
-                                        vodInfo.Info.DurationSecs,
-                                        ct).ConfigureAwait(false);
+                                    // Reuse vodInfo if already fetched, otherwise fetch now
+                                    if (vodInfo == null)
+                                    {
+                                        vodInfo = await _client.GetVodInfoAsync(connectionInfo, stream.StreamId, ct)
+                                            .ConfigureAwait(false);
+                                    }
+
+                                    nfoVideo = vodInfo?.Info?.Video;
+                                    nfoAudio = vodInfo?.Info?.Audio;
+                                    nfoDurationSecs = vodInfo?.Info?.DurationSecs;
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogDebug(ex, "Failed to fetch VOD info for NFO: {StreamId}", stream.StreamId);
                                 }
                             }
-                            catch (Exception ex)
-                            {
-                                _logger.LogDebug(ex, "Failed to fetch VOD info for NFO: {StreamId}", stream.StreamId);
-                            }
+
+                            var nfoPath = Path.Combine(movieFolder, $"{folderName}.nfo");
+                            await NfoWriter.WriteMovieNfoAsync(
+                                nfoPath,
+                                movieName,
+                                nfoVideo,
+                                nfoAudio,
+                                nfoDurationSecs,
+                                effectiveTmdbId,
+                                ct).ConfigureAwait(false);
                         }
 
                         // Download artwork for unmatched movies (only for first target folder)
@@ -2471,7 +2484,7 @@ public partial class StrmSyncService
                                     continue;
                                 }
 
-                                // Write NFO with media info if enabled (only for first target folder)
+                                // Write episode NFO with media info if enabled (only for first target folder)
                                 if (enableProactiveMediaInfo && firstSeriesTargetFolder == targetFolder && episode.Info != null)
                                 {
                                     var nfoFileName = Path.GetFileNameWithoutExtension(episodeFileName) + ".nfo";
@@ -2546,6 +2559,16 @@ public partial class StrmSyncService
                                 var fanartPath = Path.Combine(seriesFolderPath, $"fanart{fanartExt}");
                                 pendingImageDownloads.Add((backdropUrl, fanartPath));
                             }
+                        }
+
+                        // Write tvshow.nfo with provider IDs for new series folders
+                        if (isNewSeries)
+                        {
+                            int? showTvdbId = tvdbOverrides.TryGetValue(baseName, out int overrideTvdbId)
+                                ? overrideTvdbId
+                                : autoLookupTvdbId;
+                            var showNfoPath = Path.Combine(seriesFolderPath, "tvshow.nfo");
+                            await NfoWriter.WriteShowNfoAsync(showNfoPath, seriesName, providerTmdbId, showTvdbId, ct).ConfigureAwait(false);
                         }
                     }
 

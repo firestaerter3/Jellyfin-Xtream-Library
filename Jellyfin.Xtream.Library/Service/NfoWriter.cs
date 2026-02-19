@@ -29,25 +29,29 @@ namespace Jellyfin.Xtream.Library.Service;
 public static class NfoWriter
 {
     /// <summary>
-    /// Writes a movie NFO file with stream details.
+    /// Writes a movie NFO file with provider identifiers and/or stream details.
     /// </summary>
     /// <param name="nfoPath">Path to the NFO file.</param>
     /// <param name="title">Movie title.</param>
     /// <param name="video">Video stream info.</param>
     /// <param name="audio">Audio stream info.</param>
     /// <param name="durationSecs">Duration in seconds.</param>
+    /// <param name="tmdbId">Optional TMDb ID for provider identification.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>True if NFO was written, false if no media info was available.</returns>
+    /// <returns>True if NFO was written, false if no data was available.</returns>
     public static async Task<bool> WriteMovieNfoAsync(
         string nfoPath,
         string title,
         VideoInfo? video,
         AudioInfo? audio,
         int? durationSecs,
+        int? tmdbId,
         CancellationToken cancellationToken)
     {
-        // Skip if no usable media info available
-        if (!HasUsableData(video, audio))
+        bool hasMedia = HasUsableData(video, audio);
+
+        // Skip if no provider ID and no media info
+        if (!tmdbId.HasValue && !hasMedia)
         {
             return false;
         }
@@ -57,9 +61,61 @@ public static class NfoWriter
         sb.AppendLine("<movie>");
         sb.Append("  <title>").Append(EscapeXml(title)).AppendLine("</title>");
 
-        AppendFileInfo(sb, video, audio, durationSecs);
+        if (tmdbId.HasValue)
+        {
+            sb.Append("  <uniqueid type=\"tmdb\" default=\"true\">").Append(tmdbId.Value.ToString(CultureInfo.InvariantCulture)).AppendLine("</uniqueid>");
+        }
+
+        if (hasMedia)
+        {
+            AppendFileInfo(sb, video, audio, durationSecs);
+        }
 
         sb.AppendLine("</movie>");
+
+        await File.WriteAllTextAsync(nfoPath, sb.ToString(), Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <summary>
+    /// Writes a tvshow NFO file with provider identifiers for series-level identification.
+    /// </summary>
+    /// <param name="nfoPath">Path to the tvshow.nfo file.</param>
+    /// <param name="title">Series title.</param>
+    /// <param name="tmdbId">Optional TMDb ID.</param>
+    /// <param name="tvdbId">Optional TVDb ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if NFO was written, false if no provider IDs were available.</returns>
+    public static async Task<bool> WriteShowNfoAsync(
+        string nfoPath,
+        string title,
+        int? tmdbId,
+        int? tvdbId,
+        CancellationToken cancellationToken)
+    {
+        if (!tmdbId.HasValue && !tvdbId.HasValue)
+        {
+            return false;
+        }
+
+        var sb = new StringBuilder();
+        sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
+        sb.AppendLine("<tvshow>");
+        sb.Append("  <title>").Append(EscapeXml(title)).AppendLine("</title>");
+
+        // TVDb is the primary identifier for series; TMDb is secondary
+        if (tvdbId.HasValue)
+        {
+            sb.Append("  <uniqueid type=\"tvdb\" default=\"true\">").Append(tvdbId.Value.ToString(CultureInfo.InvariantCulture)).AppendLine("</uniqueid>");
+        }
+
+        if (tmdbId.HasValue)
+        {
+            string defaultAttr = tvdbId.HasValue ? string.Empty : " default=\"true\"";
+            sb.Append(CultureInfo.InvariantCulture, $"  <uniqueid type=\"tmdb\"{defaultAttr}>").Append(tmdbId.Value.ToString(CultureInfo.InvariantCulture)).AppendLine("</uniqueid>");
+        }
+
+        sb.AppendLine("</tvshow>");
 
         await File.WriteAllTextAsync(nfoPath, sb.ToString(), Encoding.UTF8, cancellationToken).ConfigureAwait(false);
         return true;
