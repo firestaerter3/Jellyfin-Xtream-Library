@@ -20,6 +20,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dto;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Xtream.Library.Service;
 
@@ -29,6 +30,7 @@ namespace Jellyfin.Xtream.Library.Service;
 internal sealed class XtreamLiveStream : ILiveStream, IDisposable
 {
     private readonly HttpClient _httpClient;
+    private readonly ILogger _logger;
     private HttpResponseMessage? _response;
     private Stream? _stream;
     private bool _disposed;
@@ -38,10 +40,12 @@ internal sealed class XtreamLiveStream : ILiveStream, IDisposable
     /// </summary>
     /// <param name="mediaSource">The media source info with stream URL in Path.</param>
     /// <param name="httpClient">The HTTP client for streaming.</param>
-    public XtreamLiveStream(MediaSourceInfo mediaSource, HttpClient httpClient)
+    /// <param name="logger">The logger instance.</param>
+    public XtreamLiveStream(MediaSourceInfo mediaSource, HttpClient httpClient, ILogger logger)
     {
         MediaSource = mediaSource;
         _httpClient = httpClient;
+        _logger = logger;
         UniqueId = Guid.NewGuid().ToString("N");
         TunerHostId = XtreamTunerHost.TunerType;
         OriginalStreamId = mediaSource.Id;
@@ -68,12 +72,27 @@ internal sealed class XtreamLiveStream : ILiveStream, IDisposable
     /// <inheritdoc />
     public async Task Open(CancellationToken openCancellationToken)
     {
-        _response = await _httpClient.GetAsync(
-            MediaSource.Path,
-            HttpCompletionOption.ResponseHeadersRead,
-            openCancellationToken).ConfigureAwait(false);
-        _response.EnsureSuccessStatusCode();
-        _stream = await _response.Content.ReadAsStreamAsync(openCancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("Opening stream: {Url}", MediaSource.Path);
+        try
+        {
+            _response = await _httpClient.GetAsync(
+                MediaSource.Path,
+                HttpCompletionOption.ResponseHeadersRead,
+                openCancellationToken).ConfigureAwait(false);
+            _response.EnsureSuccessStatusCode();
+            _stream = await _response.Content.ReadAsStreamAsync(openCancellationToken).ConfigureAwait(false);
+            _logger.LogInformation("Stream opened successfully (HTTP {StatusCode})", (int)_response.StatusCode);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(
+                ex,
+                "Failed to open stream {Url} — HTTP {StatusCode}: {Reason}. Check BaseUrl, Username, and Password in plugin settings.",
+                MediaSource.Path,
+                (int?)ex.StatusCode,
+                ex.Message);
+            throw;
+        }
     }
 
     /// <inheritdoc />
