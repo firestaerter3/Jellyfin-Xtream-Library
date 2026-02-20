@@ -1673,6 +1673,7 @@ public partial class StrmSyncService
                                 nfoAudio,
                                 nfoDurationSecs,
                                 effectiveTmdbId,
+                                year,
                                 ct).ConfigureAwait(false);
                         }
 
@@ -2713,6 +2714,7 @@ public partial class StrmSyncService
 
         // Remove year from name if present (we'll add it back in folder name format)
         cleanName = YearPattern().Replace(cleanName, string.Empty);
+        cleanName = DashYearSuffixPattern().Replace(cleanName, string.Empty);
 
         // Fix malformed quotes/apostrophes (e.g., "Angela'\'s" -> "Angela's")
         cleanName = MalformedQuotePattern().Replace(cleanName, "'");
@@ -2776,7 +2778,15 @@ public partial class StrmSyncService
             return null;
         }
 
+        // Try parenthetical year first: "Movie (2025)"
         var match = YearPattern().Match(name);
+
+        // Fall back to dash-suffix year: "Movie - 2025"
+        if (!match.Success)
+        {
+            match = DashYearSuffixPattern().Match(name);
+        }
+
         if (match.Success && int.TryParse(match.Groups[1].Value, out int year))
         {
             // Sanity check: year should be between 1900 and current year + 5
@@ -3091,6 +3101,10 @@ public partial class StrmSyncService
 
     [GeneratedRegex(@"\s*\((\d{4})\)\s*$")]
     private static partial Regex YearPattern();
+
+    // Matches bare year suffix appended with a dash, e.g. "Alarum - 2025" or "Movie – 2025"
+    [GeneratedRegex(@"\s*[-–]\s*(\d{4})\s*$")]
+    private static partial Regex DashYearSuffixPattern();
 
     [GeneratedRegex(@"_+")]
     private static partial Regex MultipleUnderscoresPattern();
