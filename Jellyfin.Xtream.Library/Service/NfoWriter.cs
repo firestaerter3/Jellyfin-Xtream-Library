@@ -37,6 +37,7 @@ public static class NfoWriter
     /// <param name="audio">Audio stream info.</param>
     /// <param name="durationSecs">Duration in seconds.</param>
     /// <param name="tmdbId">Optional TMDb ID for provider identification.</param>
+    /// <param name="year">Optional release year.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>True if NFO was written, false if no data was available.</returns>
     public static async Task<bool> WriteMovieNfoAsync(
@@ -46,6 +47,7 @@ public static class NfoWriter
         AudioInfo? audio,
         int? durationSecs,
         int? tmdbId,
+        int? year,
         CancellationToken cancellationToken)
     {
         bool hasMedia = HasUsableData(video, audio);
@@ -60,6 +62,11 @@ public static class NfoWriter
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
         sb.AppendLine("<movie>");
         sb.Append("  <title>").Append(EscapeXml(title)).AppendLine("</title>");
+
+        if (year.HasValue)
+        {
+            sb.Append("  <year>").Append(year.Value.ToString(CultureInfo.InvariantCulture)).AppendLine("</year>");
+        }
 
         if (tmdbId.HasValue)
         {

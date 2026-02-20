@@ -53,7 +53,7 @@ public class NfoWriterTests : IDisposable
         var video = new VideoInfo { CodecName = "h264", Width = 1920, Height = 1080, AspectRatio = "16:9" };
         var audio = new AudioInfo { CodecName = "aac", Channels = 6 };
 
-        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "Test Movie", video, audio, 7200, null, CancellationToken.None);
+        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "Test Movie", video, audio, 7200, null, null, CancellationToken.None);
 
         result.Should().BeTrue();
         File.Exists(nfoPath).Should().BeTrue();
@@ -74,7 +74,7 @@ public class NfoWriterTests : IDisposable
     {
         var nfoPath = Path.Combine(_tempDirectory, "movie_tmdb.nfo");
 
-        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "The Matrix", null, null, null, 603, CancellationToken.None);
+        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "The Matrix", null, null, null, 603, null, CancellationToken.None);
 
         result.Should().BeTrue();
         File.Exists(nfoPath).Should().BeTrue();
@@ -97,7 +97,7 @@ public class NfoWriterTests : IDisposable
         var video = new VideoInfo { CodecName = "h264", Width = 1920, Height = 1080 };
         var audio = new AudioInfo { CodecName = "aac", Channels = 6 };
 
-        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "The Matrix", video, audio, 8160, 603, CancellationToken.None);
+        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "The Matrix", video, audio, 8160, 603, null, CancellationToken.None);
 
         result.Should().BeTrue();
 
@@ -113,7 +113,7 @@ public class NfoWriterTests : IDisposable
     {
         var nfoPath = Path.Combine(_tempDirectory, "movie_no_data.nfo");
 
-        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "Test Movie", null, null, null, null, CancellationToken.None);
+        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "Test Movie", null, null, null, null, null, CancellationToken.None);
 
         result.Should().BeFalse();
         File.Exists(nfoPath).Should().BeFalse();
@@ -125,7 +125,7 @@ public class NfoWriterTests : IDisposable
         var nfoPath = Path.Combine(_tempDirectory, "movie_video_only.nfo");
         var video = new VideoInfo { CodecName = "h265", Width = 3840, Height = 2160 };
 
-        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "4K Movie", video, null, 5400, null, CancellationToken.None);
+        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "4K Movie", video, null, 5400, null, null, CancellationToken.None);
 
         result.Should().BeTrue();
         File.Exists(nfoPath).Should().BeTrue();
@@ -133,6 +133,44 @@ public class NfoWriterTests : IDisposable
         var xml = XDocument.Load(nfoPath);
         xml.Root!.Descendants("video").Should().ContainSingle();
         xml.Root.Descendants("audio").Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task WriteMovieNfo_WithYear_WritesYearElement()
+    {
+        var nfoPath = Path.Combine(_tempDirectory, "movie_with_year.nfo");
+
+        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "Alarum", null, null, null, null, 2025, CancellationToken.None);
+
+        result.Should().BeFalse();  // No tmdbId and no media info — file not written
+    }
+
+    [Fact]
+    public async Task WriteMovieNfo_WithYearAndTmdbId_WritesYearElement()
+    {
+        var nfoPath = Path.Combine(_tempDirectory, "movie_year_tmdb.nfo");
+
+        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "Alarum", null, null, null, 12345, 2025, CancellationToken.None);
+
+        result.Should().BeTrue();
+
+        var xml = XDocument.Load(nfoPath);
+        xml.Root!.Element("title")!.Value.Should().Be("Alarum");
+        xml.Root.Element("year")!.Value.Should().Be("2025");
+        xml.Root.Element("uniqueid")!.Value.Should().Be("12345");
+    }
+
+    [Fact]
+    public async Task WriteMovieNfo_WithoutYear_OmitsYearElement()
+    {
+        var nfoPath = Path.Combine(_tempDirectory, "movie_no_year.nfo");
+
+        var result = await NfoWriter.WriteMovieNfoAsync(nfoPath, "Timeless Classic", null, null, null, 999, null, CancellationToken.None);
+
+        result.Should().BeTrue();
+
+        var xml = XDocument.Load(nfoPath);
+        xml.Root!.Element("year").Should().BeNull();
     }
 
     [Fact]
@@ -145,6 +183,7 @@ public class NfoWriterTests : IDisposable
             nfoPath,
             "Movie with <Special> & \"Chars\"",
             video,
+            null,
             null,
             null,
             null,

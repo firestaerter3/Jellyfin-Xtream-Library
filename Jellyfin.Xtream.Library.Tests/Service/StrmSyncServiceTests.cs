@@ -45,6 +45,8 @@ public class StrmSyncServiceTests
     [InlineData("The Matrix (1999)", "The Matrix")]
     [InlineData("Inception (2010)", "Inception")]
     [InlineData("Movie Title (2024)", "Movie Title")]
+    [InlineData("Alarum - 2025", "Alarum")]
+    [InlineData("Some Movie – 2022", "Some Movie")]
     public void SanitizeFileName_WithYear_RemovesYear(string input, string expected)
     {
         var result = StrmSyncService.SanitizeFileName(input);
@@ -285,6 +287,8 @@ public class StrmSyncServiceTests
     [InlineData("The Matrix (1999)", 1999)]
     [InlineData("Inception (2010)", 2010)]
     [InlineData("Movie (2024)", 2024)]
+    [InlineData("Alarum - 2025", 2025)]
+    [InlineData("Some Movie – 2022", 2022)]
     public void ExtractYear_ValidYear_ReturnsYear(string input, int expected)
     {
         var result = StrmSyncService.ExtractYear(input);
