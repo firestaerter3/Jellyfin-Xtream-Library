@@ -186,7 +186,7 @@ public class XtreamTunerHost : ITunerHost
         var mediaSource = CreateMediaSourceInfo(parsedStreamId, streamUrl, stats, _logger);
 
         var httpClient = _httpClientFactory.CreateClient();
-        ILiveStream liveStream = new XtreamLiveStream(mediaSource, httpClient);
+        ILiveStream liveStream = new XtreamLiveStream(mediaSource, httpClient, _logger);
 
         _logger.LogInformation("Opening live stream for channel {ChannelId} (stream {StreamId})", channelId, parsedStreamId);
 
