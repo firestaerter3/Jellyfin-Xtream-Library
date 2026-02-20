@@ -62,3 +62,6 @@ TestResults/
 # Local dev notes
 CLAUDE.local.md
 *.local.md
+
+# Bug tracker (contains reporter names/details)
+BUGS.md
