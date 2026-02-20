@@ -441,6 +441,38 @@ public class StrmSyncServiceTests
         result.Should().Be("Show - S01E01 - Unknown.strm");
     }
 
+    [Fact]
+    public void BuildEpisodeFileName_ProviderEmbeddedPrefix_StripsDoubling()
+    {
+        // Some providers embed the full series name and SxxExx in the episode title, which can cause redundant naming like "Series Name - S01E01 - Series Name S01E01"
+        var episode = TestDataBuilder.CreateEpisode(episodeNum: 1, title: "Breaking Bad - S01E01 - Pilot");
+
+        var result = StrmSyncService.BuildEpisodeFileName("Breaking Bad", 1, episode);
+
+        result.Should().Be("Breaking Bad - S01E01 - Pilot.strm");
+    }
+
+    [Fact]
+    public void BuildEpisodeFileName_ProviderEmbeddedPrefixCaseInsensitive_StripsDoubling()
+    {
+        // The check for embedded prefix should be case-insensitive
+        var episode = TestDataBuilder.CreateEpisode(episodeNum: 1, title: "breaking bad - s01e01 - Pilot");
+
+        var result = StrmSyncService.BuildEpisodeFileName("Breaking Bad", 1, episode);
+
+        result.Should().Be("Breaking Bad - S01E01 - Pilot.strm");
+    }
+
+    [Fact]
+    public void BuildEpisodeFileName_ProviderEmbeddedPrefixWithDifferentSeriesName_DoesNotStrip()
+    {
+        // If the embedded prefix doesn't match the series name, it should not be stripped (avoid stripping valid titles that just happen to start with the same text)
+        var episode = TestDataBuilder.CreateEpisode(episodeNum: 1, title: "Some Other Show - S01E01 - Pilot");
+
+        var result = StrmSyncService.BuildEpisodeFileName("Breaking Bad", 1, episode);
+
+        result.Should().Be("Breaking Bad - S01E01 - Some Other Show - S01E01 - Pilot.strm");
+    }
     #endregion
 
     #region CleanupEmptyDirectories Tests

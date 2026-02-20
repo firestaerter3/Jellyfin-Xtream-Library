@@ -2662,6 +2662,14 @@ public partial class StrmSyncService
         string seasonStr = seasonNumber.ToString("D2", System.Globalization.CultureInfo.InvariantCulture);
         string episodeStr = episode.EpisodeNum.ToString("D2", System.Globalization.CultureInfo.InvariantCulture);
 
+        // Handle cases where episode title has embedded the full series name season and episode (e.g., "SeriesName - S01E01 - ")
+        // Strip it to avoid redundant naming like "SeriesName - S01E01 - SeriesName - S01E01 -"
+        string embeddedPrefix = $"{seriesName} - S{seasonStr}E{episodeStr} - ";
+        if (episodeTitle.StartsWith(embeddedPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            episodeTitle = episodeTitle[embeddedPrefix.Length..].TrimStart();
+        }
+
         if (string.IsNullOrWhiteSpace(episodeTitle) || episodeTitle.Equals($"Episode {episode.EpisodeNum}", StringComparison.OrdinalIgnoreCase))
         {
             return $"{seriesName} - S{seasonStr}E{episodeStr}.strm";
