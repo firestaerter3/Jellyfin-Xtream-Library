@@ -74,6 +74,7 @@ const XtreamLibraryConfig = {
 
             // Metadata lookup
             document.getElementById('chkEnableMetadataLookup').checked = config.EnableMetadataLookup !== false;
+            document.getElementById('chkFallbackToYearlessLookup').checked = config.FallbackToYearlessLookup === true;
             document.getElementById('txtMetadataParallelism').value = config.MetadataParallelism || 3;
 
             // Custom title removal terms
@@ -201,6 +202,7 @@ const XtreamLibraryConfig = {
 
             // Metadata lookup
             config.EnableMetadataLookup = document.getElementById('chkEnableMetadataLookup').checked;
+            config.FallbackToYearlessLookup = document.getElementById('chkFallbackToYearlessLookup').checked;
             config.MetadataParallelism = parseInt(document.getElementById('txtMetadataParallelism').value) || 3;
             config.SyncParallelism = parseInt(document.getElementById('txtSyncParallelism').value) || 10;
             config.CategoryBatchSize = parseInt(document.getElementById('txtCategoryBatchSize').value) || 25;

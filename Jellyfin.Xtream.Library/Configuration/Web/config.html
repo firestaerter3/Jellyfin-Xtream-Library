@@ -380,6 +380,17 @@
                                     Requires metadata plugins (TMDb, TVDb) to be installed and configured in Jellyfin.
                                 </div>
                             </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkFallbackToYearlessLookup" name="FallbackToYearlessLookup" />
+                                    <span>Fallback to Year-Free Lookup</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    If a year-qualified metadata lookup returns no result, retry without the year.
+                                    Enable this if your provider has many incorrect years in stream names. Note: weakens
+                                    false-positive protection for ambiguous titles.
+                                </div>
+                            </div>
                             <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="txtCustomTitleRemoveTerms">Custom Title Removal Terms (one per line)</label>
                                 <textarea is="emby-textarea" id="txtCustomTitleRemoveTerms" rows="4"
