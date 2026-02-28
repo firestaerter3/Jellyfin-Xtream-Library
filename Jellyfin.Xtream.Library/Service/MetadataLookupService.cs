@@ -142,12 +142,56 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
                 _logger.LogDebug("No TMDb ID found for movie: {Title} ({Year})", title, year);
             }
 
-            // Cache the result (even if null, to avoid repeated lookups)
+            // Cache the primary result (even if null, to avoid repeated lookups)
             _cache.Set(cacheKey, new MetadataCacheEntry
             {
                 TmdbId = tmdbId,
                 Confidence = firstResult != null && tmdbId.HasValue ? 100 : 0,
             });
+
+            // Fallback: retry without year if primary failed and feature is enabled.
+            // Only applicable when a year was present (otherwise lookup is already year-free).
+            if (tmdbId == null && year.HasValue && config.FallbackToYearlessLookup)
+            {
+                _logger.LogInformation(
+                    "Retrying TMDb lookup without year for: '{Title}' (extracted year={Year})",
+                    title,
+                    year);
+
+                var fallbackKey = MetadataCache.GetMovieKey(title, null);
+                if (_cache.TryGet(fallbackKey, out var fallbackCached, config.MetadataCacheAgeDays))
+                {
+                    tmdbId = fallbackCached?.TmdbId;
+                    _logger.LogDebug("Fallback cache hit for movie: {Title} -> TMDb {Id}", title, tmdbId);
+                }
+                else
+                {
+                    var fallbackInfo = new MovieInfo { Name = title, Year = null };
+                    var fallbackResults = await _providerManager.GetRemoteSearchResults<Movie, MovieInfo>(
+                        new RemoteSearchQuery<MovieInfo> { SearchInfo = fallbackInfo },
+                        cancellationToken).ConfigureAwait(false);
+
+                    var fallbackFirst = fallbackResults.FirstOrDefault();
+                    if (fallbackFirst?.ProviderIds != null &&
+                        fallbackFirst.ProviderIds.TryGetValue(MetadataProvider.Tmdb.ToString(), out var fbStr) &&
+                        int.TryParse(fbStr, out var fbId) &&
+                        !IsLikelyFalsePositive(title, fallbackFirst.Name, null, fallbackFirst.ProductionYear))
+                    {
+                        tmdbId = fbId;
+                        _logger.LogDebug("Fallback found TMDb ID for movie: {Title} -> {Id}", title, tmdbId);
+                    }
+                    else
+                    {
+                        _logger.LogDebug("Fallback found no TMDb ID for movie: {Title}", title);
+                    }
+
+                    _cache.Set(fallbackKey, new MetadataCacheEntry
+                    {
+                        TmdbId = tmdbId,
+                        Confidence = tmdbId.HasValue ? 100 : 0,
+                    });
+                }
+            }
 
             return tmdbId;
         }

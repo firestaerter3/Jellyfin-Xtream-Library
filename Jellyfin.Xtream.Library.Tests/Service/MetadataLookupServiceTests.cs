@@ -13,14 +13,47 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using FluentAssertions;
 using Jellyfin.Xtream.Library.Service;
+using MediaBrowser.Common.Configuration;
+using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Providers;
+using MediaBrowser.Model.Providers;
+using MediaBrowser.Model.Serialization;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Xunit;
 
 namespace Jellyfin.Xtream.Library.Tests.Service;
 
 public class MetadataLookupServiceTests
 {
+    private static void InitPlugin(PluginConfiguration config)
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), "claude", "test-metadata-config");
+        var appPaths = new Mock<IApplicationPaths>();
+        appPaths.Setup(p => p.PluginConfigurationsPath).Returns(tempPath);
+        appPaths.Setup(p => p.DataPath).Returns(tempPath);
+        appPaths.Setup(p => p.ProgramDataPath).Returns(tempPath);
+        appPaths.Setup(p => p.CachePath).Returns(tempPath);
+        appPaths.Setup(p => p.LogDirectoryPath).Returns(tempPath);
+        appPaths.Setup(p => p.ConfigurationDirectoryPath).Returns(tempPath);
+        appPaths.Setup(p => p.TempDirectory).Returns(tempPath);
+        appPaths.Setup(p => p.PluginsPath).Returns(tempPath);
+        appPaths.Setup(p => p.WebPath).Returns(tempPath);
+        appPaths.Setup(p => p.ProgramSystemPath).Returns(tempPath);
+        var xmlSerializer = new Mock<IXmlSerializer>();
+        xmlSerializer
+            .Setup(s => s.DeserializeFromFile(It.IsAny<Type>(), It.IsAny<string>()))
+            .Returns(config);
+        _ = new Plugin(appPaths.Object, xmlSerializer.Object);
+    }
+
     // === Year mismatch (parameter years) ===
 
     [Fact]
@@ -149,5 +182,136 @@ public class MetadataLookupServiceTests
         MetadataLookupService.IsLikelyFalsePositive(
             "Formule 1 2023 Zandvoort Race", "+1", searchYear: null, resultYear: null)
             .Should().BeTrue();
+    }
+
+    // === FallbackToYearlessLookup: movie ===
+
+    [Fact]
+    public async Task LookupMovieTmdbIdAsync_FallbackEnabled_RetriesWithoutYear_WhenYearQualifiedFails()
+    {
+        InitPlugin(new PluginConfiguration
+        {
+            EnableMetadataLookup = true,
+            FallbackToYearlessLookup = true,
+            LibraryPath = string.Empty,
+        });
+
+        var fallbackResult = new RemoteSearchResult
+        {
+            Name = "The Notebook",
+            ProductionYear = 2004,
+            ProviderIds = new Dictionary<string, string> { ["Tmdb"] = "11036" },
+        };
+
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .SetupSequence(pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>())   // primary (year=2009): no match
+            .ReturnsAsync(new[] { fallbackResult });            // fallback (year=null): match
+
+        var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
+        var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupMovieTmdbIdAsync("The Notebook", 2009, CancellationToken.None);
+
+        result.Should().Be(11036);
+        mockProvider.Verify(
+            pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task LookupMovieTmdbIdAsync_FallbackDisabled_DoesNotRetry()
+    {
+        InitPlugin(new PluginConfiguration
+        {
+            EnableMetadataLookup = true,
+            FallbackToYearlessLookup = false,
+            LibraryPath = string.Empty,
+        });
+
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .Setup(pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>());
+
+        var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
+        var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupMovieTmdbIdAsync("The Notebook", 2009, CancellationToken.None);
+
+        result.Should().BeNull();
+        mockProvider.Verify(
+            pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(), It.IsAny<CancellationToken>()),
+            Times.Once());
+    }
+
+    [Fact]
+    public async Task LookupMovieTmdbIdAsync_FallbackEnabled_NoDoubleCallWhenYearAlreadyNull()
+    {
+        // When the stream has no year, the initial lookup is already year-free; no fallback needed.
+        InitPlugin(new PluginConfiguration
+        {
+            EnableMetadataLookup = true,
+            FallbackToYearlessLookup = true,
+            LibraryPath = string.Empty,
+        });
+
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .Setup(pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>());
+
+        var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
+        var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupMovieTmdbIdAsync("The Notebook", null, CancellationToken.None);
+
+        result.Should().BeNull();
+        mockProvider.Verify(
+            pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(), It.IsAny<CancellationToken>()),
+            Times.Once());
+    }
+
+    [Fact]
+    public async Task LookupMovieTmdbIdAsync_FallbackEnabled_CachesFallbackNull_AvoidingRepeatCalls()
+    {
+        // When fallback also returns nothing, the null result is cached under the year-free key.
+        // A second call with the same year-free key should hit cache, not call the provider again.
+        InitPlugin(new PluginConfiguration
+        {
+            EnableMetadataLookup = true,
+            FallbackToYearlessLookup = true,
+            LibraryPath = string.Empty,
+        });
+
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .Setup(pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>());
+
+        var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
+        var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
+
+        // First call: primary (year) + fallback (no year) = 2 provider calls
+        await svc.LookupMovieTmdbIdAsync("Unknown Movie", 2020, CancellationToken.None);
+        // Second call with same title, no year: should hit fallback cache, 0 new provider calls
+        await svc.LookupMovieTmdbIdAsync("Unknown Movie", null, CancellationToken.None);
+
+        mockProvider.Verify(
+            pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(2)); // primary + fallback on first call; cache hit on second
     }
 }
