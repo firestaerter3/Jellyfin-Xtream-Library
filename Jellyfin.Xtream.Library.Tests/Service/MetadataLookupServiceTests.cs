@@ -22,6 +22,7 @@ using FluentAssertions;
 using Jellyfin.Xtream.Library.Service;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Providers;
 using MediaBrowser.Model.Serialization;
@@ -313,5 +314,131 @@ public class MetadataLookupServiceTests
             pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
                 It.IsAny<RemoteSearchQuery<MovieInfo>>(), It.IsAny<CancellationToken>()),
             Times.Exactly(2)); // primary + fallback on first call; cache hit on second
+    }
+
+    // === FallbackToYearlessLookup: series ===
+
+    [Fact]
+    public async Task LookupSeriesTvdbIdAsync_FallbackEnabled_RetriesWithoutYear_WhenYearQualifiedFails()
+    {
+        InitPlugin(new PluginConfiguration
+        {
+            EnableMetadataLookup = true,
+            FallbackToYearlessLookup = true,
+            LibraryPath = string.Empty,
+        });
+
+        var fallbackResult = new RemoteSearchResult
+        {
+            Name = "Breaking Bad",
+            ProductionYear = 2008,
+            ProviderIds = new Dictionary<string, string> { ["Tvdb"] = "81189" },
+        };
+
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .SetupSequence(pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(
+                It.IsAny<RemoteSearchQuery<SeriesInfo>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>())
+            .ReturnsAsync(new[] { fallbackResult });
+
+        var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
+        var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupSeriesTvdbIdAsync("Breaking Bad", 2012, CancellationToken.None);
+
+        result.Should().Be(81189);
+        mockProvider.Verify(
+            pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(
+                It.IsAny<RemoteSearchQuery<SeriesInfo>>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task LookupSeriesTvdbIdAsync_FallbackDisabled_DoesNotRetry()
+    {
+        InitPlugin(new PluginConfiguration
+        {
+            EnableMetadataLookup = true,
+            FallbackToYearlessLookup = false,
+            LibraryPath = string.Empty,
+        });
+
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .Setup(pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(
+                It.IsAny<RemoteSearchQuery<SeriesInfo>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>());
+
+        var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
+        var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupSeriesTvdbIdAsync("Breaking Bad", 2012, CancellationToken.None);
+
+        result.Should().BeNull();
+        mockProvider.Verify(
+            pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(
+                It.IsAny<RemoteSearchQuery<SeriesInfo>>(), It.IsAny<CancellationToken>()),
+            Times.Once());
+    }
+
+    [Fact]
+    public async Task LookupSeriesTvdbIdAsync_FallbackEnabled_NoDoubleCallWhenYearAlreadyNull()
+    {
+        InitPlugin(new PluginConfiguration
+        {
+            EnableMetadataLookup = true,
+            FallbackToYearlessLookup = true,
+            LibraryPath = string.Empty,
+        });
+
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .Setup(pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(
+                It.IsAny<RemoteSearchQuery<SeriesInfo>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>());
+
+        var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
+        var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupSeriesTvdbIdAsync("Breaking Bad", null, CancellationToken.None);
+
+        result.Should().BeNull();
+        mockProvider.Verify(
+            pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(
+                It.IsAny<RemoteSearchQuery<SeriesInfo>>(), It.IsAny<CancellationToken>()),
+            Times.Once());
+    }
+
+    [Fact]
+    public async Task LookupSeriesTvdbIdAsync_FallbackEnabled_CachesFallbackNull_AvoidingRepeatCalls()
+    {
+        InitPlugin(new PluginConfiguration
+        {
+            EnableMetadataLookup = true,
+            FallbackToYearlessLookup = true,
+            LibraryPath = string.Empty,
+        });
+
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .Setup(pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(
+                It.IsAny<RemoteSearchQuery<SeriesInfo>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>());
+
+        var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
+        var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
+
+        await svc.LookupSeriesTvdbIdAsync("Unknown Series", 2020, CancellationToken.None);
+        await svc.LookupSeriesTvdbIdAsync("Unknown Series", null, CancellationToken.None);
+
+        mockProvider.Verify(
+            pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(
+                It.IsAny<RemoteSearchQuery<SeriesInfo>>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
     }
 }
