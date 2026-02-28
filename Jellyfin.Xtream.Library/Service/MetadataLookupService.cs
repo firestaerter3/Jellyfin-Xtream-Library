@@ -269,12 +269,55 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
                 _logger.LogDebug("No TVDb ID found for series: {Title} ({Year})", title, year);
             }
 
-            // Cache the result (even if null, to avoid repeated lookups)
+            // Cache the primary result (even if null, to avoid repeated lookups)
             _cache.Set(cacheKey, new MetadataCacheEntry
             {
                 TvdbId = tvdbId,
                 Confidence = firstResult != null && tvdbId.HasValue ? 100 : 0,
             });
+
+            // Fallback: retry without year if primary failed and feature is enabled.
+            if (tvdbId == null && year.HasValue && config.FallbackToYearlessLookup)
+            {
+                _logger.LogInformation(
+                    "Retrying TVDb lookup without year for: '{Title}' (extracted year={Year})",
+                    title,
+                    year);
+
+                var fallbackKey = MetadataCache.GetSeriesKey(title, null);
+                if (_cache.TryGet(fallbackKey, out var fallbackCached, config.MetadataCacheAgeDays))
+                {
+                    tvdbId = fallbackCached?.TvdbId;
+                    _logger.LogDebug("Fallback cache hit for series: {Title} -> TVDb {Id}", title, tvdbId);
+                }
+                else
+                {
+                    var fallbackInfo = new SeriesInfo { Name = title, Year = null };
+                    var fallbackResults = await _providerManager.GetRemoteSearchResults<Series, SeriesInfo>(
+                        new RemoteSearchQuery<SeriesInfo> { SearchInfo = fallbackInfo },
+                        cancellationToken).ConfigureAwait(false);
+
+                    var fallbackFirst = fallbackResults.FirstOrDefault();
+                    if (fallbackFirst?.ProviderIds != null &&
+                        fallbackFirst.ProviderIds.TryGetValue(MetadataProvider.Tvdb.ToString(), out var fbStr) &&
+                        int.TryParse(fbStr, out var fbId) &&
+                        !IsLikelyFalsePositive(title, fallbackFirst.Name, null, fallbackFirst.ProductionYear))
+                    {
+                        tvdbId = fbId;
+                        _logger.LogDebug("Fallback found TVDb ID for series: {Title} -> {Id}", title, tvdbId);
+                    }
+                    else
+                    {
+                        _logger.LogDebug("Fallback found no TVDb ID for series: {Title}", title);
+                    }
+
+                    _cache.Set(fallbackKey, new MetadataCacheEntry
+                    {
+                        TvdbId = tvdbId,
+                        Confidence = tvdbId.HasValue ? 100 : 0,
+                    });
+                }
+            }
 
             return tvdbId;
         }
