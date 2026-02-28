@@ -1535,11 +1535,21 @@ public partial class StrmSyncService
                         // Only do metadata lookup if provider doesn't have TMDB ID
                         if (!providerTmdbId.HasValue && enableMetadataLookup && !tmdbOverrides.ContainsKey(baseName))
                         {
+                            // Extract alternative metadata from VodInfo for improved fallback lookups
+                            int? releaseDateYear = ExtractYearFromReleaseDate(vodInfo?.Info?.ReleaseDate);
+                            string? alternativeTitle = null;
+                            if (!string.IsNullOrEmpty(vodInfo?.Info?.OriginalName))
+                            {
+                                alternativeTitle = SanitizeFileName(vodInfo.Info.OriginalName, config.CustomTitleRemoveTerms);
+                            }
+
+                            bool hasExtraFallbackData = releaseDateYear.HasValue || alternativeTitle != null;
                             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                            timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
+                            timeoutCts.CancelAfter(TimeSpan.FromSeconds(hasExtraFallbackData ? 15 : 5));
                             try
                             {
-                                autoLookupTmdbId = await _metadataLookup.LookupMovieTmdbIdAsync(movieName, year, timeoutCts.Token).ConfigureAwait(false);
+                                autoLookupTmdbId = await _metadataLookup.LookupMovieTmdbIdAsync(
+                                    movieName, year, timeoutCts.Token, releaseDateYear, alternativeTitle).ConfigureAwait(false);
                                 if (!autoLookupTmdbId.HasValue)
                                 {
                                     Interlocked.Increment(ref unmatchedCount);
@@ -2777,6 +2787,34 @@ public partial class StrmSyncService
         return versionLabel != null
             ? $"{folderName} - {versionLabel}.strm"
             : $"{folderName}.strm";
+    }
+
+    internal static int? ExtractYearFromReleaseDate(string? releaseDate)
+    {
+        if (string.IsNullOrEmpty(releaseDate))
+        {
+            return null;
+        }
+
+        // Common formats: "2001-10-26", "2001", "26/10/2001", "October 26, 2001"
+        // Try ISO format first (most common from Xtream APIs)
+        if (releaseDate.Length >= 4 &&
+            int.TryParse(releaseDate.AsSpan(0, 4), out int isoYear) &&
+            isoYear >= 1900 && isoYear <= DateTime.Now.Year + 5)
+        {
+            return isoYear;
+        }
+
+        // Try extracting any 4-digit year from the string
+        var match = Regex.Match(releaseDate, @"(19|20)\d{2}");
+        if (match.Success &&
+            int.TryParse(match.Value, out int parsedYear) &&
+            parsedYear >= 1900 && parsedYear <= DateTime.Now.Year + 5)
+        {
+            return parsedYear;
+        }
+
+        return null;
     }
 
     internal static int? ExtractYear(string? name)

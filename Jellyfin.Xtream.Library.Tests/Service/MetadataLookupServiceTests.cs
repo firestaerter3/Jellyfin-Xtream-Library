@@ -442,4 +442,233 @@ public class MetadataLookupServiceTests
                 It.IsAny<RemoteSearchQuery<SeriesInfo>>(), It.IsAny<CancellationToken>()),
             Times.Exactly(2));
     }
+
+    // === Release date year fallback: movie ===
+
+    [Fact]
+    public async Task LookupMovieTmdbIdAsync_ReleaseDateYear_MatchesWhenTitleYearWrong()
+    {
+        // "13 Geister (2025)" - title year is 2025 (wrong), release date year is 2001 (correct)
+        InitPlugin(new PluginConfiguration
+        {
+            EnableMetadataLookup = true,
+            FallbackToYearlessLookup = true,
+            LibraryPath = string.Empty,
+        });
+
+        var correctResult = new RemoteSearchResult
+        {
+            Name = "Thir13en Ghosts",
+            ProductionYear = 2001,
+            ProviderIds = new Dictionary<string, string> { ["Tmdb"] = "9806" },
+        };
+
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .SetupSequence(pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>())    // Stage 1: title + year=2025: no match
+            .ReturnsAsync(new[] { correctResult });              // Stage 2: title + releaseDateYear=2001: match!
+
+        var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
+        var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupMovieTmdbIdAsync(
+            "13 Geister", 2025, CancellationToken.None,
+            releaseDateYear: 2001);
+
+        result.Should().Be(9806);
+        mockProvider.Verify(
+            pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(2)); // primary + release date year
+    }
+
+    [Fact]
+    public async Task LookupMovieTmdbIdAsync_ReleaseDateYear_SkippedWhenSameAsTitleYear()
+    {
+        // When release date year equals title year, stage 2 is skipped (would be redundant)
+        InitPlugin(new PluginConfiguration
+        {
+            EnableMetadataLookup = true,
+            FallbackToYearlessLookup = true,
+            LibraryPath = string.Empty,
+        });
+
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .SetupSequence(pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>())    // Stage 1: primary
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>());   // Stage 3: year-free
+
+        var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
+        var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupMovieTmdbIdAsync(
+            "Some Movie", 2025, CancellationToken.None,
+            releaseDateYear: 2025);
+
+        result.Should().BeNull();
+        // Only 2 calls: primary + year-free (stage 2 skipped because releaseDateYear == year)
+        mockProvider.Verify(
+            pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+    }
+
+    // === Alternative title fallback: movie ===
+
+    [Fact]
+    public async Task LookupMovieTmdbIdAsync_AlternativeTitle_MatchesWhenPrimaryTitleFails()
+    {
+        // German title "13 Geister" fails, but original name "Thir13en Ghosts" succeeds
+        InitPlugin(new PluginConfiguration
+        {
+            EnableMetadataLookup = true,
+            FallbackToYearlessLookup = true,
+            LibraryPath = string.Empty,
+        });
+
+        var correctResult = new RemoteSearchResult
+        {
+            Name = "Thir13en Ghosts",
+            ProductionYear = 2001,
+            ProviderIds = new Dictionary<string, string> { ["Tmdb"] = "9806" },
+        };
+
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .SetupSequence(pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>())    // Stage 1: "13 Geister" + year=2025
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>())    // Stage 2: "13 Geister" + year=2001
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>())    // Stage 3: "13 Geister" + year=null
+            .ReturnsAsync(new[] { correctResult })              // Stage 4a: "Thir13en Ghosts" + year=2001
+            ;
+
+        var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
+        var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupMovieTmdbIdAsync(
+            "13 Geister", 2025, CancellationToken.None,
+            releaseDateYear: 2001, alternativeTitle: "Thir13en Ghosts");
+
+        result.Should().Be(9806);
+        mockProvider.Verify(
+            pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(4));
+    }
+
+    [Fact]
+    public async Task LookupMovieTmdbIdAsync_AlternativeTitle_SkippedWhenSameAsPrimaryTitle()
+    {
+        // When alternative title equals primary title, stage 4 is skipped
+        InitPlugin(new PluginConfiguration
+        {
+            EnableMetadataLookup = true,
+            FallbackToYearlessLookup = true,
+            LibraryPath = string.Empty,
+        });
+
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .SetupSequence(pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>())    // Stage 1: primary
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>());   // Stage 3: year-free
+
+        var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
+        var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupMovieTmdbIdAsync(
+            "Some Movie", 2025, CancellationToken.None,
+            alternativeTitle: "Some Movie");
+
+        result.Should().BeNull();
+        // Only 2 calls: primary + year-free (stage 4 skipped because titles match)
+        mockProvider.Verify(
+            pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task LookupMovieTmdbIdAsync_FallbackDisabled_SkipsAllFallbackStages()
+    {
+        // When fallback is disabled, only the primary lookup runs, even with extra data
+        InitPlugin(new PluginConfiguration
+        {
+            EnableMetadataLookup = true,
+            FallbackToYearlessLookup = false,
+            LibraryPath = string.Empty,
+        });
+
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .Setup(pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>());
+
+        var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
+        var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupMovieTmdbIdAsync(
+            "13 Geister", 2025, CancellationToken.None,
+            releaseDateYear: 2001, alternativeTitle: "Thir13en Ghosts");
+
+        result.Should().BeNull();
+        mockProvider.Verify(
+            pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(), It.IsAny<CancellationToken>()),
+            Times.Once());
+    }
+
+    // === Alternative title fallback: series ===
+
+    [Fact]
+    public async Task LookupSeriesTvdbIdAsync_AlternativeTitle_MatchesWhenPrimaryTitleFails()
+    {
+        InitPlugin(new PluginConfiguration
+        {
+            EnableMetadataLookup = true,
+            FallbackToYearlessLookup = true,
+            LibraryPath = string.Empty,
+        });
+
+        var correctResult = new RemoteSearchResult
+        {
+            Name = "Dark",
+            ProductionYear = 2017,
+            ProviderIds = new Dictionary<string, string> { ["Tvdb"] = "333916" },
+        };
+
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .SetupSequence(pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(
+                It.IsAny<RemoteSearchQuery<SeriesInfo>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>())    // Stage 1: "Dunkel" + year=2020
+            .ReturnsAsync(Array.Empty<RemoteSearchResult>())    // Stage 2: "Dunkel" + year=null
+            .ReturnsAsync(new[] { correctResult });              // Stage 3: "Dark" + year=null
+
+        var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
+        var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupSeriesTvdbIdAsync(
+            "Dunkel", 2020, CancellationToken.None,
+            alternativeTitle: "Dark");
+
+        result.Should().Be(333916);
+        mockProvider.Verify(
+            pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(
+                It.IsAny<RemoteSearchQuery<SeriesInfo>>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(3));
+    }
 }

@@ -29,8 +29,10 @@ public interface IMetadataLookupService
     /// <param name="title">The movie title.</param>
     /// <param name="year">The release year.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="releaseDateYear">Alternative year from provider's release date metadata.</param>
+    /// <param name="alternativeTitle">Alternative title (e.g. original name) to try if primary title fails.</param>
     /// <returns>The TMDb ID if found, null otherwise.</returns>
-    Task<int?> LookupMovieTmdbIdAsync(string title, int? year, CancellationToken cancellationToken);
+    Task<int?> LookupMovieTmdbIdAsync(string title, int? year, CancellationToken cancellationToken, int? releaseDateYear = null, string? alternativeTitle = null);
 
     /// <summary>
     /// Looks up a TVDb ID for a series.
@@ -38,8 +40,9 @@ public interface IMetadataLookupService
     /// <param name="title">The series title.</param>
     /// <param name="year">The premiere year.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="alternativeTitle">Alternative title (e.g. original name) to try if primary title fails.</param>
     /// <returns>The TVDb ID if found, null otherwise.</returns>
-    Task<int?> LookupSeriesTvdbIdAsync(string title, int? year, CancellationToken cancellationToken);
+    Task<int?> LookupSeriesTvdbIdAsync(string title, int? year, CancellationToken cancellationToken, string? alternativeTitle = null);
 
     /// <summary>
     /// Initializes the service and loads the cache.

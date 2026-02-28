@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System;
 using FluentAssertions;
 using Jellyfin.Xtream.Library.Client.Models;
 using Jellyfin.Xtream.Library.Service;
@@ -350,6 +351,74 @@ public class StrmSyncServiceTests
     {
         int tooFarYear = DateTime.Now.Year + 6;
         var result = StrmSyncService.ExtractYear($"Future Movie ({tooFarYear})");
+
+        result.Should().BeNull();
+    }
+
+    #endregion
+
+    #region ExtractYearFromReleaseDate Tests
+
+    [Fact]
+    public void ExtractYearFromReleaseDate_NullInput_ReturnsNull()
+    {
+        var result = StrmSyncService.ExtractYearFromReleaseDate(null);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void ExtractYearFromReleaseDate_EmptyInput_ReturnsNull()
+    {
+        var result = StrmSyncService.ExtractYearFromReleaseDate(string.Empty);
+
+        result.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("2001-10-26", 2001)]
+    [InlineData("2001", 2001)]
+    [InlineData("2025-01-15", 2025)]
+    [InlineData("1999-12-31", 1999)]
+    public void ExtractYearFromReleaseDate_IsoFormat_ReturnsYear(string input, int expected)
+    {
+        var result = StrmSyncService.ExtractYearFromReleaseDate(input);
+
+        result.Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("26/10/2001", 2001)]
+    [InlineData("October 26, 2001", 2001)]
+    [InlineData("Released in 2015", 2015)]
+    public void ExtractYearFromReleaseDate_OtherFormats_ReturnsYear(string input, int expected)
+    {
+        var result = StrmSyncService.ExtractYearFromReleaseDate(input);
+
+        result.Should().Be(expected);
+    }
+
+    [Fact]
+    public void ExtractYearFromReleaseDate_NoYear_ReturnsNull()
+    {
+        var result = StrmSyncService.ExtractYearFromReleaseDate("unknown");
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void ExtractYearFromReleaseDate_YearTooOld_ReturnsNull()
+    {
+        var result = StrmSyncService.ExtractYearFromReleaseDate("1800-01-01");
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void ExtractYearFromReleaseDate_YearTooFarFuture_ReturnsNull()
+    {
+        int tooFar = DateTime.Now.Year + 6;
+        var result = StrmSyncService.ExtractYearFromReleaseDate($"{tooFar}-01-01");
 
         result.Should().BeNull();
     }
