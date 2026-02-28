@@ -212,6 +212,14 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public string SeriesFolderMappings { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Gets or sets a value indicating whether to retry metadata lookup without the year
+    /// if the year-qualified lookup returns no result.
+    /// Useful when the provider has incorrect years in stream names.
+    /// Note: year-based false-positive protection is weaker for the fallback result.
+    /// </summary>
+    public bool FallbackToYearlessLookup { get; set; } = false;
+
     // =====================
     // Dispatcharr Mode Settings
     // =====================

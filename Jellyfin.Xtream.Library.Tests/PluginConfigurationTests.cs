@@ -162,4 +162,11 @@ public class PluginConfigurationTests
         config.FullSyncIntervalDays.Should().Be(7);
         config.FullSyncChangeThreshold.Should().Be(0.50);
     }
+
+    [Fact]
+    public void FallbackToYearlessLookup_DefaultIsFalse()
+    {
+        var config = new PluginConfiguration();
+        config.FallbackToYearlessLookup.Should().BeFalse();
+    }
 }
