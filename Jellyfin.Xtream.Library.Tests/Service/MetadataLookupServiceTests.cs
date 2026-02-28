@@ -32,6 +32,7 @@ using Xunit;
 
 namespace Jellyfin.Xtream.Library.Tests.Service;
 
+[Collection("PluginSingletonTests")]
 public class MetadataLookupServiceTests
 {
     private static void InitPlugin(PluginConfiguration config)
