@@ -29,6 +29,7 @@ using Xunit;
 
 namespace Jellyfin.Xtream.Library.Tests.Service;
 
+[Collection("PluginSingletonTests")]
 public class XtreamTunerHostTests : IDisposable
 {
     private readonly Mock<IXtreamClient> _mockClient;
