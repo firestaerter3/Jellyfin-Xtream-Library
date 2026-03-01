@@ -2727,6 +2727,11 @@ public partial class StrmSyncService
         // Fix malformed quotes/apostrophes (e.g., "Angela'\'s" -> "Angela's")
         cleanName = MalformedQuotePattern().Replace(cleanName, "'");
 
+        // Normalize colons for cross-platform compatibility: "Title: Subtitle" → "Title - Subtitle"
+        // Path.GetInvalidFileNameChars() on Linux excludes ':', so this must be handled explicitly
+        cleanName = cleanName.Replace(": ", " - ", StringComparison.Ordinal);
+        cleanName = cleanName.Replace(":", "-", StringComparison.Ordinal);
+
         // Remove invalid file name characters
         char[] invalidChars = Path.GetInvalidFileNameChars();
         foreach (char c in invalidChars)

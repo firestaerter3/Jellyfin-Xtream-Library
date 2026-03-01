@@ -54,6 +54,19 @@ public class StrmSyncServiceTests
         result.Should().Be(expected);
     }
 
+    [Theory]
+    [InlineData("21 Paradise: Verkaufte Lust", "21 Paradise - Verkaufte Lust")]
+    [InlineData("2235: I Am Mortal", "2235 - I Am Mortal")]
+    [InlineData("24 Hours To D-Day: Schlacht Der Entscheidung", "24 Hours To D-Day - Schlacht Der Entscheidung")]
+    [InlineData("Movie:Title", "Movie-Title")]
+    public void SanitizeFileName_WithColon_NormalizesToDash(string input, string expected)
+    {
+        // Colons are normalized explicitly for cross-platform compatibility
+        var result = StrmSyncService.SanitizeFileName(input);
+
+        result.Should().Be(expected);
+    }
+
     [Fact]
     public void SanitizeFileName_WithSlash_ReplacesWithUnderscore()
     {
@@ -252,7 +265,7 @@ public class StrmSyncServiceTests
     {
         var result = StrmSyncService.SanitizeFileName("Barbie: Dreamtopia Special [EN Spoken]");
 
-        result.Should().Be("Barbie: Dreamtopia Special");
+        result.Should().Be("Barbie - Dreamtopia Special");
     }
 
     [Fact]
