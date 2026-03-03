@@ -97,6 +97,57 @@ public class XtreamClientTests : IDisposable
 
     #endregion
 
+    #region Credential-free URL Tests
+
+    [Fact]
+    public async Task GetVodCategoryAsync_EmptyCredentials_OmitsCredentialsFromUrl()
+    {
+        Uri? capturedUri = null;
+        var handler = new CapturingHttpMessageHandler(request =>
+        {
+            capturedUri = request.RequestUri;
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("[]", System.Text.Encoding.UTF8, "application/json"),
+            };
+        });
+        var client = new XtreamClient(new HttpClient(handler), _mockLogger.Object);
+        client.UpdateUserAgent(null);
+        var connectionInfo = new ConnectionInfo("http://test.example.com", string.Empty, string.Empty);
+
+        await client.GetVodCategoryAsync(connectionInfo, CancellationToken.None);
+
+        capturedUri.Should().NotBeNull();
+        capturedUri!.Query.Should().NotContain("username=");
+        capturedUri.Query.Should().NotContain("password=");
+        capturedUri.Query.Should().Contain("action=get_vod_categories");
+    }
+
+    [Fact]
+    public async Task GetVodCategoryAsync_WithCredentials_IncludesCredentialsInUrl()
+    {
+        Uri? capturedUri = null;
+        var handler = new CapturingHttpMessageHandler(request =>
+        {
+            capturedUri = request.RequestUri;
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("[]", System.Text.Encoding.UTF8, "application/json"),
+            };
+        });
+        var client = new XtreamClient(new HttpClient(handler), _mockLogger.Object);
+        client.UpdateUserAgent(null);
+        var connectionInfo = new ConnectionInfo("http://test.example.com", "myuser", "mypass");
+
+        await client.GetVodCategoryAsync(connectionInfo, CancellationToken.None);
+
+        capturedUri.Should().NotBeNull();
+        capturedUri!.Query.Should().Contain("username=myuser");
+        capturedUri.Query.Should().Contain("password=mypass");
+    }
+
+    #endregion
+
     #region ConnectionInfo Tests
 
     [Fact]
@@ -132,4 +183,10 @@ public class XtreamClientTests : IDisposable
     }
 
     #endregion
+
+    private sealed class CapturingHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(respond(request));
+    }
 }

@@ -115,7 +115,26 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
 
     private static string EncodeCredentials(ConnectionInfo connectionInfo)
     {
+        if (string.IsNullOrWhiteSpace(connectionInfo.UserName) &&
+            string.IsNullOrWhiteSpace(connectionInfo.Password))
+        {
+            return string.Empty;
+        }
+
         return $"username={Uri.EscapeDataString(connectionInfo.UserName)}&password={Uri.EscapeDataString(connectionInfo.Password)}";
+    }
+
+    private static string PlayerApiUrl(ConnectionInfo connectionInfo, string? queryPart = null)
+    {
+        var creds = EncodeCredentials(connectionInfo);
+        if (string.IsNullOrEmpty(queryPart))
+        {
+            return string.IsNullOrEmpty(creds) ? "/player_api.php" : $"/player_api.php?{creds}";
+        }
+
+        return string.IsNullOrEmpty(creds)
+            ? $"/player_api.php?{queryPart}"
+            : $"/player_api.php?{creds}&{queryPart}";
     }
 
     /// <summary>
@@ -226,37 +245,37 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
     public Task<PlayerApi> GetUserAndServerInfoAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken) =>
         QueryApi<PlayerApi>(
           connectionInfo,
-          $"/player_api.php?{EncodeCredentials(connectionInfo)}",
+          PlayerApiUrl(connectionInfo),
           cancellationToken);
 
     public Task<List<Category>> GetVodCategoryAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken) =>
          QueryApi<List<Category>>(
            connectionInfo,
-           $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_vod_categories",
+           PlayerApiUrl(connectionInfo, "action=get_vod_categories"),
            cancellationToken);
 
     public Task<List<StreamInfo>> GetVodStreamsByCategoryAsync(ConnectionInfo connectionInfo, int categoryId, CancellationToken cancellationToken) =>
          QueryApi<List<StreamInfo>>(
            connectionInfo,
-           $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_vod_streams&category_id={categoryId}",
+           PlayerApiUrl(connectionInfo, $"action=get_vod_streams&category_id={categoryId}"),
            cancellationToken);
 
     public Task<List<Category>> GetSeriesCategoryAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken) =>
          QueryApi<List<Category>>(
            connectionInfo,
-           $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_series_categories",
+           PlayerApiUrl(connectionInfo, "action=get_series_categories"),
            cancellationToken);
 
     public Task<List<Series>> GetSeriesByCategoryAsync(ConnectionInfo connectionInfo, int categoryId, CancellationToken cancellationToken) =>
          QueryApi<List<Series>>(
            connectionInfo,
-           $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_series&category_id={categoryId}",
+           PlayerApiUrl(connectionInfo, $"action=get_series&category_id={categoryId}"),
            cancellationToken);
 
     public Task<SeriesStreamInfo> GetSeriesStreamsBySeriesAsync(ConnectionInfo connectionInfo, int seriesId, CancellationToken cancellationToken) =>
          QueryApi<SeriesStreamInfo>(
            connectionInfo,
-           $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_series_info&series_id={seriesId}",
+           PlayerApiUrl(connectionInfo, $"action=get_series_info&series_id={seriesId}"),
            cancellationToken);
 
     public async Task<VodInfoResponse?> GetVodInfoAsync(ConnectionInfo connectionInfo, int vodId, CancellationToken cancellationToken)
@@ -265,7 +284,7 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
         {
             return await QueryApi<VodInfoResponse>(
                 connectionInfo,
-                $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_vod_info&vod_id={vodId}",
+                PlayerApiUrl(connectionInfo, $"action=get_vod_info&vod_id={vodId}"),
                 cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -278,19 +297,19 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
     public Task<List<Category>> GetLiveCategoryAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken) =>
         QueryApi<List<Category>>(
             connectionInfo,
-            $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_live_categories",
+            PlayerApiUrl(connectionInfo, "action=get_live_categories"),
             cancellationToken);
 
     public Task<List<LiveStreamInfo>> GetLiveStreamsByCategoryAsync(ConnectionInfo connectionInfo, int categoryId, CancellationToken cancellationToken) =>
         QueryApi<List<LiveStreamInfo>>(
             connectionInfo,
-            $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_live_streams&category_id={categoryId}",
+            PlayerApiUrl(connectionInfo, $"action=get_live_streams&category_id={categoryId}"),
             cancellationToken);
 
     public Task<List<LiveStreamInfo>> GetAllLiveStreamsAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken) =>
         QueryApi<List<LiveStreamInfo>>(
             connectionInfo,
-            $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_live_streams",
+            PlayerApiUrl(connectionInfo, "action=get_live_streams"),
             cancellationToken);
 
     public async Task<EpgListings?> GetSimpleDataTableAsync(ConnectionInfo connectionInfo, int streamId, CancellationToken cancellationToken)
@@ -299,7 +318,7 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
         {
             return await QueryApi<EpgListings>(
                 connectionInfo,
-                $"/player_api.php?{EncodeCredentials(connectionInfo)}&action=get_simple_data_table&stream_id={streamId}",
+                PlayerApiUrl(connectionInfo, $"action=get_simple_data_table&stream_id={streamId}"),
                 cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
