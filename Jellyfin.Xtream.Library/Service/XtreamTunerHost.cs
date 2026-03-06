@@ -163,8 +163,9 @@ public class XtreamTunerHost : ITunerHost
         var config = Plugin.Instance.Configuration;
         var streamUrl = BuildStreamUrl(config, streamId);
         _streamStats.TryGetValue(streamId, out var stats);
+        var isHls = !string.Equals(config.LiveTvOutputFormat, "ts", StringComparison.OrdinalIgnoreCase);
 
-        var mediaSource = CreateMediaSourceInfo(streamId, streamUrl, stats, _logger);
+        var mediaSource = CreateMediaSourceInfo(streamId, streamUrl, stats, isHls, _logger);
 
         return new List<MediaSourceInfo> { mediaSource };
     }
@@ -182,8 +183,9 @@ public class XtreamTunerHost : ITunerHost
         var config = Plugin.Instance.Configuration;
         var streamUrl = BuildStreamUrl(config, parsedStreamId);
         _streamStats.TryGetValue(parsedStreamId, out var stats);
+        var isHls = !string.Equals(config.LiveTvOutputFormat, "ts", StringComparison.OrdinalIgnoreCase);
 
-        var mediaSource = CreateMediaSourceInfo(parsedStreamId, streamUrl, stats, _logger);
+        var mediaSource = CreateMediaSourceInfo(parsedStreamId, streamUrl, stats, isHls, _logger);
 
         var httpClient = _httpClientFactory.CreateClient();
         ILiveStream liveStream = new XtreamLiveStream(mediaSource, httpClient, _logger);
@@ -257,7 +259,7 @@ public class XtreamTunerHost : ITunerHost
         return string.Create(CultureInfo.InvariantCulture, $"{config.BaseUrl}/live/{config.Username}/{config.Password}/{streamId}.{extension}");
     }
 
-    private static MediaSourceInfo CreateMediaSourceInfo(int streamId, string streamUrl, StreamStatsInfo? stats, ILogger logger)
+    private static MediaSourceInfo CreateMediaSourceInfo(int streamId, string streamUrl, StreamStatsInfo? stats, bool isHls, ILogger logger)
     {
         var sourceId = "xtream_live_" + streamId.ToString(CultureInfo.InvariantCulture);
         bool hasStats = stats?.VideoCodec != null;
@@ -267,7 +269,7 @@ public class XtreamTunerHost : ITunerHost
             Id = sourceId,
             Path = streamUrl,
             Protocol = MediaProtocol.Http,
-            Container = "mpegts",
+            Container = isHls ? "hls" : "mpegts",
             SupportsProbing = !hasStats,
             IsRemote = true,
             IsInfiniteStream = true,

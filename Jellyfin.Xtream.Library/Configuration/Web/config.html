@@ -816,11 +816,11 @@
                             <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="selLiveTvOutputFormat">Stream Format</label>
                                 <select is="emby-select" id="selLiveTvOutputFormat" name="LiveTvOutputFormat">
-                                    <option value="m3u8">HLS (m3u8)</option>
-                                    <option value="ts">MPEG-TS (ts)</option>
+                                    <option value="ts">MPEG-TS (recommended)</option>
+                                    <option value="m3u8">HLS (use if TS doesn't work with your provider)</option>
                                 </select>
                                 <div class="fieldDescription">
-                                    Output format for live streams. HLS is recommended for most setups.
+                                    Output format for live streams. MPEG-TS enables direct streaming with no transcoding. Use HLS only if your provider does not support TS.
                                 </div>
                             </div>
                             <div class="checkboxContainer checkboxContainer-withDescription">
