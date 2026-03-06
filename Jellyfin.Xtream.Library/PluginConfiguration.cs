@@ -311,7 +311,7 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>
     /// Gets or sets the Live TV output format (m3u8 or ts).
     /// </summary>
-    public string LiveTvOutputFormat { get; set; } = "m3u8";
+    public string LiveTvOutputFormat { get; set; } = "ts";
 
     /// <summary>
     /// Gets or sets a value indicating whether to include adult channels.

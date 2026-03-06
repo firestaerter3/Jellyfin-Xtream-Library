@@ -119,7 +119,7 @@ const XtreamLibraryConfig = {
             document.getElementById('chkEnableLiveTv').checked = config.EnableLiveTv || false;
             document.getElementById('chkEnableNativeTuner').checked = config.EnableNativeTuner || false;
             document.getElementById('chkEnableEpg').checked = config.EnableEpg !== false;
-            document.getElementById('selLiveTvOutputFormat').value = config.LiveTvOutputFormat || 'm3u8';
+            document.getElementById('selLiveTvOutputFormat').value = config.LiveTvOutputFormat || 'ts';
             document.getElementById('chkIncludeAdultChannels').checked = config.IncludeAdultChannels || false;
             document.getElementById('txtM3UCacheMinutes').value = config.M3UCacheMinutes || 15;
             document.getElementById('txtEpgCacheMinutes').value = config.EpgCacheMinutes || 30;

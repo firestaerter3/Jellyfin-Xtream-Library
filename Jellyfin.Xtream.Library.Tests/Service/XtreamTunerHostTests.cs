@@ -198,7 +198,7 @@ public class XtreamTunerHostTests : IDisposable
         source.AnalyzeDurationMs.Should().Be(500);
         source.IgnoreDts.Should().BeTrue();
         source.GenPtsInput.Should().BeTrue();
-        source.Container.Should().Be("mpegts");
+        source.Container.Should().Be("hls");
         source.Path.Should().Contain("/live/testuser/testpass/100.m3u8");
     }
 
