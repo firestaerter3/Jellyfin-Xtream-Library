@@ -15,16 +15,17 @@
 
 using System;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Converters;
 
 #pragma warning disable CS1591
 namespace Jellyfin.Xtream.Library.Client.Models;
 
 public class Episode
 {
+    [JsonConverter(typeof(FlexibleIntConverter))]
     [JsonProperty("id")]
     public int EpisodeId { get; set; }
 
+    [JsonConverter(typeof(FlexibleIntConverter))]
     [JsonProperty("episode_num")]
     public int EpisodeNum { get; set; }
 
@@ -41,10 +42,11 @@ public class Episode
     [JsonProperty("custom_sid")]
     public string CustomSid { get; set; } = string.Empty;
 
-    [JsonConverter(typeof(UnixDateTimeConverter))]
+    [JsonConverter(typeof(FlexibleUnixDateTimeConverter))]
     [JsonProperty("added")]
     public DateTime? Added { get; set; }
 
+    [JsonConverter(typeof(FlexibleIntConverter))]
     [JsonProperty("season")]
     public int Season { get; set; }
 

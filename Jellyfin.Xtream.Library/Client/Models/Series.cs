@@ -16,19 +16,20 @@
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Converters;
 
 #pragma warning disable CS1591
 namespace Jellyfin.Xtream.Library.Client.Models;
 
 public class Series
 {
+    [JsonConverter(typeof(FlexibleIntConverter))]
     [JsonProperty("num")]
     public int Num { get; set; }
 
     [JsonProperty("name")]
     public string Name { get; set; } = string.Empty;
 
+    [JsonConverter(typeof(FlexibleIntConverter))]
     [JsonProperty("series_id")]
     public int SeriesId { get; set; }
 
@@ -47,13 +48,15 @@ public class Series
     [JsonProperty("genre")]
     public string Genre { get; set; } = string.Empty;
 
-    [JsonConverter(typeof(UnixDateTimeConverter))]
+    [JsonConverter(typeof(FlexibleUnixDateTimeConverter))]
     [JsonProperty("last_modified")]
     public DateTime LastModified { get; set; }
 
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
     [JsonProperty("rating")]
     public decimal Rating { get; set; }
 
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
     [JsonProperty("rating_5based")]
     public decimal Rating5Based { get; set; }
 
@@ -66,9 +69,11 @@ public class Series
     [JsonProperty("youtube_trailer")]
     public string YoutubeTrailer { get; set; } = string.Empty;
 
+    [JsonConverter(typeof(FlexibleIntConverter))]
     [JsonProperty("episode_run_time")]
     public int EpisodeRunTime { get; set; }
 
+    [JsonConverter(typeof(FlexibleIntConverter))]
     [JsonProperty("category_id")]
     public int CategoryId { get; set; }
 }
