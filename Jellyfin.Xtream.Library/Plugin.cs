@@ -90,7 +90,19 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     {
         return new[]
         {
-            CreateStatic("config.html"),
+            new PluginPageInfo
+            {
+                Name = "config.html",
+                EmbeddedResourcePath = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0}.Configuration.Web.{1}",
+                    typeof(Plugin).Namespace,
+                    "config.html"),
+                EnableInMainMenu = true,
+                DisplayName = "Xtream Library",
+                MenuSection = "server",
+                MenuIcon = "live_tv",
+            },
             CreateStatic("config.js"),
         };
     }
