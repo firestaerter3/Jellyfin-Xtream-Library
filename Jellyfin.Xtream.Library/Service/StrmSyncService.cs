@@ -2662,12 +2662,25 @@ public partial class StrmSyncService
         string seasonStr = seasonNumber.ToString("D2", System.Globalization.CultureInfo.InvariantCulture);
         string episodeStr = episode.EpisodeNum.ToString("D2", System.Globalization.CultureInfo.InvariantCulture);
 
-        // Handle cases where episode title has embedded the full series name season and episode (e.g., "SeriesName - S01E01 - ")
-        // Strip it to avoid redundant naming like "SeriesName - S01E01 - SeriesName - S01E01 -"
-        string embeddedPrefix = $"{seriesName} - S{seasonStr}E{episodeStr} - ";
-        if (episodeTitle.StartsWith(embeddedPrefix, StringComparison.OrdinalIgnoreCase))
+        // Strip redundant series name from episode title to avoid names like
+        // "SeriesName - S01E06 - SeriesName S01E06 - Actual Title.strm"
+        // Handles variants: "Name - S01E06 - ...", "Name S01E06 - ...", or just "Name - ..."
+        if (episodeTitle.StartsWith(seriesName, StringComparison.OrdinalIgnoreCase))
         {
-            episodeTitle = episodeTitle[embeddedPrefix.Length..].TrimStart();
+            string remainder = episodeTitle[seriesName.Length..];
+            // Strip optional separator then SxxExx then separator
+            remainder = remainder.TrimStart(' ', '-');
+            string sePattern = $"S{seasonStr}E{episodeStr}";
+            if (remainder.StartsWith(sePattern, StringComparison.OrdinalIgnoreCase))
+            {
+                remainder = remainder[sePattern.Length..];
+            }
+
+            remainder = remainder.TrimStart(' ', '-');
+            if (!string.IsNullOrWhiteSpace(remainder))
+            {
+                episodeTitle = remainder;
+            }
         }
 
         string fileName;
