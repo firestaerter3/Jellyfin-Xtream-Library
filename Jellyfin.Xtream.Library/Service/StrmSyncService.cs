@@ -2670,12 +2670,17 @@ public partial class StrmSyncService
             episodeTitle = episodeTitle[embeddedPrefix.Length..].TrimStart();
         }
 
+        string fileName;
         if (string.IsNullOrWhiteSpace(episodeTitle) || episodeTitle.Equals($"Episode {episode.EpisodeNum}", StringComparison.OrdinalIgnoreCase))
         {
-            return $"{seriesName} - S{seasonStr}E{episodeStr}.strm";
+            fileName = $"{seriesName} - S{seasonStr}E{episodeStr}.strm";
+        }
+        else
+        {
+            fileName = $"{seriesName} - S{seasonStr}E{episodeStr} - {episodeTitle}.strm";
         }
 
-        return $"{seriesName} - S{seasonStr}E{episodeStr} - {episodeTitle}.strm";
+        return TruncatePathComponent(fileName);
     }
 
     internal static string SanitizeFileName(string? name, string? customRemoveTerms = null)
@@ -2744,7 +2749,53 @@ public partial class StrmSyncService
         cleanName = MultipleUnderscoresPattern().Replace(cleanName, "_");
         cleanName = cleanName.Trim('_', ' ', '-');
 
-        return string.IsNullOrEmpty(cleanName) ? "Unknown" : cleanName;
+        cleanName = string.IsNullOrEmpty(cleanName) ? "Unknown" : cleanName;
+        return TruncatePathComponent(cleanName);
+    }
+
+    /// <summary>
+    /// Truncates a file or directory name to fit within the filesystem's maximum
+    /// path component length (255 bytes on ext4/most Linux filesystems).
+    /// Preserves the file extension if present and avoids splitting multi-byte
+    /// UTF-8 characters.
+    /// </summary>
+    /// <param name="name">The file or directory name to truncate.</param>
+    /// <param name="maxBytes">Maximum allowed byte length (default 255 for ext4).</param>
+    /// <returns>The truncated name that fits within the byte limit.</returns>
+    internal static string TruncatePathComponent(string name, int maxBytes = 255)
+    {
+        if (System.Text.Encoding.UTF8.GetByteCount(name) <= maxBytes)
+        {
+            return name;
+        }
+
+        string extension = Path.GetExtension(name);
+        string baseName = extension.Length > 0 ? name[..^extension.Length] : name;
+        int extensionBytes = System.Text.Encoding.UTF8.GetByteCount(extension);
+        int availableBytes = maxBytes - extensionBytes;
+
+        if (availableBytes <= 0)
+        {
+            availableBytes = maxBytes;
+            extension = string.Empty;
+        }
+
+        // Truncate character by character to avoid splitting multi-byte UTF-8
+        int byteCount = 0;
+        int charCount = 0;
+        foreach (char c in baseName)
+        {
+            int charBytes = System.Text.Encoding.UTF8.GetByteCount(new[] { c });
+            if (byteCount + charBytes > availableBytes)
+            {
+                break;
+            }
+
+            byteCount += charBytes;
+            charCount++;
+        }
+
+        return baseName[..charCount].TrimEnd(' ', '-', '_') + extension;
     }
 
     internal static string? ExtractVersionLabel(string? name)
@@ -2779,9 +2830,10 @@ public partial class StrmSyncService
 
     internal static string BuildMovieStrmFileName(string folderName, string? versionLabel)
     {
-        return versionLabel != null
+        string fileName = versionLabel != null
             ? $"{folderName} - {versionLabel}.strm"
             : $"{folderName}.strm";
+        return TruncatePathComponent(fileName);
     }
 
     internal static int? ExtractYear(string? name)
