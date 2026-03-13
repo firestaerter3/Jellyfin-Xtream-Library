@@ -594,9 +594,9 @@ public class DeltaCalculatorTests
                 SeriesId = s.SeriesId,
                 Name = s.Name,
                 Cover = s.Cover,
-                CategoryId = s.CategoryId,
+                CategoryId = s.CategoryId ?? 0,
                 EpisodeCount = episodeCount,
-                LastModified = s.LastModified,
+                LastModified = s.LastModified.GetValueOrDefault(),
                 Checksum = SnapshotService.CalculateChecksum(s, episodeCount)
             };
         }

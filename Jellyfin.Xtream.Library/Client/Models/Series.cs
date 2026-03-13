@@ -49,13 +49,13 @@ public class Series
 
     [JsonConverter(typeof(UnixDateTimeConverter))]
     [JsonProperty("last_modified")]
-    public DateTime LastModified { get; set; }
+    public DateTime? LastModified { get; set; }
 
     [JsonProperty("rating")]
-    public decimal Rating { get; set; }
+    public decimal? Rating { get; set; }
 
     [JsonProperty("rating_5based")]
-    public decimal Rating5Based { get; set; }
+    public decimal? Rating5Based { get; set; }
 
     [JsonConverter(typeof(SingularToListConverter<string>))]
     [JsonProperty("backdrop_path")]
@@ -67,8 +67,8 @@ public class Series
     public string YoutubeTrailer { get; set; } = string.Empty;
 
     [JsonProperty("episode_run_time")]
-    public int EpisodeRunTime { get; set; }
+    public int? EpisodeRunTime { get; set; }
 
     [JsonProperty("category_id")]
-    public int CategoryId { get; set; }
+    public int? CategoryId { get; set; }
 }

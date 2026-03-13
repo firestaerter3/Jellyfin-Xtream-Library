@@ -75,9 +75,9 @@ public class SnapshotService : IDisposable
         var data = string.Join(
             "|",
             series.Name,
-            series.CategoryId.ToString(CultureInfo.InvariantCulture),
+            (series.CategoryId ?? 0).ToString(CultureInfo.InvariantCulture),
             episodeCount.ToString(CultureInfo.InvariantCulture),
-            series.LastModified.ToString("O", CultureInfo.InvariantCulture));
+            series.LastModified.GetValueOrDefault().ToString("O", CultureInfo.InvariantCulture));
 
         return ComputeMd5(data);
     }

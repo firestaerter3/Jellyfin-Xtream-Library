@@ -2091,7 +2091,7 @@ public partial class StrmSyncService
 
                     if (!hintSnapshot.Series.TryGetValue(s.Series.SeriesId, out var hintEntry) ||
                         hintEntry.EpisodeCount <= 0 ||
-                        Math.Abs((s.Series.LastModified - hintEntry.LastModified).TotalSeconds) >= 1)
+                        Math.Abs((s.Series.LastModified.GetValueOrDefault() - hintEntry.LastModified).TotalSeconds) >= 1)
                     {
                         return true; // Would not be smart-skipped
                     }
@@ -2198,7 +2198,7 @@ public partial class StrmSyncService
                     if (config.SmartSkipExisting && hintSnapshot != null &&
                         hintSnapshot.Series.TryGetValue(series.SeriesId, out var hintEntry) &&
                         hintEntry.EpisodeCount > 0 &&
-                        Math.Abs((series.LastModified - hintEntry.LastModified).TotalSeconds) < 1)
+                        Math.Abs((series.LastModified.GetValueOrDefault() - hintEntry.LastModified).TotalSeconds) < 1)
                     {
                         // Determine target folders for this series
                         var preCheckFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -3219,9 +3219,9 @@ public partial class StrmSyncService
                         SeriesId = series.SeriesId,
                         Name = series.Name,
                         Cover = series.Cover,
-                        CategoryId = series.CategoryId,
+                        CategoryId = series.CategoryId ?? 0,
                         EpisodeCount = episodeCount,
-                        LastModified = series.LastModified,
+                        LastModified = series.LastModified.GetValueOrDefault(),
                         Checksum = SnapshotService.CalculateChecksum(series, episodeCount)
                     };
                 }
