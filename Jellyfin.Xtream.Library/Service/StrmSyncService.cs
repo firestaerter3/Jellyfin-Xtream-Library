@@ -2492,10 +2492,6 @@ public partial class StrmSyncService
                                     var nfoPath = Path.Combine(seasonFolder, nfoFileName);
                                     await NfoWriter.WriteEpisodeNfoAsync(
                                         nfoPath,
-                                        seriesName,
-                                        seasonNumber,
-                                        episode.EpisodeNum,
-                                        episode.Title,
                                         episode.Info.Video,
                                         episode.Info.Audio,
                                         episode.Info.DurationSecs,

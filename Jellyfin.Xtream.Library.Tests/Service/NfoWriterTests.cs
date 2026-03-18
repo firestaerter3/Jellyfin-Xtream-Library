@@ -274,7 +274,7 @@ public class NfoWriterTests : IDisposable
     #region Episode NFO Tests
 
     [Fact]
-    public async Task WriteEpisodeNfo_WritesAllFields()
+    public async Task WriteEpisodeNfo_WritesStreamDetailsOnly()
     {
         var nfoPath = Path.Combine(_tempDirectory, "episode.nfo");
         var video = new VideoInfo { CodecName = "h264", Width = 1920, Height = 1080 };
@@ -282,10 +282,6 @@ public class NfoWriterTests : IDisposable
 
         var result = await NfoWriter.WriteEpisodeNfoAsync(
             nfoPath,
-            "Test Series",
-            1,
-            5,
-            "Pilot Episode",
             video,
             audio,
             2700,
@@ -297,34 +293,11 @@ public class NfoWriterTests : IDisposable
         var xml = XDocument.Load(nfoPath);
         xml.Root.Should().NotBeNull();
         xml.Root!.Name.LocalName.Should().Be("episodedetails");
-        xml.Root.Element("title")!.Value.Should().Be("Pilot Episode");
-        xml.Root.Element("showtitle")!.Value.Should().Be("Test Series");
-        xml.Root.Element("season")!.Value.Should().Be("1");
-        xml.Root.Element("episode")!.Value.Should().Be("5");
+        xml.Root.Element("title").Should().BeNull();
+        xml.Root.Element("showtitle").Should().BeNull();
+        xml.Root.Element("season").Should().BeNull();
+        xml.Root.Element("episode").Should().BeNull();
         xml.Root.Descendants("durationinseconds").First().Value.Should().Be("2700");
-    }
-
-    [Fact]
-    public async Task WriteEpisodeNfo_NullTitle_UsesDefaultEpisodeNumber()
-    {
-        var nfoPath = Path.Combine(_tempDirectory, "episode_no_title.nfo");
-        var video = new VideoInfo { CodecName = "h264" };
-
-        var result = await NfoWriter.WriteEpisodeNfoAsync(
-            nfoPath,
-            "Series",
-            2,
-            3,
-            null,
-            video,
-            null,
-            null,
-            CancellationToken.None);
-
-        result.Should().BeTrue();
-
-        var xml = XDocument.Load(nfoPath);
-        xml.Root!.Element("title")!.Value.Should().Be("Episode 3");
     }
 
     [Fact]
@@ -334,10 +307,6 @@ public class NfoWriterTests : IDisposable
 
         var result = await NfoWriter.WriteEpisodeNfoAsync(
             nfoPath,
-            "Series",
-            1,
-            1,
-            "Title",
             null,
             null,
             null,

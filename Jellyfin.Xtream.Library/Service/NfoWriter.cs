@@ -129,13 +129,11 @@ public static class NfoWriter
     }
 
     /// <summary>
-    /// Writes an episode NFO file with stream details.
+    /// Writes an episode NFO file with stream details only (no title/identification).
+    /// Title is omitted so Jellyfin's metadata providers (TMDb/TVDb) supply the
+    /// proper episode name instead of the raw Xtream filename.
     /// </summary>
     /// <param name="nfoPath">Path to the NFO file.</param>
-    /// <param name="seriesName">Series name.</param>
-    /// <param name="seasonNumber">Season number.</param>
-    /// <param name="episodeNumber">Episode number.</param>
-    /// <param name="episodeTitle">Episode title.</param>
     /// <param name="video">Video stream info.</param>
     /// <param name="audio">Audio stream info.</param>
     /// <param name="durationSecs">Duration in seconds.</param>
@@ -143,16 +141,11 @@ public static class NfoWriter
     /// <returns>True if NFO was written, false if no media info was available.</returns>
     public static async Task<bool> WriteEpisodeNfoAsync(
         string nfoPath,
-        string seriesName,
-        int seasonNumber,
-        int episodeNumber,
-        string? episodeTitle,
         VideoInfo? video,
         AudioInfo? audio,
         int? durationSecs,
         CancellationToken cancellationToken)
     {
-        // Skip if no usable media info available
         if (!HasUsableData(video, audio))
         {
             return false;
@@ -161,10 +154,6 @@ public static class NfoWriter
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
         sb.AppendLine("<episodedetails>");
-        sb.Append("  <title>").Append(EscapeXml(episodeTitle ?? string.Format(CultureInfo.InvariantCulture, "Episode {0}", episodeNumber))).AppendLine("</title>");
-        sb.Append("  <showtitle>").Append(EscapeXml(seriesName)).AppendLine("</showtitle>");
-        sb.Append("  <season>").Append(seasonNumber.ToString(CultureInfo.InvariantCulture)).AppendLine("</season>");
-        sb.Append("  <episode>").Append(episodeNumber.ToString(CultureInfo.InvariantCulture)).AppendLine("</episode>");
 
         AppendFileInfo(sb, video, audio, durationSecs);
 
