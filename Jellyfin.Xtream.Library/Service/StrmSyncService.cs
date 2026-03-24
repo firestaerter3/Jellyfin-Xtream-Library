@@ -365,8 +365,9 @@ public partial class StrmSyncService
         string strmFileName = BuildMovieStrmFileName(folderName, versionLabel);
         string strmPath = Path.Combine(movieFolder, strmFileName);
 
-        // Build stream URL using stored item ID (assume mp4 as default extension)
-        string streamUrl = $"{connectionInfo.BaseUrl}/movie/{connectionInfo.UserName}/{connectionInfo.Password}/{item.ItemId}.mp4";
+        // Build stream URL using stored item ID and configured container format
+        string vodFormat = Plugin.Instance.Configuration.VodContainerFormat;
+        string streamUrl = $"{connectionInfo.BaseUrl}/movie/{connectionInfo.UserName}/{connectionInfo.Password}/{item.ItemId}.{vodFormat}";
 
         if (File.Exists(strmPath))
         {
@@ -1573,7 +1574,7 @@ public partial class StrmSyncService
                     }
                     else
                     {
-                        string extension = string.IsNullOrEmpty(stream.ContainerExtension) ? "mp4" : stream.ContainerExtension;
+                        string extension = string.IsNullOrEmpty(stream.ContainerExtension) ? config.VodContainerFormat : stream.ContainerExtension;
                         string streamUrl = $"{connectionInfo.BaseUrl}/movie/{connectionInfo.UserName}/{connectionInfo.Password}/{stream.StreamId}.{extension}";
                         string strmFileName = BuildMovieStrmFileName(folderName, versionLabel);
                         strmEntries.Add((streamUrl, strmFileName));

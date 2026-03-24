@@ -628,6 +628,16 @@
                                     Enable syncing of movies and VOD content.
                                 </div>
                             </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="selVodContainerFormat">Default Container Format</label>
+                                <select is="emby-select" id="selVodContainerFormat" name="VodContainerFormat">
+                                    <option value="mp4">MP4</option>
+                                    <option value="mkv">MKV (recommended for Chromium browsers)</option>
+                                </select>
+                                <div class="fieldDescription">
+                                    Container format used in stream URLs when the provider does not report one. MKV improves compatibility with Chromium-based browsers (Edge, Brave, Opera).
+                                </div>
+                            </div>
                         </div>
 
                         <div class="verticalSection">

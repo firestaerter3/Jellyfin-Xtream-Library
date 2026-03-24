@@ -51,6 +51,7 @@ const XtreamLibraryConfig = {
             document.getElementById('txtUserAgent').value = config.UserAgent || '';
             document.getElementById('txtLibraryPath').value = config.LibraryPath || '/config/xtream-library';
             document.getElementById('chkSyncMovies').checked = config.SyncMovies !== false;
+            document.getElementById('selVodContainerFormat').value = config.VodContainerFormat || 'mp4';
             document.getElementById('chkSyncSeries').checked = config.SyncSeries !== false;
             document.getElementById('txtSyncInterval').value = config.SyncIntervalMinutes || 60;
             document.getElementById('chkTriggerScan').checked = config.TriggerLibraryScan === true;
@@ -167,6 +168,7 @@ const XtreamLibraryConfig = {
             config.UserAgent = document.getElementById('txtUserAgent').value.trim();
             config.LibraryPath = document.getElementById('txtLibraryPath').value.trim();
             config.SyncMovies = document.getElementById('chkSyncMovies').checked;
+            config.VodContainerFormat = document.getElementById('selVodContainerFormat').value;
             config.SyncSeries = document.getElementById('chkSyncSeries').checked;
             config.SyncIntervalMinutes = parseInt(document.getElementById('txtSyncInterval').value) || 60;
             config.TriggerLibraryScan = document.getElementById('chkTriggerScan').checked;
