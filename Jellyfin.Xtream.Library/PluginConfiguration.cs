@@ -44,12 +44,6 @@ public class PluginConfiguration : BasePluginConfiguration
     public string LibraryPath { get; set; } = "/config/xtream-library";
 
     /// <summary>
-    /// Gets or sets the default container format for VOD/movie stream URLs (e.g., "mp4", "mkv").
-    /// Used when the provider does not report a container extension.
-    /// </summary>
-    public string VodContainerFormat { get; set; } = "mp4";
-
-    /// <summary>
     /// Gets or sets a value indicating whether to sync movies/VOD content.
     /// </summary>
     public bool SyncMovies { get; set; } = true;
