@@ -357,12 +357,13 @@ public partial class StrmSyncService
     {
         // Use stored item info to build the STRM file directly
         var customTerms = Plugin.Instance.Configuration.CustomTitleRemoveTerms;
+        var regexPatterns = Plugin.Instance.Configuration.RegexRemovalPatterns;
         string movieName = SanitizeFileName(item.Name, customTerms);
         int? year = ExtractYear(item.Name);
         string folderName = year.HasValue ? $"{movieName} ({year})" : movieName;
         string? versionLabel = ExtractVersionLabel(item.Name);
         string movieFolder = Path.Combine(moviesPath, folderName);
-        string strmFileName = BuildMovieStrmFileName(folderName, versionLabel);
+        string strmFileName = BuildMovieStrmFileName(folderName, versionLabel, regexPatterns);
         string strmPath = Path.Combine(movieFolder, strmFileName);
 
         // Build stream URL using stored item ID (assume mp4 as default extension)
@@ -407,6 +408,7 @@ public partial class StrmSyncService
         }
 
         var customTerms = Plugin.Instance.Configuration.CustomTitleRemoveTerms;
+        var regexPatterns = Plugin.Instance.Configuration.RegexRemovalPatterns;
         string seriesName = SanitizeFileName(item.Name, customTerms);
         int? year = ExtractYear(item.Name);
         string seriesFolderName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
@@ -424,7 +426,7 @@ public partial class StrmSyncService
 
             foreach (var episode in episodes)
             {
-                string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode, customTerms);
+                string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode, customTerms, regexPatterns);
                 string strmPath = Path.Combine(seasonFolder, episodeFileName);
 
                 string extension = string.IsNullOrEmpty(episode.ContainerExtension) ? "mkv" : episode.ContainerExtension;
@@ -1567,7 +1569,7 @@ public partial class StrmSyncService
                         for (int i = 0; i < providers.Count; i++)
                         {
                             string providerStreamUrl = $"{connectionInfo.BaseUrl}/proxy/vod/movie/{uuid}?stream_id={providers[i].StreamId}";
-                            string strmFileName = BuildMovieStrmFileName(folderName, i == 0 ? null : $"Version {i + 1}");
+                            string strmFileName = BuildMovieStrmFileName(folderName, i == 0 ? null : $"Version {i + 1}", config.RegexRemovalPatterns);
                             strmEntries.Add((providerStreamUrl, strmFileName));
                         }
                     }
@@ -1575,7 +1577,7 @@ public partial class StrmSyncService
                     {
                         string extension = string.IsNullOrEmpty(stream.ContainerExtension) ? "mp4" : stream.ContainerExtension;
                         string streamUrl = $"{connectionInfo.BaseUrl}/movie/{connectionInfo.UserName}/{connectionInfo.Password}/{stream.StreamId}.{extension}";
-                        string strmFileName = BuildMovieStrmFileName(folderName, versionLabel);
+                        string strmFileName = BuildMovieStrmFileName(folderName, versionLabel, config.RegexRemovalPatterns);
                         strmEntries.Add((streamUrl, strmFileName));
                     }
 
@@ -2445,7 +2447,7 @@ public partial class StrmSyncService
 
                             foreach (var episode in episodes)
                             {
-                                string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode, config.CustomTitleRemoveTerms);
+                                string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode, config.CustomTitleRemoveTerms, config.RegexRemovalPatterns);
                                 string strmPath = Path.Combine(seasonFolder, episodeFileName);
 
                                 syncedFiles.TryAdd(strmPath, 0);
@@ -2652,7 +2654,7 @@ public partial class StrmSyncService
         CurrentProgress.SeriesPhase = string.Empty;
     }
 
-    internal static string BuildEpisodeFileName(string seriesName, int seasonNumber, Episode episode, string? customRemoveTerms = null)
+    internal static string BuildEpisodeFileName(string seriesName, int seasonNumber, Episode episode, string? customRemoveTerms = null, string? regexRemovalPatterns = null)
     {
         string episodeTitle = SanitizeFileName(episode.Title, customRemoveTerms);
         string seasonStr = seasonNumber.ToString("D2", System.Globalization.CultureInfo.InvariantCulture);
@@ -2666,12 +2668,17 @@ public partial class StrmSyncService
             episodeTitle = episodeTitle[embeddedPrefix.Length..].TrimStart();
         }
 
+        string fileName;
         if (string.IsNullOrWhiteSpace(episodeTitle) || episodeTitle.Equals($"Episode {episode.EpisodeNum}", StringComparison.OrdinalIgnoreCase))
         {
-            return $"{seriesName} - S{seasonStr}E{episodeStr}.strm";
+            fileName = $"{seriesName} - S{seasonStr}E{episodeStr}.strm";
+        }
+        else
+        {
+            fileName = $"{seriesName} - S{seasonStr}E{episodeStr} - {episodeTitle}.strm";
         }
 
-        return $"{seriesName} - S{seasonStr}E{episodeStr} - {episodeTitle}.strm";
+        return ApplyFileNameRegexPatterns(fileName, regexRemovalPatterns);
     }
 
     internal static string SanitizeFileName(string? name, string? customRemoveTerms = null)
@@ -2773,11 +2780,69 @@ public partial class StrmSyncService
         return labels.Count > 0 ? string.Join(" ", labels) : null;
     }
 
-    internal static string BuildMovieStrmFileName(string folderName, string? versionLabel)
+    internal static string BuildMovieStrmFileName(string folderName, string? versionLabel, string? regexRemovalPatterns = null)
     {
-        return versionLabel != null
+        string fileName = versionLabel != null
             ? $"{folderName} - {versionLabel}.strm"
             : $"{folderName}.strm";
+
+        return ApplyFileNameRegexPatterns(fileName, regexRemovalPatterns);
+    }
+
+    /// <summary>
+    /// Applies user-supplied regex removal patterns to a file name. Patterns are one per line.
+    /// The .strm extension is preserved. Invalid patterns are skipped silently (no exception).
+    /// Use this for file names only — folder names must keep tags like [tmdbid-N] for Jellyfin metadata identification.
+    /// </summary>
+    /// <param name="fileName">The file name (with extension) to clean.</param>
+    /// <param name="regexRemovalPatterns">Newline-separated .NET regex patterns. Empty/null is a no-op.</param>
+    /// <returns>The file name with all valid patterns replaced with empty string and whitespace tidied.</returns>
+    internal static string ApplyFileNameRegexPatterns(string fileName, string? regexRemovalPatterns)
+    {
+        if (string.IsNullOrEmpty(fileName) || string.IsNullOrWhiteSpace(regexRemovalPatterns))
+        {
+            return fileName;
+        }
+
+        // Split off the extension so regex patterns can't accidentally strip ".strm".
+        string extension = Path.GetExtension(fileName);
+        string baseName = string.IsNullOrEmpty(extension)
+            ? fileName
+            : fileName[..^extension.Length];
+
+        foreach (var rawPattern in regexRemovalPatterns.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string pattern = rawPattern.Trim();
+            if (pattern.Length == 0)
+            {
+                continue;
+            }
+
+            try
+            {
+                // Bounded timeout protects against catastrophic backtracking.
+                baseName = Regex.Replace(baseName, pattern, string.Empty, RegexOptions.None, TimeSpan.FromSeconds(1));
+            }
+            catch (ArgumentException)
+            {
+                // Invalid regex syntax — skip this pattern, keep going.
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                // Pattern was valid but ran too long — skip this pattern, keep going.
+            }
+        }
+
+        // Tidy up: collapse runs of spaces, trim separators left behind by the removal.
+        baseName = MultipleSpacesPattern().Replace(baseName, " ").Trim(' ', '_', '-', '.');
+
+        if (string.IsNullOrEmpty(baseName))
+        {
+            // Don't return just the extension — fall back to the original to keep things sane.
+            return fileName;
+        }
+
+        return baseName + extension;
     }
 
     internal static int? ExtractYear(string? name)

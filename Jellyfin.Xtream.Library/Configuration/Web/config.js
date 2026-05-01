@@ -80,6 +80,8 @@ const XtreamLibraryConfig = {
             // Custom title removal terms
             var txtCustomTerms = document.getElementById('txtCustomTitleRemoveTerms');
             if (txtCustomTerms) txtCustomTerms.value = config.CustomTitleRemoveTerms || '';
+            var txtRegexPatterns = document.getElementById('txtRegexRemovalPatterns');
+            if (txtRegexPatterns) txtRegexPatterns.value = config.RegexRemovalPatterns || '';
             document.getElementById('txtSyncParallelism').value = config.SyncParallelism || 10;
             document.getElementById('txtCategoryBatchSize').value = config.CategoryBatchSize || 25;
 
@@ -210,6 +212,8 @@ const XtreamLibraryConfig = {
             // Custom title removal terms
             var txtCustomTermsSave = document.getElementById('txtCustomTitleRemoveTerms');
             if (txtCustomTermsSave) config.CustomTitleRemoveTerms = txtCustomTermsSave.value;
+            var txtRegexPatternsSave = document.getElementById('txtRegexRemovalPatterns');
+            if (txtRegexPatternsSave) config.RegexRemovalPatterns = txtRegexPatternsSave.value;
 
             // Rate limiting
             config.RequestDelayMs = parseInt(document.getElementById('txtRequestDelayMs').value) || 50;

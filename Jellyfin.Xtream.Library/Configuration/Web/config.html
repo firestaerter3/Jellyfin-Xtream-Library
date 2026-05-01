@@ -400,6 +400,17 @@
                                     Applied before built-in title cleaning (language tags, codec info, quality tags, etc.).
                                 </div>
                             </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtRegexRemovalPatterns">Regex Removal Patterns (file names only, one per line)</label>
+                                <textarea is="emby-textarea" id="txtRegexRemovalPatterns" rows="4"
+                                    placeholder="\s*\[tmdbid-\d+\]&#10;\s*\[tvdbid-\d+\]" style="width: 100%; font-family: monospace;"></textarea>
+                                <div class="fieldDescription">
+                                    .NET regex patterns to remove from STRM <strong>file names only</strong>. Folder names are left
+                                    untouched, so tags like <code>[tmdbid-N]</code> remain available for Jellyfin's metadata
+                                    identification. Useful for cleaning file names for tools like OpenSubtitles. One pattern per
+                                    line. Invalid patterns are skipped with a warning and do not abort the sync.
+                                </div>
+                            </div>
                         </div>
 
                         <div class="verticalSection">
