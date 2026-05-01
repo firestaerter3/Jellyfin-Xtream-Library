@@ -144,6 +144,15 @@ public class PluginConfiguration : BasePluginConfiguration
     public string CustomTitleRemoveTerms { get; set; } = string.Empty;
 
     /// <summary>
+    /// Gets or sets regex patterns to remove from STRM file names.
+    /// One .NET regex per line. Applied to file names ONLY (not folder names),
+    /// so folders keep tags Jellyfin uses for metadata identification (e.g. [tmdbid-N]).
+    /// Invalid patterns are skipped with a warning and do not abort the sync.
+    /// Useful for cleaning file names for downstream tools like OpenSubtitles.
+    /// </summary>
+    public string RegexRemovalPatterns { get; set; } = string.Empty;
+
+    /// <summary>
     /// Gets or sets a value indicating whether to download artwork from the provider
     /// for content that could not be matched to TMDb/TVDb.
     /// This ensures unmatched content still has posters and thumbnails.

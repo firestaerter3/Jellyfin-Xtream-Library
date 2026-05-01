@@ -486,6 +486,135 @@ public class StrmSyncServiceTests
 
         result.Should().Be("Breaking Bad - S01E01 - Some Other Show - S01E01 - Pilot.strm");
     }
+
+    [Fact]
+    public void BuildEpisodeFileName_RegexPatternStripsTagFromFile()
+    {
+        var episode = TestDataBuilder.CreateEpisode(episodeNum: 3, title: "Pilot [Multi-Sub]");
+
+        var result = StrmSyncService.BuildEpisodeFileName(
+            seriesName: "Show",
+            seasonNumber: 1,
+            episode: episode,
+            customRemoveTerms: null,
+            regexRemovalPatterns: @"\s*\[Multi-Sub\]");
+
+        result.Should().Be("Show - S01E03 - Pilot.strm");
+    }
+
+    [Fact]
+    public void BuildEpisodeFileName_NullRegexPatterns_LeavesNameAsIs()
+    {
+        var episode = TestDataBuilder.CreateEpisode(episodeNum: 1, title: "Pilot");
+
+        var result = StrmSyncService.BuildEpisodeFileName("Show", 1, episode, customRemoveTerms: null, regexRemovalPatterns: null);
+
+        result.Should().Be("Show - S01E01 - Pilot.strm");
+    }
+    #endregion
+
+    #region ApplyFileNameRegexPatterns Tests
+
+    [Fact]
+    public void ApplyFileNameRegexPatterns_NullPatterns_ReturnsInput()
+    {
+        var result = StrmSyncService.ApplyFileNameRegexPatterns("Movie [tmdbid-1].strm", null);
+
+        result.Should().Be("Movie [tmdbid-1].strm");
+    }
+
+    [Fact]
+    public void ApplyFileNameRegexPatterns_EmptyPatterns_ReturnsInput()
+    {
+        var result = StrmSyncService.ApplyFileNameRegexPatterns("Movie.strm", "   \n  \n");
+
+        result.Should().Be("Movie.strm");
+    }
+
+    [Fact]
+    public void ApplyFileNameRegexPatterns_StripsTmdbIdTag()
+    {
+        var result = StrmSyncService.ApplyFileNameRegexPatterns(
+            "The Matrix (1999) [tmdbid-603].strm",
+            @"\s*\[tmdbid-\d+\]");
+
+        result.Should().Be("The Matrix (1999).strm");
+    }
+
+    [Fact]
+    public void ApplyFileNameRegexPatterns_StripsTvdbIdTag()
+    {
+        var result = StrmSyncService.ApplyFileNameRegexPatterns(
+            "Breaking Bad (2008) [tvdbid-81189] - S01E01 - Pilot.strm",
+            @"\s*\[tvdbid-\d+\]");
+
+        result.Should().Be("Breaking Bad (2008) - S01E01 - Pilot.strm");
+    }
+
+    [Fact]
+    public void ApplyFileNameRegexPatterns_MultiplePatterns_AllApplied()
+    {
+        var patterns = "\\s*\\[tmdbid-\\d+\\]\n\\s*\\[Multi-Sub\\]\n\\s+FHD";
+        var result = StrmSyncService.ApplyFileNameRegexPatterns(
+            "Movie (2024) [tmdbid-7] [Multi-Sub] FHD.strm",
+            patterns);
+
+        result.Should().Be("Movie (2024).strm");
+    }
+
+    [Fact]
+    public void ApplyFileNameRegexPatterns_InvalidRegex_SkippedSilently()
+    {
+        // Bad patterns should not throw and should not abort the whole list.
+        var patterns = "(unclosed\n\\s*\\[tmdbid-\\d+\\]";
+        var result = StrmSyncService.ApplyFileNameRegexPatterns(
+            "Movie [tmdbid-1].strm",
+            patterns);
+
+        result.Should().Be("Movie.strm");
+    }
+
+    [Fact]
+    public void ApplyFileNameRegexPatterns_ExtensionPreserved()
+    {
+        // Extension is split off so even greedy patterns can't strip it.
+        var result = StrmSyncService.ApplyFileNameRegexPatterns("Movie.strm", ".+");
+
+        // Base became empty — fall back to original to avoid producing just ".strm".
+        result.Should().Be("Movie.strm");
+    }
+
+    [Fact]
+    public void ApplyFileNameRegexPatterns_CaseSensitiveByDefault()
+    {
+        // .NET regex is case-sensitive by default; users can opt into (?i) per pattern.
+        var result = StrmSyncService.ApplyFileNameRegexPatterns(
+            "Movie [TMDBID-1].strm",
+            @"\s*\[tmdbid-\d+\]");
+
+        result.Should().Be("Movie [TMDBID-1].strm");
+    }
+
+    [Fact]
+    public void ApplyFileNameRegexPatterns_CaseInsensitiveOptIn()
+    {
+        var result = StrmSyncService.ApplyFileNameRegexPatterns(
+            "Movie [TMDBID-1].strm",
+            @"(?i)\s*\[tmdbid-\d+\]");
+
+        result.Should().Be("Movie.strm");
+    }
+
+    [Fact]
+    public void ApplyFileNameRegexPatterns_CollapsesDoubleSpaces()
+    {
+        var result = StrmSyncService.ApplyFileNameRegexPatterns(
+            "Movie  Title.strm",
+            @"NOMATCH");
+
+        // Even when no pattern matched, the tidy step still runs — single spaces only.
+        result.Should().Be("Movie Title.strm");
+    }
     #endregion
 
     #region CleanupEmptyDirectories Tests
@@ -808,6 +937,57 @@ public class StrmSyncServiceTests
         var result = StrmSyncService.BuildMovieStrmFileName("Folder", "HEVC 4K");
 
         result.Should().Be("Folder - HEVC 4K.strm");
+    }
+
+    [Fact]
+    public void BuildMovieStrmFileName_RegexPatternStripsTmdbIdFromFile()
+    {
+        // The folder name keeps [tmdbid-N] (used by Jellyfin metadata identification),
+        // but the file name is cleaned for downstream tools like OpenSubtitles.
+        var result = StrmSyncService.BuildMovieStrmFileName(
+            "The Matrix (1999) [tmdbid-603]",
+            null,
+            @"\s*\[tmdbid-\d+\]");
+
+        result.Should().Be("The Matrix (1999).strm");
+    }
+
+    [Fact]
+    public void BuildMovieStrmFileName_RegexNullPatterns_LeavesFileNameAsIs()
+    {
+        var result = StrmSyncService.BuildMovieStrmFileName("Folder [tmdbid-1]", null, null);
+
+        result.Should().Be("Folder [tmdbid-1].strm");
+    }
+
+    [Fact]
+    public void BuildMovieStrmFileName_InvalidRegex_DoesNotThrow()
+    {
+        // Bad pattern is silently skipped — sync should not break on a typo.
+        var result = StrmSyncService.BuildMovieStrmFileName("Folder [tmdbid-7]", null, "(unclosed");
+
+        result.Should().Be("Folder [tmdbid-7].strm");
+    }
+
+    [Fact]
+    public void BuildMovieStrmFileName_MultiplePatterns_AppliedInOrder()
+    {
+        var patterns = "\\s*\\[tmdbid-\\d+\\]\n\\s*\\[Multi-Sub\\]";
+        var result = StrmSyncService.BuildMovieStrmFileName(
+            "Movie [tmdbid-42] [Multi-Sub]",
+            null,
+            patterns);
+
+        result.Should().Be("Movie.strm");
+    }
+
+    [Fact]
+    public void BuildMovieStrmFileName_RegexExtensionPreserved()
+    {
+        // A greedy pattern shouldn't be able to eat ".strm" — extension is split off first.
+        var result = StrmSyncService.BuildMovieStrmFileName("Movie", null, ".+");
+
+        result.Should().Be("Movie.strm");
     }
 
     #endregion
