@@ -25,10 +25,13 @@ namespace Jellyfin.Xtream.Library.Client;
 /// </summary>
 public class FlexibleUnixDateTimeConverter : JsonConverter
 {
+    // MM/dd must be tried before dd/MM: when day > 12 the wrong format fails fast via
+    // TryParseExact, but for ambiguous dates (day ≤ 12) MM/dd wins — consistent with
+    // how the Xtream API formats dates on providers that mix both conventions.
     private static readonly string[] DateFormats =
     [
-        "dd/MM/yyyy HH:mm:ss",
         "MM/dd/yyyy HH:mm:ss",
+        "dd/MM/yyyy HH:mm:ss",
         "yyyy-MM-dd HH:mm:ss",
         "yyyy-MM-dd",
     ];

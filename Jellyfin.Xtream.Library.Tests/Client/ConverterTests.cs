@@ -439,18 +439,30 @@ public class ConverterTests
     }
 
     [Fact]
-    public void FlexibleUnixDateTimeConverter_DdMmYyyyDateString_ParsesCorrectly()
+    public void FlexibleUnixDateTimeConverter_MmDdYyyyDateString_ParsesCorrectly()
     {
-        // This is the format that caused the bug: "added": "12/07/2020 15:28:31"
+        // "04/13/2025 17:19:16" — day=13 proves this is MM/dd/yyyy (13 cannot be a month)
+        var json = "{\"added\": \"04/13/2025 17:19:16\"}";
+
+        var result = JsonConvert.DeserializeObject<TestDateTimeWrapper>(json);
+
+        result.Should().NotBeNull();
+        result!.Added.Should().NotBeNull();
+        result.Added!.Value.Should().Be(new DateTime(2025, 4, 13, 17, 19, 16, DateTimeKind.Unspecified));
+    }
+
+    [Fact]
+    public void FlexibleUnixDateTimeConverter_AmbiguousDateString_UsesMmDdPriority()
+    {
+        // "12/07/2020 15:28:31" — ambiguous (day ≤ 12). MM/dd is tried first so
+        // month=12, day=7 wins. This matches the Xtream API's predominant format.
         var json = "{\"added\": \"12/07/2020 15:28:31\"}";
 
         var result = JsonConvert.DeserializeObject<TestDateTimeWrapper>(json);
 
         result.Should().NotBeNull();
         result!.Added.Should().NotBeNull();
-        result.Added!.Value.Year.Should().Be(2020);
-        result.Added.Value.Day.Should().Be(12);
-        result.Added.Value.Month.Should().Be(7);
+        result.Added!.Value.Should().Be(new DateTime(2020, 12, 7, 15, 28, 31, DateTimeKind.Unspecified));
     }
 
     [Fact]
