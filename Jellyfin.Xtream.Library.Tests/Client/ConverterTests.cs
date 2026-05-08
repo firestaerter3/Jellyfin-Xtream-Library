@@ -388,6 +388,65 @@ public class ConverterTests
 
     #endregion
 
+    #region StringOrIntConverter Tests
+
+    private class TestIntWrapper
+    {
+        [JsonConverter(typeof(StringOrIntConverter))]
+        [JsonProperty("value")]
+        public int Value { get; set; }
+    }
+
+    [Fact]
+    public void StringOrIntConverter_Integer_ReturnsValue()
+    {
+        var result = JsonConvert.DeserializeObject<TestIntWrapper>("{\"value\": 5}");
+
+        result.Should().NotBeNull();
+        result!.Value.Should().Be(5);
+    }
+
+    [Fact]
+    public void StringOrIntConverter_NumericString_ReturnsValue()
+    {
+        var result = JsonConvert.DeserializeObject<TestIntWrapper>("{\"value\": \"3\"}");
+
+        result.Should().NotBeNull();
+        result!.Value.Should().Be(3);
+    }
+
+    [Fact]
+    public void StringOrIntConverter_NAString_ReturnsZero()
+    {
+        var result = JsonConvert.DeserializeObject<TestIntWrapper>("{\"value\": \"N/A\"}");
+
+        result.Should().NotBeNull();
+        result!.Value.Should().Be(0);
+    }
+
+    [Fact]
+    public void StringOrIntConverter_Null_ReturnsZero()
+    {
+        var result = JsonConvert.DeserializeObject<TestIntWrapper>("{\"value\": null}");
+
+        result.Should().NotBeNull();
+        result!.Value.Should().Be(0);
+    }
+
+    [Fact]
+    public void StringOrIntConverter_UserInfoWithNAFields_Deserializes()
+    {
+        var json = "{\"username\":\"test\",\"password\":\"x\",\"auth\":1,\"status\":\"Active\",\"active_cons\":\"N/A\",\"max_connections\":\"N/A\",\"created_at\":0,\"allowed_output_formats\":[]}";
+
+        var result = JsonConvert.DeserializeObject<UserInfo>(json);
+
+        result.Should().NotBeNull();
+        result!.ActiveCons.Should().Be(0);
+        result.MaxConnections.Should().Be(0);
+    }
+
+    #endregion
+
     #region NullableEventHandler Tests
 
     [Fact]
