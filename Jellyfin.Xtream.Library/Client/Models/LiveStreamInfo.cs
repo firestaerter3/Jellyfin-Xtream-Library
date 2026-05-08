@@ -13,6 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System;
+using Jellyfin.Xtream.Library.Client;
 using Newtonsoft.Json;
 
 #pragma warning disable CS1591
@@ -41,8 +43,9 @@ public class LiveStreamInfo
     [JsonProperty("epg_channel_id")]
     public string EpgChannelId { get; set; } = string.Empty;
 
+    [JsonConverter(typeof(FlexibleUnixDateTimeConverter))]
     [JsonProperty("added")]
-    public long Added { get; set; }
+    public DateTime? Added { get; set; }
 
     [JsonProperty("category_id")]
     public int? CategoryId { get; set; }

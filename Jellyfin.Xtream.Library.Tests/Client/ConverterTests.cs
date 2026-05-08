@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using FluentAssertions;
@@ -384,6 +385,148 @@ public class ConverterTests
 
         converter.CanConvert(typeof(Dictionary<int, ICollection<Episode>>)).Should().BeTrue();
         converter.CanConvert(typeof(string)).Should().BeFalse();
+    }
+
+    #endregion
+
+    #region FlexibleUnixDateTimeConverter Tests
+
+    private class TestDateTimeWrapper
+    {
+        [JsonConverter(typeof(FlexibleUnixDateTimeConverter))]
+        [JsonProperty("added")]
+        public DateTime? Added { get; set; }
+    }
+
+    [Fact]
+    public void FlexibleUnixDateTimeConverter_UnixTimestampInteger_ParsesCorrectly()
+    {
+        // Standard provider behaviour: "added": 1594135711 (long integer)
+        var json = "{\"added\": 1594135711}";
+
+        var result = JsonConvert.DeserializeObject<TestDateTimeWrapper>(json);
+
+        result.Should().NotBeNull();
+        result!.Added.Should().NotBeNull();
+        // 1594135711 = 2020-07-07 19:48:31 UTC
+        result.Added!.Value.Should().Be(new DateTime(2020, 7, 7, 19, 48, 31, DateTimeKind.Utc));
+    }
+
+    [Fact]
+    public void FlexibleUnixDateTimeConverter_UnixTimestampZero_ParsesAsEpoch()
+    {
+        // Some providers send 0 as default/unknown value — must not throw
+        var json = "{\"added\": 0}";
+
+        var result = JsonConvert.DeserializeObject<TestDateTimeWrapper>(json);
+
+        result.Should().NotBeNull();
+        result!.Added.Should().NotBeNull();
+        result.Added!.Value.Should().Be(new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+    }
+
+    [Fact]
+    public void FlexibleUnixDateTimeConverter_NumericString_ParsesCorrectly()
+    {
+        // Some providers send timestamp as a quoted string: "added": "1594135711"
+        var json = "{\"added\": \"1594135711\"}";
+
+        var result = JsonConvert.DeserializeObject<TestDateTimeWrapper>(json);
+
+        result.Should().NotBeNull();
+        result!.Added.Should().NotBeNull();
+        result.Added!.Value.Should().Be(new DateTime(2020, 7, 7, 19, 48, 31, DateTimeKind.Utc));
+    }
+
+    [Fact]
+    public void FlexibleUnixDateTimeConverter_DdMmYyyyDateString_ParsesCorrectly()
+    {
+        // This is the format that caused the bug: "added": "12/07/2020 15:28:31"
+        var json = "{\"added\": \"12/07/2020 15:28:31\"}";
+
+        var result = JsonConvert.DeserializeObject<TestDateTimeWrapper>(json);
+
+        result.Should().NotBeNull();
+        result!.Added.Should().NotBeNull();
+        result.Added!.Value.Year.Should().Be(2020);
+        result.Added.Value.Day.Should().Be(12);
+        result.Added.Value.Month.Should().Be(7);
+    }
+
+    [Fact]
+    public void FlexibleUnixDateTimeConverter_NullValue_ReturnsNull()
+    {
+        var json = "{\"added\": null}";
+
+        var result = JsonConvert.DeserializeObject<TestDateTimeWrapper>(json);
+
+        result.Should().NotBeNull();
+        result!.Added.Should().BeNull();
+    }
+
+    [Fact]
+    public void FlexibleUnixDateTimeConverter_EmptyString_ReturnsNull()
+    {
+        var json = "{\"added\": \"\"}";
+
+        var result = JsonConvert.DeserializeObject<TestDateTimeWrapper>(json);
+
+        result.Should().NotBeNull();
+        result!.Added.Should().BeNull();
+    }
+
+    [Fact]
+    public void FlexibleUnixDateTimeConverter_LiveStreamInfo_DeserializesWithFormattedDate()
+    {
+        var json = @"{
+            ""num"": 1,
+            ""name"": ""Test Channel"",
+            ""stream_type"": ""live"",
+            ""stream_id"": 160,
+            ""stream_icon"": """",
+            ""epg_channel_id"": """",
+            ""added"": ""12/07/2020 15:28:31"",
+            ""category_id"": 5,
+            ""custom_sid"": """",
+            ""tv_archive"": 0,
+            ""direct_source"": """",
+            ""tv_archive_duration"": 0,
+            ""is_adult"": 0
+        }";
+
+        var result = JsonConvert.DeserializeObject<LiveStreamInfo>(json);
+
+        result.Should().NotBeNull();
+        result!.Name.Should().Be("Test Channel");
+        result.StreamId.Should().Be(160);
+        result.Added.Should().NotBeNull();
+        result.Added!.Value.Year.Should().Be(2020);
+    }
+
+    [Fact]
+    public void FlexibleUnixDateTimeConverter_LiveStreamInfo_DeserializesWithUnixTimestamp()
+    {
+        var json = @"{
+            ""num"": 1,
+            ""name"": ""Test Channel"",
+            ""stream_type"": ""live"",
+            ""stream_id"": 160,
+            ""stream_icon"": """",
+            ""epg_channel_id"": """",
+            ""added"": 1594135711,
+            ""category_id"": 5,
+            ""custom_sid"": """",
+            ""tv_archive"": 0,
+            ""direct_source"": """",
+            ""tv_archive_duration"": 0,
+            ""is_adult"": 0
+        }";
+
+        var result = JsonConvert.DeserializeObject<LiveStreamInfo>(json);
+
+        result.Should().NotBeNull();
+        result!.Added.Should().NotBeNull();
+        result.Added!.Value.Year.Should().Be(2020);
     }
 
     #endregion
