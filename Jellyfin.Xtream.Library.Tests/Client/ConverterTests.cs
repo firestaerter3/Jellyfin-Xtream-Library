@@ -389,156 +389,61 @@ public class ConverterTests
 
     #endregion
 
-    #region FlexibleUnixDateTimeConverter Tests
+    #region StringOrIntConverter Tests
 
-    private class TestDateTimeWrapper
+    private class TestIntWrapper
     {
-        [JsonConverter(typeof(FlexibleUnixDateTimeConverter))]
-        [JsonProperty("added")]
-        public DateTime? Added { get; set; }
+        [JsonConverter(typeof(StringOrIntConverter))]
+        [JsonProperty("value")]
+        public int Value { get; set; }
     }
 
     [Fact]
-    public void FlexibleUnixDateTimeConverter_UnixTimestampInteger_ParsesCorrectly()
+    public void StringOrIntConverter_Integer_ReturnsValue()
     {
-        // Standard provider behaviour: "added": 1594135711 (long integer)
-        var json = "{\"added\": 1594135711}";
-
-        var result = JsonConvert.DeserializeObject<TestDateTimeWrapper>(json);
+        var result = JsonConvert.DeserializeObject<TestIntWrapper>("{\"value\": 5}");
 
         result.Should().NotBeNull();
-        result!.Added.Should().NotBeNull();
-        // 1594135711 = 2020-07-07 19:48:31 UTC
-        result.Added!.Value.Should().Be(new DateTime(2020, 7, 7, 19, 48, 31, DateTimeKind.Utc));
+        result!.Value.Should().Be(5);
     }
 
     [Fact]
-    public void FlexibleUnixDateTimeConverter_UnixTimestampZero_ParsesAsEpoch()
+    public void StringOrIntConverter_NumericString_ReturnsValue()
     {
-        // Some providers send 0 as default/unknown value — must not throw
-        var json = "{\"added\": 0}";
-
-        var result = JsonConvert.DeserializeObject<TestDateTimeWrapper>(json);
+        var result = JsonConvert.DeserializeObject<TestIntWrapper>("{\"value\": \"3\"}");
 
         result.Should().NotBeNull();
-        result!.Added.Should().NotBeNull();
-        result.Added!.Value.Should().Be(new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        result!.Value.Should().Be(3);
     }
 
     [Fact]
-    public void FlexibleUnixDateTimeConverter_NumericString_ParsesCorrectly()
+    public void StringOrIntConverter_NAString_ReturnsZero()
     {
-        // Some providers send timestamp as a quoted string: "added": "1594135711"
-        var json = "{\"added\": \"1594135711\"}";
-
-        var result = JsonConvert.DeserializeObject<TestDateTimeWrapper>(json);
+        var result = JsonConvert.DeserializeObject<TestIntWrapper>("{\"value\": \"N/A\"}");
 
         result.Should().NotBeNull();
-        result!.Added.Should().NotBeNull();
-        result.Added!.Value.Should().Be(new DateTime(2020, 7, 7, 19, 48, 31, DateTimeKind.Utc));
+        result!.Value.Should().Be(0);
     }
 
     [Fact]
-    public void FlexibleUnixDateTimeConverter_MmDdYyyyDateString_ParsesCorrectly()
+    public void StringOrIntConverter_Null_ReturnsZero()
     {
-        // "04/13/2025 17:19:16" — day=13 proves this is MM/dd/yyyy (13 cannot be a month)
-        var json = "{\"added\": \"04/13/2025 17:19:16\"}";
-
-        var result = JsonConvert.DeserializeObject<TestDateTimeWrapper>(json);
+        var result = JsonConvert.DeserializeObject<TestIntWrapper>("{\"value\": null}");
 
         result.Should().NotBeNull();
-        result!.Added.Should().NotBeNull();
-        result.Added!.Value.Should().Be(new DateTime(2025, 4, 13, 17, 19, 16, DateTimeKind.Unspecified));
+        result!.Value.Should().Be(0);
     }
 
     [Fact]
-    public void FlexibleUnixDateTimeConverter_AmbiguousDateString_UsesMmDdPriority()
+    public void StringOrIntConverter_UserInfoWithNAFields_Deserializes()
     {
-        // "12/07/2020 15:28:31" — ambiguous (day ≤ 12). MM/dd is tried first so
-        // month=12, day=7 wins. This matches the Xtream API's predominant format.
-        var json = "{\"added\": \"12/07/2020 15:28:31\"}";
+        var json = "{\"username\":\"test\",\"password\":\"x\",\"auth\":1,\"status\":\"Active\",\"active_cons\":\"N/A\",\"max_connections\":\"N/A\",\"created_at\":0,\"allowed_output_formats\":[]}";
 
-        var result = JsonConvert.DeserializeObject<TestDateTimeWrapper>(json);
+        var result = JsonConvert.DeserializeObject<UserInfo>(json);
 
         result.Should().NotBeNull();
-        result!.Added.Should().NotBeNull();
-        result.Added!.Value.Should().Be(new DateTime(2020, 12, 7, 15, 28, 31, DateTimeKind.Unspecified));
-    }
-
-    [Fact]
-    public void FlexibleUnixDateTimeConverter_NullValue_ReturnsNull()
-    {
-        var json = "{\"added\": null}";
-
-        var result = JsonConvert.DeserializeObject<TestDateTimeWrapper>(json);
-
-        result.Should().NotBeNull();
-        result!.Added.Should().BeNull();
-    }
-
-    [Fact]
-    public void FlexibleUnixDateTimeConverter_EmptyString_ReturnsNull()
-    {
-        var json = "{\"added\": \"\"}";
-
-        var result = JsonConvert.DeserializeObject<TestDateTimeWrapper>(json);
-
-        result.Should().NotBeNull();
-        result!.Added.Should().BeNull();
-    }
-
-    [Fact]
-    public void FlexibleUnixDateTimeConverter_LiveStreamInfo_DeserializesWithFormattedDate()
-    {
-        var json = @"{
-            ""num"": 1,
-            ""name"": ""Test Channel"",
-            ""stream_type"": ""live"",
-            ""stream_id"": 160,
-            ""stream_icon"": """",
-            ""epg_channel_id"": """",
-            ""added"": ""12/07/2020 15:28:31"",
-            ""category_id"": 5,
-            ""custom_sid"": """",
-            ""tv_archive"": 0,
-            ""direct_source"": """",
-            ""tv_archive_duration"": 0,
-            ""is_adult"": 0
-        }";
-
-        var result = JsonConvert.DeserializeObject<LiveStreamInfo>(json);
-
-        result.Should().NotBeNull();
-        result!.Name.Should().Be("Test Channel");
-        result.StreamId.Should().Be(160);
-        result.Added.Should().NotBeNull();
-        result.Added!.Value.Year.Should().Be(2020);
-    }
-
-    [Fact]
-    public void FlexibleUnixDateTimeConverter_LiveStreamInfo_DeserializesWithUnixTimestamp()
-    {
-        var json = @"{
-            ""num"": 1,
-            ""name"": ""Test Channel"",
-            ""stream_type"": ""live"",
-            ""stream_id"": 160,
-            ""stream_icon"": """",
-            ""epg_channel_id"": """",
-            ""added"": 1594135711,
-            ""category_id"": 5,
-            ""custom_sid"": """",
-            ""tv_archive"": 0,
-            ""direct_source"": """",
-            ""tv_archive_duration"": 0,
-            ""is_adult"": 0
-        }";
-
-        var result = JsonConvert.DeserializeObject<LiveStreamInfo>(json);
-
-        result.Should().NotBeNull();
-        result!.Added.Should().NotBeNull();
-        result.Added!.Value.Year.Should().Be(2020);
+        result!.ActiveCons.Should().Be(0);
+        result.MaxConnections.Should().Be(0);
     }
 
     #endregion

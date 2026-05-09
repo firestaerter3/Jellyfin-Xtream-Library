@@ -43,6 +43,7 @@ public class UserInfo
     [JsonProperty("is_trial")]
     public bool? IsTrial { get; set; }
 
+    [JsonConverter(typeof(StringOrIntConverter))]
     [JsonProperty("active_cons")]
     public int ActiveCons { get; set; }
 
@@ -50,6 +51,7 @@ public class UserInfo
     [JsonProperty("created_at")]
     public DateTime CreatedAt { get; set; }
 
+    [JsonConverter(typeof(StringOrIntConverter))]
     [JsonProperty("max_connections")]
     public int MaxConnections { get; set; }
 
