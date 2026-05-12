@@ -55,12 +55,6 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     public static Plugin Instance => _instance ?? throw new InvalidOperationException("Plugin instance not available");
 
     /// <summary>
-    /// Gets the Xtream connection info for provider 0. Use <see cref="GetCreds(int)"/> for multi-provider support.
-    /// </summary>
-    [Obsolete("Use GetCreds(int providerIndex) instead.")]
-    public ConnectionInfo Creds => GetCreds(0);
-
-    /// <summary>
     /// Gets the Xtream connection info for the specified provider index.
     /// </summary>
     /// <param name="providerIndex">Zero-based index into <see cref="PluginConfiguration.Providers"/>.</param>

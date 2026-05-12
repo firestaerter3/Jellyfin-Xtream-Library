@@ -199,7 +199,7 @@ public class LiveTvController : ControllerBase
 
         try
         {
-            var connectionInfo = Plugin.Instance.Creds;
+            var connectionInfo = Plugin.Instance.GetCreds(0);
             var categories = await _client.GetLiveCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
 
             var result = categories.Select(c => new CategoryDto

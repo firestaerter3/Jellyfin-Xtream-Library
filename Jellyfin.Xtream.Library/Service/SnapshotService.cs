@@ -92,10 +92,10 @@ public class SnapshotService : IDisposable
     /// Changes to these settings require a full sync to reprocess all items.
     /// </summary>
     /// <param name="provider">The provider configuration.</param>
+    /// <param name="enableMetadataLookup">Whether global metadata lookup is enabled (from <see cref="PluginConfiguration.EnableMetadataLookup"/>).</param>
     /// <returns>An MD5 fingerprint of the relevant settings.</returns>
-    public static string CalculateConfigFingerprint(ProviderConfig provider)
+    public static string CalculateConfigFingerprint(ProviderConfig provider, bool enableMetadataLookup = true)
     {
-        var globalConfig = Plugin.Instance.Configuration;
         var data = string.Join(
             "|",
             provider.MovieFolderMode,
@@ -104,38 +104,13 @@ public class SnapshotService : IDisposable
             provider.SeriesFolderMappings ?? string.Empty,
             string.Join(",", provider.SelectedVodCategoryIds?.OrderBy(id => id) ?? Enumerable.Empty<int>()),
             string.Join(",", provider.SelectedSeriesCategoryIds?.OrderBy(id => id) ?? Enumerable.Empty<int>()),
-            globalConfig.EnableMetadataLookup.ToString(CultureInfo.InvariantCulture),
+            enableMetadataLookup.ToString(CultureInfo.InvariantCulture),
             provider.TmdbFolderIdOverrides ?? string.Empty,
             provider.TvdbFolderIdOverrides ?? string.Empty);
 
         return ComputeMd5(data);
     }
 
-    /// <summary>
-    /// Computes a fingerprint of configuration settings that affect folder structure.
-    /// Changes to these settings require a full sync to reprocess all items.
-    /// </summary>
-    /// <param name="config">The plugin configuration.</param>
-    /// <returns>An MD5 fingerprint of the relevant settings.</returns>
-    [Obsolete("Use CalculateConfigFingerprint(ProviderConfig) instead.")]
-#pragma warning disable CS0618
-    public static string CalculateConfigFingerprint(PluginConfiguration config)
-    {
-        var data = string.Join(
-            "|",
-            config.MovieFolderMode,
-            config.SeriesFolderMode,
-            config.MovieFolderMappings ?? string.Empty,
-            config.SeriesFolderMappings ?? string.Empty,
-            string.Join(",", config.SelectedVodCategoryIds?.OrderBy(id => id) ?? Enumerable.Empty<int>()),
-            string.Join(",", config.SelectedSeriesCategoryIds?.OrderBy(id => id) ?? Enumerable.Empty<int>()),
-            config.EnableMetadataLookup.ToString(CultureInfo.InvariantCulture),
-            config.TmdbFolderIdOverrides ?? string.Empty,
-            config.TvdbFolderIdOverrides ?? string.Empty);
-
-        return ComputeMd5(data);
-    }
-#pragma warning restore CS0618
 #pragma warning restore CA5351
 
     /// <summary>

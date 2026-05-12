@@ -773,7 +773,7 @@ public partial class StrmSyncService
                 // Force full sync if folder structure config changed
                 if (previousSnapshot != null)
                 {
-                    var currentFingerprint = SnapshotService.CalculateConfigFingerprint(provider);
+                    var currentFingerprint = SnapshotService.CalculateConfigFingerprint(provider, Plugin.Instance.Configuration.EnableMetadataLookup);
                     if (!string.IsNullOrEmpty(previousSnapshot.ConfigFingerprint) &&
                         !string.Equals(previousSnapshot.ConfigFingerprint, currentFingerprint, StringComparison.Ordinal))
                     {
@@ -3367,7 +3367,7 @@ public partial class StrmSyncService
             var snapshot = new ContentSnapshot
             {
                 ProviderUrl = provider.BaseUrl,
-                ConfigFingerprint = SnapshotService.CalculateConfigFingerprint(provider)
+                ConfigFingerprint = SnapshotService.CalculateConfigFingerprint(provider, Plugin.Instance.Configuration.EnableMetadataLookup)
             };
 
             // Build movie snapshots

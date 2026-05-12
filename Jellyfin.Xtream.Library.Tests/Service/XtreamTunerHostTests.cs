@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+#pragma warning disable CS0618 // Legacy config fields used in test setup; Providers[0] is populated separately
 using System.IO;
 using System.Net.Http;
 using FluentAssertions;

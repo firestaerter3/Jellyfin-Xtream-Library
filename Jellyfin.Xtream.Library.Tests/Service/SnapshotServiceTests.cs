@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Xtream.Library.Client.Models;
 using Jellyfin.Xtream.Library.Service;
+using Jellyfin.Xtream.Library;
 using Jellyfin.Xtream.Library.Service.Models;
 using MediaBrowser.Controller;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -207,24 +208,22 @@ public class SnapshotServiceTests : IDisposable
     [Fact]
     public void ConfigFingerprint_SameConfig_SameHash()
     {
-        var config1 = new PluginConfiguration
+        var p1 = new ProviderConfig
         {
             MovieFolderMode = "Multiple",
             SeriesFolderMode = "Single",
             SelectedVodCategoryIds = new[] { 3, 1, 2 },
-            EnableMetadataLookup = true,
         };
 
-        var config2 = new PluginConfiguration
+        var p2 = new ProviderConfig
         {
             MovieFolderMode = "Multiple",
             SeriesFolderMode = "Single",
             SelectedVodCategoryIds = new[] { 2, 3, 1 }, // Different order, same IDs
-            EnableMetadataLookup = true,
         };
 
-        var fp1 = SnapshotService.CalculateConfigFingerprint(config1);
-        var fp2 = SnapshotService.CalculateConfigFingerprint(config2);
+        var fp1 = SnapshotService.CalculateConfigFingerprint(p1, enableMetadataLookup: true);
+        var fp2 = SnapshotService.CalculateConfigFingerprint(p2, enableMetadataLookup: true);
 
         Assert.Equal(fp1, fp2);
     }
@@ -232,11 +231,11 @@ public class SnapshotServiceTests : IDisposable
     [Fact]
     public void ConfigFingerprint_DifferentFolderMode_DifferentHash()
     {
-        var config1 = new PluginConfiguration { MovieFolderMode = "Single" };
-        var config2 = new PluginConfiguration { MovieFolderMode = "Multiple" };
+        var p1 = new ProviderConfig { MovieFolderMode = "Single" };
+        var p2 = new ProviderConfig { MovieFolderMode = "Multiple" };
 
-        var fp1 = SnapshotService.CalculateConfigFingerprint(config1);
-        var fp2 = SnapshotService.CalculateConfigFingerprint(config2);
+        var fp1 = SnapshotService.CalculateConfigFingerprint(p1);
+        var fp2 = SnapshotService.CalculateConfigFingerprint(p2);
 
         Assert.NotEqual(fp1, fp2);
     }
@@ -244,11 +243,11 @@ public class SnapshotServiceTests : IDisposable
     [Fact]
     public void ConfigFingerprint_DifferentCategories_DifferentHash()
     {
-        var config1 = new PluginConfiguration { SelectedVodCategoryIds = new[] { 1, 2, 3 } };
-        var config2 = new PluginConfiguration { SelectedVodCategoryIds = new[] { 1, 2, 4 } };
+        var p1 = new ProviderConfig { SelectedVodCategoryIds = new[] { 1, 2, 3 } };
+        var p2 = new ProviderConfig { SelectedVodCategoryIds = new[] { 1, 2, 4 } };
 
-        var fp1 = SnapshotService.CalculateConfigFingerprint(config1);
-        var fp2 = SnapshotService.CalculateConfigFingerprint(config2);
+        var fp1 = SnapshotService.CalculateConfigFingerprint(p1);
+        var fp2 = SnapshotService.CalculateConfigFingerprint(p2);
 
         Assert.NotEqual(fp1, fp2);
     }
@@ -256,11 +255,10 @@ public class SnapshotServiceTests : IDisposable
     [Fact]
     public void ConfigFingerprint_MetadataLookupToggle_DifferentHash()
     {
-        var config1 = new PluginConfiguration { EnableMetadataLookup = true };
-        var config2 = new PluginConfiguration { EnableMetadataLookup = false };
+        var p = new ProviderConfig();
 
-        var fp1 = SnapshotService.CalculateConfigFingerprint(config1);
-        var fp2 = SnapshotService.CalculateConfigFingerprint(config2);
+        var fp1 = SnapshotService.CalculateConfigFingerprint(p, enableMetadataLookup: true);
+        var fp2 = SnapshotService.CalculateConfigFingerprint(p, enableMetadataLookup: false);
 
         Assert.NotEqual(fp1, fp2);
     }

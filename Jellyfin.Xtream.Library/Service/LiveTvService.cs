@@ -175,7 +175,7 @@ public class LiveTvService : IDisposable
     internal async Task<List<LiveStreamInfo>> GetFilteredChannelsAsync(CancellationToken cancellationToken)
     {
         var config = Plugin.Instance.Configuration;
-        var connectionInfo = Plugin.Instance.Creds;
+        var connectionInfo = Plugin.Instance.GetCreds(0);
 
         List<LiveStreamInfo> allChannels;
 
@@ -330,7 +330,7 @@ public class LiveTvService : IDisposable
         // Fetch EPG data if enabled
         if (config.EnableEpg)
         {
-            var connectionInfo = Plugin.Instance.Creds;
+            var connectionInfo = Plugin.Instance.GetCreds(0);
             var epgData = await FetchEpgDataAsync(channels, connectionInfo, config, cancellationToken).ConfigureAwait(false);
 
             foreach (var program in epgData.OrderBy(p => p.StartTimestamp))
