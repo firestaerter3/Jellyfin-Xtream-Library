@@ -48,8 +48,8 @@ public class SnapshotServiceTests : IDisposable
         var snapshot = CreateTestSnapshot();
 
         // Act
-        await _service.SaveSnapshotAsync(snapshot, CancellationToken.None);
-        var loaded = await _service.LoadLatestSnapshotAsync(CancellationToken.None);
+        await _service.SaveSnapshotAsync(snapshot, cancellationToken: CancellationToken.None);
+        var loaded = await _service.LoadLatestSnapshotAsync(cancellationToken: CancellationToken.None);
 
         // Assert
         Assert.NotNull(loaded);
@@ -66,7 +66,7 @@ public class SnapshotServiceTests : IDisposable
     public async Task LoadLatestSnapshot_NoFiles_ReturnsNull()
     {
         // Act
-        var result = await _service.LoadLatestSnapshotAsync(CancellationToken.None);
+        var result = await _service.LoadLatestSnapshotAsync(cancellationToken: CancellationToken.None);
 
         // Assert
         Assert.Null(result);
@@ -80,8 +80,8 @@ public class SnapshotServiceTests : IDisposable
         snapshot.Metadata.IsComplete = false;
 
         // Act
-        await _service.SaveSnapshotAsync(snapshot, CancellationToken.None);
-        var loaded = await _service.LoadLatestSnapshotAsync(CancellationToken.None);
+        await _service.SaveSnapshotAsync(snapshot, cancellationToken: CancellationToken.None);
+        var loaded = await _service.LoadLatestSnapshotAsync(cancellationToken: CancellationToken.None);
 
         // Assert
         Assert.Null(loaded);
@@ -94,13 +94,13 @@ public class SnapshotServiceTests : IDisposable
         for (int i = 0; i < 5; i++)
         {
             var snapshot = CreateTestSnapshot();
-            await _service.SaveSnapshotAsync(snapshot, CancellationToken.None);
+            await _service.SaveSnapshotAsync(snapshot, cancellationToken: CancellationToken.None);
             // Ensure different timestamps - cleanup is synchronous per save
             await Task.Delay(10); // Millisecond granularity in filename, so 10ms is sufficient
         }
 
-        // Assert
-        var snapshotDir = Path.Combine(_tempDirectory, "xtream-library", ".snapshots");
+        // Assert — default providerKey "0-legacy" is used, so check the provider-keyed subdirectory
+        var snapshotDir = Path.Combine(_tempDirectory, "xtream-library", ".snapshots", "provider-0-legacy");
         var files = Directory.GetFiles(snapshotDir, "snapshot_*.json");
         Assert.Equal(3, files.Length); // Cleanup keeps exactly 3
     }
@@ -174,7 +174,7 @@ public class SnapshotServiceTests : IDisposable
             .Select(_ => Task.Run(async () =>
             {
                 var snapshot = CreateTestSnapshot();
-                await _service.SaveSnapshotAsync(snapshot, CancellationToken.None);
+                await _service.SaveSnapshotAsync(snapshot, cancellationToken: CancellationToken.None);
             }))
             .ToArray();
 
@@ -182,7 +182,7 @@ public class SnapshotServiceTests : IDisposable
         await Task.WhenAll(tasks);
 
         // Assert - All snapshots should be saved without corruption
-        var loaded = await _service.LoadLatestSnapshotAsync(CancellationToken.None);
+        var loaded = await _service.LoadLatestSnapshotAsync(cancellationToken: CancellationToken.None);
         Assert.NotNull(loaded);
         Assert.True(loaded.Metadata.IsComplete);
     }
@@ -198,7 +198,7 @@ public class SnapshotServiceTests : IDisposable
         await File.WriteAllTextAsync(corruptedFile, "{ invalid json }");
 
         // Act
-        var result = await _service.LoadLatestSnapshotAsync(CancellationToken.None);
+        var result = await _service.LoadLatestSnapshotAsync(cancellationToken: CancellationToken.None);
 
         // Assert
         Assert.Null(result);

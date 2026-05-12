@@ -605,7 +605,7 @@ public partial class StrmSyncService
         if (config.EnableIncrementalSync)
         {
             CurrentProgress.Phase = "Loading snapshot";
-            previousSnapshot = await _snapshotService.LoadLatestSnapshotAsync(linkedToken).ConfigureAwait(false);
+            previousSnapshot = await _snapshotService.LoadLatestSnapshotAsync(cancellationToken: linkedToken).ConfigureAwait(false);
 
             // Keep raw snapshot as hint for smart-skip optimization (even during full sync)
             hintSnapshot = previousSnapshot;
@@ -3298,7 +3298,7 @@ public partial class StrmSyncService
                 IsComplete = true
             };
 
-            await _snapshotService.SaveSnapshotAsync(snapshot, cancellationToken).ConfigureAwait(false);
+            await _snapshotService.SaveSnapshotAsync(snapshot, cancellationToken: cancellationToken).ConfigureAwait(false);
             _logger.LogInformation("Snapshot saved ({Movies} movies, {Series} series)", snapshot.Movies.Count, snapshot.Series.Count);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

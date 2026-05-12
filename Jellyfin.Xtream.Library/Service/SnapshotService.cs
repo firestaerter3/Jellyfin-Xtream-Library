@@ -1,6 +1,3 @@
-// CS0618: Legacy PluginConfiguration fields still used here; Phase 3 adds ProviderConfig overload.
-#pragma warning disable CS0618
-
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -43,9 +40,14 @@ public class SnapshotService : IDisposable
     }
 
     /// <summary>
-    /// Gets the directory where snapshots are stored.
+    /// Gets the snapshot directory for the given provider key.
+    /// Provider key format: "{providerIndex}-{urlHashPrefix}" (e.g. "0-a1b2c3d4").
+    /// Use "0-legacy" for snapshots created before multi-provider support.
     /// </summary>
-    private string SnapshotDirectory => Path.Combine(_appPaths.DataPath, "xtream-library", ".snapshots");
+    /// <param name="providerKey">The provider-specific key.</param>
+    /// <returns>The snapshot directory path for this provider.</returns>
+    private string GetSnapshotDirectory(string providerKey) =>
+        Path.Combine(_appPaths.DataPath, "xtream-library", ".snapshots", $"provider-{providerKey}");
 
     /// <summary>
     /// Calculates an MD5 checksum for a movie's key fields.
@@ -86,11 +88,37 @@ public class SnapshotService : IDisposable
     }
 
     /// <summary>
+    /// Computes a fingerprint of per-provider configuration settings that affect folder structure.
+    /// Changes to these settings require a full sync to reprocess all items.
+    /// </summary>
+    /// <param name="provider">The provider configuration.</param>
+    /// <returns>An MD5 fingerprint of the relevant settings.</returns>
+    public static string CalculateConfigFingerprint(ProviderConfig provider)
+    {
+        var globalConfig = Plugin.Instance.Configuration;
+        var data = string.Join(
+            "|",
+            provider.MovieFolderMode,
+            provider.SeriesFolderMode,
+            provider.MovieFolderMappings ?? string.Empty,
+            provider.SeriesFolderMappings ?? string.Empty,
+            string.Join(",", provider.SelectedVodCategoryIds?.OrderBy(id => id) ?? Enumerable.Empty<int>()),
+            string.Join(",", provider.SelectedSeriesCategoryIds?.OrderBy(id => id) ?? Enumerable.Empty<int>()),
+            globalConfig.EnableMetadataLookup.ToString(CultureInfo.InvariantCulture),
+            provider.TmdbFolderIdOverrides ?? string.Empty,
+            provider.TvdbFolderIdOverrides ?? string.Empty);
+
+        return ComputeMd5(data);
+    }
+
+    /// <summary>
     /// Computes a fingerprint of configuration settings that affect folder structure.
     /// Changes to these settings require a full sync to reprocess all items.
     /// </summary>
     /// <param name="config">The plugin configuration.</param>
     /// <returns>An MD5 fingerprint of the relevant settings.</returns>
+    [Obsolete("Use CalculateConfigFingerprint(ProviderConfig) instead.")]
+#pragma warning disable CS0618
     public static string CalculateConfigFingerprint(PluginConfiguration config)
     {
         var data = string.Join(
@@ -107,24 +135,28 @@ public class SnapshotService : IDisposable
 
         return ComputeMd5(data);
     }
+#pragma warning restore CS0618
 #pragma warning restore CA5351
 
     /// <summary>
-    /// Loads the most recent valid snapshot.
+    /// Loads the most recent valid snapshot for the given provider.
     /// </summary>
+    /// <param name="providerKey">Provider-specific directory key (format: "{index}-{urlHash8}"). Defaults to "0-legacy".</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The latest snapshot, or null if none exists or if corrupted.</returns>
-    public async Task<ContentSnapshot?> LoadLatestSnapshotAsync(CancellationToken cancellationToken = default)
+    public async Task<ContentSnapshot?> LoadLatestSnapshotAsync(string providerKey = "0-legacy", CancellationToken cancellationToken = default)
     {
+        var snapshotDirectory = GetSnapshotDirectory(providerKey);
+
         try
         {
-            if (!Directory.Exists(SnapshotDirectory))
+            if (!Directory.Exists(snapshotDirectory))
             {
                 _logger.LogDebug("Snapshot directory does not exist");
                 return null;
             }
 
-            var snapshotFiles = Directory.GetFiles(SnapshotDirectory, "snapshot_*.json")
+            var snapshotFiles = Directory.GetFiles(snapshotDirectory, "snapshot_*.json")
                 .OrderByDescending(f => f)
                 .ToList();
 
@@ -196,18 +228,21 @@ public class SnapshotService : IDisposable
     /// Writes to a temporary file first, then renames to prevent corruption from process crashes.
     /// </summary>
     /// <param name="snapshot">The snapshot to save.</param>
+    /// <param name="providerKey">Provider-specific directory key (format: "{index}-{urlHash8}"). Defaults to "0-legacy".</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    public async Task SaveSnapshotAsync(ContentSnapshot snapshot, CancellationToken cancellationToken = default)
+    public async Task SaveSnapshotAsync(ContentSnapshot snapshot, string providerKey = "0-legacy", CancellationToken cancellationToken = default)
     {
+        var snapshotDirectory = GetSnapshotDirectory(providerKey);
+
         try
         {
-            Directory.CreateDirectory(SnapshotDirectory);
+            Directory.CreateDirectory(snapshotDirectory);
 
             snapshot.CreatedAt = DateTime.UtcNow;
 
             var fileName = $"snapshot_{snapshot.CreatedAt:yyyyMMdd_HHmmss_fff}.json";
-            var filePath = Path.Combine(SnapshotDirectory, fileName);
+            var filePath = Path.Combine(snapshotDirectory, fileName);
             var tmpPath = filePath + ".tmp";
 
             await _fileLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -248,7 +283,7 @@ public class SnapshotService : IDisposable
             }
 
             // Cleanup old snapshots
-            await CleanupOldSnapshotsAsync(cancellationToken).ConfigureAwait(false);
+            await CleanupOldSnapshotsAsync(providerKey, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -286,11 +321,14 @@ public class SnapshotService : IDisposable
     }
 
     /// <summary>
-    /// Deletes all snapshot files. Used when cleaning libraries to force a full sync.
+    /// Deletes all snapshot files for a provider. Used when cleaning libraries to force a full sync.
     /// </summary>
-    public void ClearAllSnapshots()
+    /// <param name="providerKey">Provider-specific directory key. Defaults to "0-legacy".</param>
+    public void ClearAllSnapshots(string providerKey = "0-legacy")
     {
-        if (!Directory.Exists(SnapshotDirectory))
+        var snapshotDirectory = GetSnapshotDirectory(providerKey);
+
+        if (!Directory.Exists(snapshotDirectory))
         {
             return;
         }
@@ -298,7 +336,7 @@ public class SnapshotService : IDisposable
         _fileLock.Wait();
         try
         {
-            foreach (var file in Directory.GetFiles(SnapshotDirectory, "snapshot_*.json"))
+            foreach (var file in Directory.GetFiles(snapshotDirectory, "snapshot_*.json"))
             {
                 try
                 {
@@ -321,18 +359,21 @@ public class SnapshotService : IDisposable
     /// <summary>
     /// Deletes old snapshot files, keeping only the most recent ones.
     /// </summary>
+    /// <param name="providerKey">Provider-specific directory key.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    private async Task CleanupOldSnapshotsAsync(CancellationToken cancellationToken)
+    private async Task CleanupOldSnapshotsAsync(string providerKey, CancellationToken cancellationToken)
     {
+        var snapshotDirectory = GetSnapshotDirectory(providerKey);
+
         try
         {
-            if (!Directory.Exists(SnapshotDirectory))
+            if (!Directory.Exists(snapshotDirectory))
             {
                 return;
             }
 
-            var snapshotFiles = Directory.GetFiles(SnapshotDirectory, "snapshot_*.json")
+            var snapshotFiles = Directory.GetFiles(snapshotDirectory, "snapshot_*.json")
                 .OrderByDescending(f => f)
                 .Skip(MaxSnapshotsToKeep)
                 .ToList();
