@@ -1,3 +1,6 @@
+// CS0618: Legacy PluginConfiguration fields still used here; Phase 4 migrates to ProviderConfig.
+#pragma warning disable CS0618
+
 // Copyright (C) 2022  Kevin Jilissen
 
 // This program is free software: you can redistribute it and/or modify

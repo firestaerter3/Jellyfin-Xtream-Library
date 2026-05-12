@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Xtream.Library.Client.Models;
 using Jellyfin.Xtream.Library.Service;
+using Jellyfin.Xtream.Library;
 using Jellyfin.Xtream.Library.Service.Models;
 using MediaBrowser.Controller;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -48,8 +49,8 @@ public class SnapshotServiceTests : IDisposable
         var snapshot = CreateTestSnapshot();
 
         // Act
-        await _service.SaveSnapshotAsync(snapshot, CancellationToken.None);
-        var loaded = await _service.LoadLatestSnapshotAsync(CancellationToken.None);
+        await _service.SaveSnapshotAsync(snapshot, cancellationToken: CancellationToken.None);
+        var loaded = await _service.LoadLatestSnapshotAsync(cancellationToken: CancellationToken.None);
 
         // Assert
         Assert.NotNull(loaded);
@@ -66,7 +67,7 @@ public class SnapshotServiceTests : IDisposable
     public async Task LoadLatestSnapshot_NoFiles_ReturnsNull()
     {
         // Act
-        var result = await _service.LoadLatestSnapshotAsync(CancellationToken.None);
+        var result = await _service.LoadLatestSnapshotAsync(cancellationToken: CancellationToken.None);
 
         // Assert
         Assert.Null(result);
@@ -80,8 +81,8 @@ public class SnapshotServiceTests : IDisposable
         snapshot.Metadata.IsComplete = false;
 
         // Act
-        await _service.SaveSnapshotAsync(snapshot, CancellationToken.None);
-        var loaded = await _service.LoadLatestSnapshotAsync(CancellationToken.None);
+        await _service.SaveSnapshotAsync(snapshot, cancellationToken: CancellationToken.None);
+        var loaded = await _service.LoadLatestSnapshotAsync(cancellationToken: CancellationToken.None);
 
         // Assert
         Assert.Null(loaded);
@@ -94,13 +95,13 @@ public class SnapshotServiceTests : IDisposable
         for (int i = 0; i < 5; i++)
         {
             var snapshot = CreateTestSnapshot();
-            await _service.SaveSnapshotAsync(snapshot, CancellationToken.None);
+            await _service.SaveSnapshotAsync(snapshot, cancellationToken: CancellationToken.None);
             // Ensure different timestamps - cleanup is synchronous per save
             await Task.Delay(10); // Millisecond granularity in filename, so 10ms is sufficient
         }
 
-        // Assert
-        var snapshotDir = Path.Combine(_tempDirectory, "xtream-library", ".snapshots");
+        // Assert — default providerKey "0-legacy" is used, so check the provider-keyed subdirectory
+        var snapshotDir = Path.Combine(_tempDirectory, "xtream-library", ".snapshots", "provider-0-legacy");
         var files = Directory.GetFiles(snapshotDir, "snapshot_*.json");
         Assert.Equal(3, files.Length); // Cleanup keeps exactly 3
     }
@@ -174,7 +175,7 @@ public class SnapshotServiceTests : IDisposable
             .Select(_ => Task.Run(async () =>
             {
                 var snapshot = CreateTestSnapshot();
-                await _service.SaveSnapshotAsync(snapshot, CancellationToken.None);
+                await _service.SaveSnapshotAsync(snapshot, cancellationToken: CancellationToken.None);
             }))
             .ToArray();
 
@@ -182,7 +183,7 @@ public class SnapshotServiceTests : IDisposable
         await Task.WhenAll(tasks);
 
         // Assert - All snapshots should be saved without corruption
-        var loaded = await _service.LoadLatestSnapshotAsync(CancellationToken.None);
+        var loaded = await _service.LoadLatestSnapshotAsync(cancellationToken: CancellationToken.None);
         Assert.NotNull(loaded);
         Assert.True(loaded.Metadata.IsComplete);
     }
@@ -198,7 +199,7 @@ public class SnapshotServiceTests : IDisposable
         await File.WriteAllTextAsync(corruptedFile, "{ invalid json }");
 
         // Act
-        var result = await _service.LoadLatestSnapshotAsync(CancellationToken.None);
+        var result = await _service.LoadLatestSnapshotAsync(cancellationToken: CancellationToken.None);
 
         // Assert
         Assert.Null(result);
@@ -207,24 +208,22 @@ public class SnapshotServiceTests : IDisposable
     [Fact]
     public void ConfigFingerprint_SameConfig_SameHash()
     {
-        var config1 = new PluginConfiguration
+        var p1 = new ProviderConfig
         {
             MovieFolderMode = "Multiple",
             SeriesFolderMode = "Single",
             SelectedVodCategoryIds = new[] { 3, 1, 2 },
-            EnableMetadataLookup = true,
         };
 
-        var config2 = new PluginConfiguration
+        var p2 = new ProviderConfig
         {
             MovieFolderMode = "Multiple",
             SeriesFolderMode = "Single",
             SelectedVodCategoryIds = new[] { 2, 3, 1 }, // Different order, same IDs
-            EnableMetadataLookup = true,
         };
 
-        var fp1 = SnapshotService.CalculateConfigFingerprint(config1);
-        var fp2 = SnapshotService.CalculateConfigFingerprint(config2);
+        var fp1 = SnapshotService.CalculateConfigFingerprint(p1, enableMetadataLookup: true);
+        var fp2 = SnapshotService.CalculateConfigFingerprint(p2, enableMetadataLookup: true);
 
         Assert.Equal(fp1, fp2);
     }
@@ -232,11 +231,11 @@ public class SnapshotServiceTests : IDisposable
     [Fact]
     public void ConfigFingerprint_DifferentFolderMode_DifferentHash()
     {
-        var config1 = new PluginConfiguration { MovieFolderMode = "Single" };
-        var config2 = new PluginConfiguration { MovieFolderMode = "Multiple" };
+        var p1 = new ProviderConfig { MovieFolderMode = "Single" };
+        var p2 = new ProviderConfig { MovieFolderMode = "Multiple" };
 
-        var fp1 = SnapshotService.CalculateConfigFingerprint(config1);
-        var fp2 = SnapshotService.CalculateConfigFingerprint(config2);
+        var fp1 = SnapshotService.CalculateConfigFingerprint(p1);
+        var fp2 = SnapshotService.CalculateConfigFingerprint(p2);
 
         Assert.NotEqual(fp1, fp2);
     }
@@ -244,11 +243,11 @@ public class SnapshotServiceTests : IDisposable
     [Fact]
     public void ConfigFingerprint_DifferentCategories_DifferentHash()
     {
-        var config1 = new PluginConfiguration { SelectedVodCategoryIds = new[] { 1, 2, 3 } };
-        var config2 = new PluginConfiguration { SelectedVodCategoryIds = new[] { 1, 2, 4 } };
+        var p1 = new ProviderConfig { SelectedVodCategoryIds = new[] { 1, 2, 3 } };
+        var p2 = new ProviderConfig { SelectedVodCategoryIds = new[] { 1, 2, 4 } };
 
-        var fp1 = SnapshotService.CalculateConfigFingerprint(config1);
-        var fp2 = SnapshotService.CalculateConfigFingerprint(config2);
+        var fp1 = SnapshotService.CalculateConfigFingerprint(p1);
+        var fp2 = SnapshotService.CalculateConfigFingerprint(p2);
 
         Assert.NotEqual(fp1, fp2);
     }
@@ -256,11 +255,10 @@ public class SnapshotServiceTests : IDisposable
     [Fact]
     public void ConfigFingerprint_MetadataLookupToggle_DifferentHash()
     {
-        var config1 = new PluginConfiguration { EnableMetadataLookup = true };
-        var config2 = new PluginConfiguration { EnableMetadataLookup = false };
+        var p = new ProviderConfig();
 
-        var fp1 = SnapshotService.CalculateConfigFingerprint(config1);
-        var fp2 = SnapshotService.CalculateConfigFingerprint(config2);
+        var fp1 = SnapshotService.CalculateConfigFingerprint(p, enableMetadataLookup: true);
+        var fp2 = SnapshotService.CalculateConfigFingerprint(p, enableMetadataLookup: false);
 
         Assert.NotEqual(fp1, fp2);
     }

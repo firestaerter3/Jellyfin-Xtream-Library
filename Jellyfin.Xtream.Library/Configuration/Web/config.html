@@ -183,12 +183,47 @@
             background: #27ae60;
             border-radius: 5px;
         }
+        .provider-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 16px;
+            padding: 10px 12px;
+            background: rgba(255,255,255,0.04);
+            border-radius: 6px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .provider-bar label {
+            font-weight: 600;
+            opacity: 0.75;
+            white-space: nowrap;
+        }
+        .provider-bar select {
+            min-width: 180px;
+            flex: 1;
+            max-width: 300px;
+        }
+        .provider-enabled-badge {
+            font-size: 0.8em;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: rgba(39,174,96,0.2);
+            color: #82e0aa;
+        }
     </style>
     <div data-role="content">
         <div class="content-primary">
                 <form id="XtreamLibraryConfigForm" class="XtreamLibraryConfigForm">
                     <div class="sectionTitleContainer flex align-items-center">
                         <h2 class="sectionTitle">Xtream Library Settings</h2>
+                    </div>
+
+                    <!-- Provider Selector Bar -->
+                    <div id="providerBar" class="provider-bar">
+                        <label for="selActiveProvider">Provider:</label>
+                        <select id="selActiveProvider"></select>
+                        <button is="emby-button" type="button" id="btnAddProvider" class="raised button-submit" style="padding: 4px 12px; font-size: 0.9em;">+ Add Provider</button>
+                        <button is="emby-button" type="button" id="btnRemoveProvider" class="raised button-cancel" style="padding: 4px 12px; font-size: 0.9em;">Remove</button>
                     </div>
 
                     <!-- Tab Navigation -->
@@ -796,6 +831,9 @@
                     <div id="tab-livetv" class="xtream-tab-content" role="tabpanel" aria-labelledby="livetv">
                         <div class="verticalSection">
                             <h3 class="sectionTitle">Live TV Settings</h3>
+                            <div class="fieldDescription" style="margin-bottom: 12px; padding: 8px; background: rgba(255,255,255,0.05); border-radius: 4px;">
+                                Live TV always uses the credentials from <strong>Provider 1</strong>. Multi-provider Live TV is not supported.
+                            </div>
                             <div class="checkboxContainer checkboxContainer-withDescription">
                                 <label class="emby-checkbox-label">
                                     <input is="emby-checkbox" type="checkbox" id="chkEnableLiveTv" name="EnableLiveTv" />

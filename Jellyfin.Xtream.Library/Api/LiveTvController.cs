@@ -1,3 +1,6 @@
+// CS0618: Legacy PluginConfiguration fields still used here; Phase 5 migrates to GetLiveTvProvider().
+#pragma warning disable CS0618
+
 // Copyright (C) 2024  Roland Breitschaft
 
 // This program is free software: you can redistribute it and/or modify
@@ -196,7 +199,7 @@ public class LiveTvController : ControllerBase
 
         try
         {
-            var connectionInfo = Plugin.Instance.Creds;
+            var connectionInfo = Plugin.Instance.GetCreds(0);
             var categories = await _client.GetLiveCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
 
             var result = categories.Select(c => new CategoryDto

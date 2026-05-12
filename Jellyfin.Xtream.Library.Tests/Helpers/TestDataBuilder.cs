@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using Jellyfin.Xtream.Library;
 using Jellyfin.Xtream.Library.Client;
 using Jellyfin.Xtream.Library.Client.Models;
 
@@ -114,6 +115,29 @@ public static class TestDataBuilder
         return new SeriesStreamInfo
         {
             Episodes = episodes ?? new Dictionary<int, ICollection<Episode>>(),
+        };
+    }
+
+    /// <summary>
+    /// Creates a test ProviderConfig with default or custom values.
+    /// </summary>
+    public static ProviderConfig CreateProviderConfig(
+        string baseUrl = "http://test.example.com",
+        string username = "testuser",
+        string password = "testpass",
+        string name = "Test Provider",
+        string libraryPath = "/tmp/xtream-library")
+    {
+        return new ProviderConfig
+        {
+            Name = name,
+            IsEnabled = true,
+            BaseUrl = baseUrl,
+            Username = username,
+            Password = password,
+            LibraryPath = libraryPath,
+            SyncMovies = true,
+            SyncSeries = true,
         };
     }
 

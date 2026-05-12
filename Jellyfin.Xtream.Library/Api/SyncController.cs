@@ -1,3 +1,6 @@
+// CS0618: Legacy PluginConfiguration fields still used here; Phase 5 migrates to Providers[providerIndex].
+#pragma warning disable CS0618
+
 // Copyright (C) 2024  Roland Breitschaft
 
 // This program is free software: you can redistribute it and/or modify
@@ -18,6 +21,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Mime;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -278,12 +282,15 @@ public class SyncController : ControllerBase
     /// <summary>
     /// Tests the Dispatcharr REST API connection and JWT authentication.
     /// </summary>
+    /// <param name="providerIndex">Zero-based provider index (default: 0).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Connection test result.</returns>
     [HttpPost("TestDispatcharr")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult> TestDispatcharr(CancellationToken cancellationToken)
+    public async Task<ActionResult> TestDispatcharr(
+        [FromQuery] int providerIndex = 0,
+        CancellationToken cancellationToken = default)
     {
         var config = TryGetConfig();
         if (config == null)
@@ -291,20 +298,21 @@ public class SyncController : ControllerBase
             return BadRequest(new { Success = false, Message = "Plugin not initialized." });
         }
 
-        if (string.IsNullOrEmpty(config.BaseUrl))
+        var provider = config.Providers.ElementAtOrDefault(providerIndex);
+        if (provider == null || string.IsNullOrEmpty(provider.BaseUrl))
         {
             return Ok(new { Success = false, Message = "Please configure Base URL first." });
         }
 
-        if (string.IsNullOrEmpty(config.DispatcharrApiUser))
+        if (string.IsNullOrEmpty(provider.DispatcharrApiUser))
         {
             return Ok(new { Success = false, Message = "Please enter Dispatcharr API credentials." });
         }
 
         try
         {
-            _dispatcharrClient.Configure(config.DispatcharrApiUser, config.DispatcharrApiPass);
-            var success = await _dispatcharrClient.TestConnectionAsync(config.BaseUrl, cancellationToken).ConfigureAwait(false);
+            _dispatcharrClient.Configure(provider.DispatcharrApiUser, provider.DispatcharrApiPass);
+            var success = await _dispatcharrClient.TestConnectionAsync(provider.BaseUrl, cancellationToken).ConfigureAwait(false);
 
             if (success)
             {
@@ -321,14 +329,45 @@ public class SyncController : ControllerBase
     }
 
     /// <summary>
+    /// Returns the list of configured providers with credentials stripped.
+    /// Used by the UI to populate the provider selector.
+    /// </summary>
+    /// <returns>List of provider summaries.</returns>
+    [HttpGet("Providers")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public ActionResult GetProviders()
+    {
+        var config = TryGetConfig();
+        if (config == null)
+        {
+            return Ok(Array.Empty<object>());
+        }
+
+        var providers = config.Providers
+            .Select((p, i) => new
+            {
+                Index = i,
+                Name = p.Name,
+                BaseUrlHost = string.IsNullOrEmpty(p.BaseUrl) ? string.Empty : new Uri(p.BaseUrl).Host,
+                IsEnabled = p.IsEnabled,
+            })
+            .ToList();
+
+        return Ok(providers);
+    }
+
+    /// <summary>
     /// Gets all VOD categories from the provider.
     /// </summary>
+    /// <param name="providerIndex">Zero-based provider index (default: 0).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>List of VOD categories.</returns>
     [HttpGet("Categories/Vod")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<IEnumerable<CategoryDto>>> GetVodCategories(CancellationToken cancellationToken)
+    public async Task<ActionResult<IEnumerable<CategoryDto>>> GetVodCategories(
+        [FromQuery] int providerIndex = 0,
+        CancellationToken cancellationToken = default)
     {
         var config = TryGetConfig();
         if (config == null)
@@ -336,14 +375,15 @@ public class SyncController : ControllerBase
             return BadRequest("Plugin not initialized.");
         }
 
-        if (string.IsNullOrEmpty(config.BaseUrl) || string.IsNullOrEmpty(config.Username))
+        var provider = config.Providers.ElementAtOrDefault(providerIndex);
+        if (provider == null || string.IsNullOrEmpty(provider.BaseUrl) || string.IsNullOrEmpty(provider.Username))
         {
             return BadRequest("Provider credentials not configured.");
         }
 
         try
         {
-            var connectionInfo = Plugin.Instance.Creds;
+            var connectionInfo = new Client.ConnectionInfo(provider.BaseUrl, provider.Username, provider.Password ?? string.Empty);
             var categories = await _client.GetVodCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
 
             var result = categories.Select(c => new CategoryDto
@@ -364,12 +404,15 @@ public class SyncController : ControllerBase
     /// <summary>
     /// Gets all Series categories from the provider.
     /// </summary>
+    /// <param name="providerIndex">Zero-based provider index (default: 0).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>List of Series categories.</returns>
     [HttpGet("Categories/Series")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<IEnumerable<CategoryDto>>> GetSeriesCategories(CancellationToken cancellationToken)
+    public async Task<ActionResult<IEnumerable<CategoryDto>>> GetSeriesCategories(
+        [FromQuery] int providerIndex = 0,
+        CancellationToken cancellationToken = default)
     {
         var config = TryGetConfig();
         if (config == null)
@@ -377,14 +420,15 @@ public class SyncController : ControllerBase
             return BadRequest("Plugin not initialized.");
         }
 
-        if (string.IsNullOrEmpty(config.BaseUrl) || string.IsNullOrEmpty(config.Username))
+        var provider = config.Providers.ElementAtOrDefault(providerIndex);
+        if (provider == null || string.IsNullOrEmpty(provider.BaseUrl) || string.IsNullOrEmpty(provider.Username))
         {
             return BadRequest("Provider credentials not configured.");
         }
 
         try
         {
-            var connectionInfo = Plugin.Instance.Creds;
+            var connectionInfo = new Client.ConnectionInfo(provider.BaseUrl, provider.Username, provider.Password ?? string.Empty);
             var categories = await _client.GetSeriesCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
 
             var result = categories.Select(c => new CategoryDto
@@ -467,8 +511,29 @@ public class SyncController : ControllerBase
             }
         }
 
-        // Calculate library stats from filesystem
-        var libraryStats = GetLibraryStats(config?.LibraryPath);
+        // Calculate library stats across all configured providers
+        var perProviderStats = config?.Providers
+            .Select((p, i) => new
+            {
+                ProviderIndex = i,
+                ProviderName = p.Name,
+                Stats = GetLibraryStats(p.LibraryPath),
+            })
+            .ToList();
+
+        var aggregateStats = new LibraryStatsDto();
+        if (perProviderStats != null)
+        {
+            foreach (var p in perProviderStats)
+            {
+                aggregateStats.TotalMovieFolders += p.Stats.TotalMovieFolders;
+                aggregateStats.MatchedMovies += p.Stats.MatchedMovies;
+                aggregateStats.UnmatchedMovies += p.Stats.UnmatchedMovies;
+                aggregateStats.TotalSeriesFolders += p.Stats.TotalSeriesFolders;
+                aggregateStats.MatchedSeries += p.Stats.MatchedSeries;
+                aggregateStats.UnmatchedSeries += p.Stats.UnmatchedSeries;
+            }
+        }
 
         return Ok(new
         {
@@ -478,7 +543,8 @@ public class SyncController : ControllerBase
             NextSyncTime = nextSyncTime,
             NextSyncDisplay = nextSyncDisplay,
             ScheduleType = scheduleType,
-            LibraryStats = libraryStats,
+            LibraryStats = aggregateStats,
+            ProviderStats = perProviderStats,
         });
     }
 
@@ -497,26 +563,28 @@ public class SyncController : ControllerBase
     /// Deletes all content from the Movies library folder.
     /// Cancels any running sync first and waits for it to stop.
     /// </summary>
+    /// <param name="providerIndex">Zero-based provider index (default: 0).</param>
     /// <returns>Result with count of deleted items.</returns>
     [HttpPost("CleanMovies")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult> CleanMovies()
+    public async Task<ActionResult> CleanMovies([FromQuery] int providerIndex = 0)
     {
-        return await CleanLibraryFolder("Movies").ConfigureAwait(false);
+        return await CleanLibraryFolder("Movies", providerIndex).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Deletes all content from the Series library folder.
     /// Cancels any running sync first and waits for it to stop.
     /// </summary>
+    /// <param name="providerIndex">Zero-based provider index (default: 0).</param>
     /// <returns>Result with count of deleted items.</returns>
     [HttpPost("CleanSeries")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult> CleanSeries()
+    public async Task<ActionResult> CleanSeries([FromQuery] int providerIndex = 0)
     {
-        return await CleanLibraryFolder("Series").ConfigureAwait(false);
+        return await CleanLibraryFolder("Series", providerIndex).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -575,37 +643,40 @@ public class SyncController : ControllerBase
     {
         var result = line;
 
-        // Redact known config values
         if (config != null)
         {
-            if (!string.IsNullOrEmpty(config.BaseUrl))
+            // Redact credentials for all configured providers
+            foreach (var provider in config.Providers)
             {
-                result = result.Replace(config.BaseUrl, "[REDACTED_URL]", StringComparison.Ordinal);
-            }
+                if (!string.IsNullOrEmpty(provider.BaseUrl))
+                {
+                    result = result.Replace(provider.BaseUrl, "[REDACTED_URL]", StringComparison.Ordinal);
+                }
 
-            if (!string.IsNullOrEmpty(config.Username))
-            {
-                result = result.Replace(config.Username, "[REDACTED_USER]", StringComparison.Ordinal);
-            }
+                if (!string.IsNullOrEmpty(provider.Username))
+                {
+                    result = result.Replace(provider.Username, "[REDACTED_USER]", StringComparison.Ordinal);
+                }
 
-            if (!string.IsNullOrEmpty(config.Password))
-            {
-                result = result.Replace(config.Password, "[REDACTED_PASS]", StringComparison.Ordinal);
-            }
+                if (!string.IsNullOrEmpty(provider.Password))
+                {
+                    result = result.Replace(provider.Password, "[REDACTED_PASS]", StringComparison.Ordinal);
+                }
 
-            if (!string.IsNullOrEmpty(config.DispatcharrApiUser))
-            {
-                result = result.Replace(config.DispatcharrApiUser, "[REDACTED_USER]", StringComparison.Ordinal);
-            }
+                if (!string.IsNullOrEmpty(provider.DispatcharrApiUser))
+                {
+                    result = result.Replace(provider.DispatcharrApiUser, "[REDACTED_USER]", StringComparison.Ordinal);
+                }
 
-            if (!string.IsNullOrEmpty(config.DispatcharrApiPass))
-            {
-                result = result.Replace(config.DispatcharrApiPass, "[REDACTED_PASS]", StringComparison.Ordinal);
-            }
+                if (!string.IsNullOrEmpty(provider.DispatcharrApiPass))
+                {
+                    result = result.Replace(provider.DispatcharrApiPass, "[REDACTED_PASS]", StringComparison.Ordinal);
+                }
 
-            if (!string.IsNullOrEmpty(config.UserAgent))
-            {
-                result = result.Replace(config.UserAgent, "[REDACTED_UA]", StringComparison.Ordinal);
+                if (!string.IsNullOrEmpty(provider.UserAgent))
+                {
+                    result = result.Replace(provider.UserAgent, "[REDACTED_UA]", StringComparison.Ordinal);
+                }
             }
         }
 
@@ -618,7 +689,8 @@ public class SyncController : ControllerBase
         return result;
     }
 
-    private async Task<ActionResult> CleanLibraryFolder(string folderName)
+#pragma warning disable CA5351
+    private async Task<ActionResult> CleanLibraryFolder(string folderName, int providerIndex = 0)
     {
         var config = TryGetConfig();
         if (config == null)
@@ -626,9 +698,10 @@ public class SyncController : ControllerBase
             return BadRequest(new { Success = false, Message = "Plugin not initialized." });
         }
 
-        if (string.IsNullOrEmpty(config.LibraryPath))
+        var provider = config.Providers.ElementAtOrDefault(providerIndex);
+        if (provider == null || string.IsNullOrEmpty(provider.LibraryPath))
         {
-            return BadRequest(new { Success = false, Message = "Library path not configured." });
+            return BadRequest(new { Success = false, Message = "Library path not configured for provider." });
         }
 
         // Suppress all syncs until user manually presses Sync
@@ -655,7 +728,7 @@ public class SyncController : ControllerBase
             }
         }
 
-        var folderPath = System.IO.Path.Combine(config.LibraryPath, folderName);
+        var folderPath = System.IO.Path.Combine(provider.LibraryPath, folderName);
 
         try
         {
@@ -668,8 +741,19 @@ public class SyncController : ControllerBase
                 _logger.LogInformation("Deleted {Count} items from {Path}", deleted, folderPath);
             }
 
-            // Delete snapshots so next sync starts fresh
-            _snapshotService.ClearAllSnapshots();
+            // Clear snapshots for this provider so next sync starts fresh
+            if (!string.IsNullOrEmpty(provider.BaseUrl))
+            {
+                var urlHashBytes = MD5.HashData(Encoding.UTF8.GetBytes(provider.BaseUrl));
+                var providerKey = $"{providerIndex}-{Convert.ToHexString(urlHashBytes)[..8].ToLowerInvariant()}";
+                _snapshotService.ClearAllSnapshots(providerKey);
+            }
+
+            // Also clear the legacy "0-legacy" key for the first provider (migration compat)
+            if (providerIndex == 0)
+            {
+                _snapshotService.ClearAllSnapshots();
+            }
 
             var label = string.Equals(folderName, "Movies", System.StringComparison.Ordinal) ? "movies" : "episodes";
             return Ok(new
@@ -685,6 +769,7 @@ public class SyncController : ControllerBase
             return BadRequest(new { Success = false, Message = $"Failed to clean {folderName} library: {ex.Message}" });
         }
     }
+#pragma warning restore CA5351
 
     /// <summary>
     /// Computes library statistics by counting matched and unmatched content folders

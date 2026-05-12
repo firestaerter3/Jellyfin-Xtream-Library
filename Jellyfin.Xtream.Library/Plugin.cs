@@ -30,7 +30,6 @@ namespace Jellyfin.Xtream.Library;
 public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 {
     private static volatile Plugin? _instance;
-    private ConnectionInfo? _cachedCreds;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Plugin"/> class.
@@ -41,6 +40,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         : base(applicationPaths, xmlSerializer)
     {
         _instance = this;
+        MigrateConfigurationIfNeeded();
     }
 
     /// <inheritdoc />
@@ -55,24 +55,77 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     public static Plugin Instance => _instance ?? throw new InvalidOperationException("Plugin instance not available");
 
     /// <summary>
-    /// Gets the Xtream connection info with credentials from configuration.
-    /// Cached to avoid allocating a new object on every access during sync loops.
+    /// Gets the Xtream connection info for the specified provider index.
     /// </summary>
-    public ConnectionInfo Creds
+    /// <param name="providerIndex">Zero-based index into <see cref="PluginConfiguration.Providers"/>.</param>
+    /// <returns>The <see cref="ConnectionInfo"/> for the requested provider.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="providerIndex"/> is out of range.</exception>
+    public ConnectionInfo GetCreds(int providerIndex)
     {
-        get
+        var providers = Configuration.Providers;
+        if (providerIndex < 0 || providerIndex >= providers.Count)
         {
-            var config = Configuration;
-            if (_cachedCreds == null ||
-                _cachedCreds.BaseUrl != config.BaseUrl ||
-                _cachedCreds.UserName != config.Username ||
-                _cachedCreds.Password != config.Password)
-            {
-                _cachedCreds = new ConnectionInfo(config.BaseUrl, config.Username, config.Password);
-            }
-
-            return _cachedCreds;
+            throw new ArgumentOutOfRangeException(
+                nameof(providerIndex),
+                providerIndex,
+                $"Provider index {providerIndex} is out of range (0-{providers.Count - 1}).");
         }
+
+        var p = providers[providerIndex];
+        return new ConnectionInfo(p.BaseUrl, p.Username, p.Password);
+    }
+
+    private void MigrateConfigurationIfNeeded()
+    {
+        var config = Configuration;
+
+#pragma warning disable CS0618
+        if (config.Providers.Count != 0 || string.IsNullOrEmpty(config.BaseUrl))
+        {
+            return;
+        }
+
+        config.Providers.Add(new ProviderConfig
+        {
+            Name = "Provider 1",
+            IsEnabled = true,
+            BaseUrl = config.BaseUrl,
+            Username = config.Username,
+            Password = config.Password,
+            UserAgent = config.UserAgent,
+            LibraryPath = !string.IsNullOrEmpty(config.LibraryPath) ? config.LibraryPath : "/config/xtream-library",
+            SyncMovies = config.SyncMovies,
+            SyncSeries = config.SyncSeries,
+            SelectedVodCategoryIds = config.SelectedVodCategoryIds,
+            SelectedSeriesCategoryIds = config.SelectedSeriesCategoryIds,
+            SmartSkipExisting = config.SmartSkipExisting,
+            MovieFolderMode = config.MovieFolderMode,
+            MovieFolderMappings = config.MovieFolderMappings,
+            SeriesFolderMode = config.SeriesFolderMode,
+            SeriesFolderMappings = config.SeriesFolderMappings,
+            TmdbFolderIdOverrides = config.TmdbFolderIdOverrides,
+            TvdbFolderIdOverrides = config.TvdbFolderIdOverrides,
+            CustomTitleRemoveTerms = config.CustomTitleRemoveTerms,
+            RegexRemovalPatterns = config.RegexRemovalPatterns,
+            DownloadArtworkForUnmatched = config.DownloadArtworkForUnmatched,
+            EnableProactiveMediaInfo = config.EnableProactiveMediaInfo,
+            FallbackToYearlessLookup = config.FallbackToYearlessLookup,
+            EnableDispatcharrMode = config.EnableDispatcharrMode,
+            DispatcharrApiUser = config.DispatcharrApiUser,
+            DispatcharrApiPass = config.DispatcharrApiPass,
+            EnableIncrementalSync = config.EnableIncrementalSync,
+            FullSyncIntervalDays = config.FullSyncIntervalDays,
+            FullSyncChangeThreshold = config.FullSyncChangeThreshold,
+            CleanupOrphans = config.CleanupOrphans,
+            OrphanSafetyThreshold = config.OrphanSafetyThreshold,
+            SyncParallelism = config.SyncParallelism,
+            CategoryBatchSize = config.CategoryBatchSize,
+            RequestDelayMs = config.RequestDelayMs,
+            MaxRetries = config.MaxRetries,
+            RetryDelayMs = config.RetryDelayMs,
+        });
+        SaveConfiguration();
+#pragma warning restore CS0618
     }
 
     private static PluginPageInfo CreateStatic(string name) => new()

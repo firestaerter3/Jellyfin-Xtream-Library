@@ -13,12 +13,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+#pragma warning disable CS0618 // Legacy config fields used in test setup; Providers[0] is populated separately
 using System.IO;
 using System.Net.Http;
 using FluentAssertions;
 using Jellyfin.Xtream.Library.Client;
 using Jellyfin.Xtream.Library.Client.Models;
 using Jellyfin.Xtream.Library.Service;
+using Jellyfin.Xtream.Library.Tests.Helpers;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Serialization;
@@ -59,6 +61,9 @@ public class XtreamTunerHostTests : IDisposable
 
         // Create plugin to set Plugin.Instance
         _ = new Plugin(appPaths.Object, xmlSerializer.Object);
+
+        // Seed Providers[0] so GetCreds(0) works in tests that enable Live TV
+        Plugin.Instance.Configuration.Providers.Add(TestDataBuilder.CreateProviderConfig());
 
         _mockClient = new Mock<IXtreamClient>();
         _liveTvService = new LiveTvService(_mockClient.Object, NullLogger<LiveTvService>.Instance);

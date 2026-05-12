@@ -1,6 +1,10 @@
 const XtreamLibraryConfig = {
     pluginUniqueId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
 
+    // Multi-provider state
+    providers: [],
+    activeProviderIndex: 0,
+
     // Cache for loaded categories
     vodCategories: [],
     seriesCategories: [],
@@ -19,6 +23,198 @@ const XtreamLibraryConfig = {
 
     // Dashboard polling
     dashboardProgressInterval: null,
+
+    // Creates a new provider config object with sensible defaults
+    makeDefaultProvider: function (index) {
+        return {
+            Name: 'Provider ' + (index + 1),
+            IsEnabled: true,
+            BaseUrl: '',
+            Username: '',
+            Password: '',
+            UserAgent: '',
+            LibraryPath: index === 0 ? '/config/xtream-library' : '/config/xtream-library-' + (index + 1),
+            SyncMovies: true,
+            SyncSeries: true,
+            SelectedVodCategoryIds: [],
+            SelectedSeriesCategoryIds: [],
+            MovieFolderMode: 'Single',
+            SeriesFolderMode: 'Single',
+            MovieFolderMappings: '',
+            SeriesFolderMappings: '',
+            TmdbFolderIdOverrides: '',
+            TvdbFolderIdOverrides: '',
+            CustomTitleRemoveTerms: '',
+            RegexRemovalPatterns: '',
+            DownloadArtworkForUnmatched: true,
+            FallbackToYearlessLookup: false,
+            EnableProactiveMediaInfo: false,
+            EnableDispatcharrMode: false,
+            DispatcharrApiUser: '',
+            DispatcharrApiPass: '',
+            EnableIncrementalSync: true,
+            FullSyncIntervalDays: 7,
+            FullSyncChangeThreshold: 0.5,
+            CleanupOrphans: true,
+            OrphanSafetyThreshold: 0.5,
+            SmartSkipExisting: true,
+            SyncParallelism: 10,
+            CategoryBatchSize: 25,
+            RequestDelayMs: 50,
+            MaxRetries: 3,
+            RetryDelayMs: 1000,
+        };
+    },
+
+    // Renders the provider selector <select> element
+    renderProviderSelector: function () {
+        var sel = document.getElementById('selActiveProvider');
+        if (!sel) return;
+        sel.innerHTML = '';
+        for (var i = 0; i < this.providers.length; i++) {
+            var opt = document.createElement('option');
+            opt.value = i;
+            var label = this.providers[i].Name || ('Provider ' + (i + 1));
+            if (!this.providers[i].IsEnabled) label += ' (disabled)';
+            opt.textContent = label;
+            sel.appendChild(opt);
+        }
+        sel.value = this.activeProviderIndex;
+    },
+
+    // Populates all per-provider UI fields from providers[index]
+    loadProviderIntoUI: function (index) {
+        var self = this;
+        var p = this.providers[index];
+        if (!p) return;
+        this.activeProviderIndex = index;
+
+        document.getElementById('txtBaseUrl').value = p.BaseUrl || '';
+        document.getElementById('txtUsername').value = p.Username || '';
+        document.getElementById('txtPassword').value = p.Password || '';
+        document.getElementById('txtUserAgent').value = p.UserAgent || '';
+        document.getElementById('txtLibraryPath').value = p.LibraryPath || '/config/xtream-library';
+        document.getElementById('chkSyncMovies').checked = p.SyncMovies !== false;
+        document.getElementById('chkSyncSeries').checked = p.SyncSeries !== false;
+        document.getElementById('chkCleanupOrphans').checked = p.CleanupOrphans !== false;
+
+        self.selectedVodCategoryIds = p.SelectedVodCategoryIds || [];
+        self.selectedSeriesCategoryIds = p.SelectedSeriesCategoryIds || [];
+
+        document.getElementById('txtTmdbFolderIdOverrides').value = p.TmdbFolderIdOverrides || '';
+        document.getElementById('txtTvdbFolderIdOverrides').value = p.TvdbFolderIdOverrides || '';
+
+        document.getElementById('selMovieFolderMode').value = p.MovieFolderMode || 'Single';
+        document.getElementById('selSeriesFolderMode').value = p.SeriesFolderMode || 'Single';
+
+        self.vodFolderDefinitions = self.parseFolderMappings(p.MovieFolderMappings);
+        self.seriesFolderDefinitions = self.parseFolderMappings(p.SeriesFolderMappings);
+
+        document.getElementById('chkFallbackToYearlessLookup').checked = p.FallbackToYearlessLookup === true;
+
+        var txtCustomTerms = document.getElementById('txtCustomTitleRemoveTerms');
+        if (txtCustomTerms) txtCustomTerms.value = p.CustomTitleRemoveTerms || '';
+        var txtRegexPatterns = document.getElementById('txtRegexRemovalPatterns');
+        if (txtRegexPatterns) txtRegexPatterns.value = p.RegexRemovalPatterns || '';
+
+        document.getElementById('txtSyncParallelism').value = p.SyncParallelism || 10;
+        document.getElementById('txtCategoryBatchSize').value = p.CategoryBatchSize || 25;
+        document.getElementById('txtRequestDelayMs').value = p.RequestDelayMs || 50;
+        document.getElementById('txtMaxRetries').value = p.MaxRetries || 3;
+        document.getElementById('txtRetryDelayMs').value = p.RetryDelayMs || 1000;
+
+        document.getElementById('chkDownloadArtworkForUnmatched').checked = p.DownloadArtworkForUnmatched !== false;
+        document.getElementById('chkEnableIncrementalSync').checked = p.EnableIncrementalSync !== false;
+        document.getElementById('txtFullSyncIntervalDays').value = p.FullSyncIntervalDays || 7;
+        document.getElementById('txtFullSyncChangeThreshold').value = Math.round((p.FullSyncChangeThreshold || 0.50) * 100);
+        document.getElementById('chkEnableProactiveMediaInfo').checked = p.EnableProactiveMediaInfo || false;
+
+        document.getElementById('chkEnableDispatcharrMode').checked = p.EnableDispatcharrMode || false;
+        document.getElementById('txtDispatcharrApiUser').value = p.DispatcharrApiUser || '';
+        document.getElementById('txtDispatcharrApiPass').value = p.DispatcharrApiPass || '';
+        self.updateDispatcharrVisibility();
+
+        self.updateFolderModeVisibility('vod');
+        self.updateFolderModeVisibility('series');
+
+        // Clear category lists - they'll be reloaded when user clicks Load
+        document.getElementById('vodCategoryList').innerHTML = '';
+        document.getElementById('seriesCategoryList').innerHTML = '';
+        var vodStatus = document.getElementById('vodCategoryLoadStatus');
+        if (vodStatus) vodStatus.innerHTML = '';
+        var seriesStatus = document.getElementById('seriesCategoryLoadStatus');
+        if (seriesStatus) seriesStatus.innerHTML = '';
+
+        // Auto-load categories if credentials are configured
+        if (p.BaseUrl && p.Username) {
+            self.loadVodCategories();
+            self.loadSeriesCategories();
+        }
+    },
+
+    // Writes all per-provider UI fields back to providers[activeProviderIndex]
+    updateActiveProviderFromUI: function () {
+        var p = this.providers[this.activeProviderIndex];
+        if (!p) return;
+
+        p.BaseUrl = document.getElementById('txtBaseUrl').value.trim().replace(/\/$/, '');
+        p.Username = document.getElementById('txtUsername').value.trim();
+        p.Password = document.getElementById('txtPassword').value;
+        p.UserAgent = document.getElementById('txtUserAgent').value.trim();
+        p.LibraryPath = document.getElementById('txtLibraryPath').value.trim();
+        p.SyncMovies = document.getElementById('chkSyncMovies').checked;
+        p.SyncSeries = document.getElementById('chkSyncSeries').checked;
+        p.CleanupOrphans = document.getElementById('chkCleanupOrphans').checked;
+
+        var movieMode = document.getElementById('selMovieFolderMode').value;
+        var seriesMode = document.getElementById('selSeriesFolderMode').value;
+        p.MovieFolderMode = movieMode;
+        p.SeriesFolderMode = seriesMode;
+
+        if (movieMode === 'Single') {
+            p.SelectedVodCategoryIds = this.getSelectedCategoryIds('vod');
+            p.MovieFolderMappings = '';
+        } else {
+            this.updateFolderDefinitionsFromUI('vod');
+            p.SelectedVodCategoryIds = this.getAllCategoryIdsFromFolders('vod');
+            p.MovieFolderMappings = this.buildFolderMappings(this.vodFolderDefinitions);
+        }
+
+        if (seriesMode === 'Single') {
+            p.SelectedSeriesCategoryIds = this.getSelectedCategoryIds('series');
+            p.SeriesFolderMappings = '';
+        } else {
+            this.updateFolderDefinitionsFromUI('series');
+            p.SelectedSeriesCategoryIds = this.getAllCategoryIdsFromFolders('series');
+            p.SeriesFolderMappings = this.buildFolderMappings(this.seriesFolderDefinitions);
+        }
+
+        p.TmdbFolderIdOverrides = document.getElementById('txtTmdbFolderIdOverrides').value;
+        p.TvdbFolderIdOverrides = document.getElementById('txtTvdbFolderIdOverrides').value;
+
+        p.FallbackToYearlessLookup = document.getElementById('chkFallbackToYearlessLookup').checked;
+
+        var txtCustomTermsSave = document.getElementById('txtCustomTitleRemoveTerms');
+        if (txtCustomTermsSave) p.CustomTitleRemoveTerms = txtCustomTermsSave.value;
+        var txtRegexPatternsSave = document.getElementById('txtRegexRemovalPatterns');
+        if (txtRegexPatternsSave) p.RegexRemovalPatterns = txtRegexPatternsSave.value;
+
+        p.SyncParallelism = parseInt(document.getElementById('txtSyncParallelism').value) || 10;
+        p.CategoryBatchSize = parseInt(document.getElementById('txtCategoryBatchSize').value) || 25;
+        p.RequestDelayMs = parseInt(document.getElementById('txtRequestDelayMs').value) || 50;
+        p.MaxRetries = parseInt(document.getElementById('txtMaxRetries').value) || 3;
+        p.RetryDelayMs = parseInt(document.getElementById('txtRetryDelayMs').value) || 1000;
+
+        p.DownloadArtworkForUnmatched = document.getElementById('chkDownloadArtworkForUnmatched').checked;
+        p.EnableIncrementalSync = document.getElementById('chkEnableIncrementalSync').checked;
+        p.FullSyncIntervalDays = parseInt(document.getElementById('txtFullSyncIntervalDays').value) || 7;
+        p.FullSyncChangeThreshold = (parseInt(document.getElementById('txtFullSyncChangeThreshold').value) || 50) / 100;
+        p.EnableProactiveMediaInfo = document.getElementById('chkEnableProactiveMediaInfo').checked;
+
+        p.EnableDispatcharrMode = document.getElementById('chkEnableDispatcharrMode').checked;
+        p.DispatcharrApiUser = document.getElementById('txtDispatcharrApiUser').value.trim();
+        p.DispatcharrApiPass = document.getElementById('txtDispatcharrApiPass').value;
+    },
 
     // Tab switching
     switchTab: function (tabName) {
@@ -45,77 +241,27 @@ const XtreamLibraryConfig = {
         const self = this;
 
         ApiClient.getPluginConfiguration(this.pluginUniqueId).then(function (config) {
-            document.getElementById('txtBaseUrl').value = config.BaseUrl || '';
-            document.getElementById('txtUsername').value = config.Username || '';
-            document.getElementById('txtPassword').value = config.Password || '';
-            document.getElementById('txtUserAgent').value = config.UserAgent || '';
-            document.getElementById('txtLibraryPath').value = config.LibraryPath || '/config/xtream-library';
-            document.getElementById('chkSyncMovies').checked = config.SyncMovies !== false;
-            document.getElementById('chkSyncSeries').checked = config.SyncSeries !== false;
+            // Load providers — migration produces at least one entry on first load
+            if (config.Providers && config.Providers.length > 0) {
+                self.providers = config.Providers;
+            } else {
+                self.providers = [self.makeDefaultProvider(0)];
+            }
+            self.activeProviderIndex = 0;
+            self.renderProviderSelector();
+            self.loadProviderIntoUI(0);
+
+            // Global settings (not per-provider)
             document.getElementById('txtSyncInterval').value = config.SyncIntervalMinutes || 60;
             document.getElementById('chkTriggerScan').checked = config.TriggerLibraryScan === true;
-            document.getElementById('chkCleanupOrphans').checked = config.CleanupOrphans !== false;
-
-            // Store selected category IDs
-            self.selectedVodCategoryIds = config.SelectedVodCategoryIds || [];
-            self.selectedSeriesCategoryIds = config.SelectedSeriesCategoryIds || [];
-
-            // Folder ID overrides
-            document.getElementById('txtTmdbFolderIdOverrides').value = config.TmdbFolderIdOverrides || '';
-            document.getElementById('txtTvdbFolderIdOverrides').value = config.TvdbFolderIdOverrides || '';
-
-            // Folder mode
-            document.getElementById('selMovieFolderMode').value = config.MovieFolderMode || 'Single';
-            document.getElementById('selSeriesFolderMode').value = config.SeriesFolderMode || 'Single';
-
-            // Parse folder mappings into definitions
-            self.vodFolderDefinitions = self.parseFolderMappings(config.MovieFolderMappings);
-            self.seriesFolderDefinitions = self.parseFolderMappings(config.SeriesFolderMappings);
-
-            // Metadata lookup
             document.getElementById('chkEnableMetadataLookup').checked = config.EnableMetadataLookup !== false;
-            document.getElementById('chkFallbackToYearlessLookup').checked = config.FallbackToYearlessLookup === true;
             document.getElementById('txtMetadataParallelism').value = config.MetadataParallelism || 3;
-
-            // Custom title removal terms
-            var txtCustomTerms = document.getElementById('txtCustomTitleRemoveTerms');
-            if (txtCustomTerms) txtCustomTerms.value = config.CustomTitleRemoveTerms || '';
-            var txtRegexPatterns = document.getElementById('txtRegexRemovalPatterns');
-            if (txtRegexPatterns) txtRegexPatterns.value = config.RegexRemovalPatterns || '';
-            document.getElementById('txtSyncParallelism').value = config.SyncParallelism || 10;
-            document.getElementById('txtCategoryBatchSize').value = config.CategoryBatchSize || 25;
-
-            // Rate limiting
-            document.getElementById('txtRequestDelayMs').value = config.RequestDelayMs || 50;
-            document.getElementById('txtMaxRetries').value = config.MaxRetries || 3;
-            document.getElementById('txtRetryDelayMs').value = config.RetryDelayMs || 1000;
-
-            // Artwork download for unmatched
-            document.getElementById('chkDownloadArtworkForUnmatched').checked = config.DownloadArtworkForUnmatched !== false;
-
-            // Incremental sync
-            document.getElementById('chkEnableIncrementalSync').checked = config.EnableIncrementalSync !== false;
-            document.getElementById('txtFullSyncIntervalDays').value = config.FullSyncIntervalDays || 7;
-            document.getElementById('txtFullSyncChangeThreshold').value = Math.round((config.FullSyncChangeThreshold || 0.50) * 100);
-
-            // Proactive media info
-            document.getElementById('chkEnableProactiveMediaInfo').checked = config.EnableProactiveMediaInfo || false;
-
-            // Dispatcharr mode
-            document.getElementById('chkEnableDispatcharrMode').checked = config.EnableDispatcharrMode || false;
-            document.getElementById('txtDispatcharrApiUser').value = config.DispatcharrApiUser || '';
-            document.getElementById('txtDispatcharrApiPass').value = config.DispatcharrApiPass || '';
-            self.updateDispatcharrVisibility();
 
             // Schedule settings
             document.getElementById('selSyncScheduleType').value = config.SyncScheduleType || 'Interval';
             document.getElementById('selSyncDailyHour').value = config.SyncDailyHour || 3;
             document.getElementById('selSyncDailyMinute').value = config.SyncDailyMinute || 0;
             self.updateScheduleVisibility();
-
-            // Update folder mode visibility
-            self.updateFolderModeVisibility('vod');
-            self.updateFolderModeVisibility('series');
 
             // Live TV settings
             document.getElementById('chkEnableLiveTv').checked = config.EnableLiveTv || false;
@@ -145,10 +291,9 @@ const XtreamLibraryConfig = {
 
             Dashboard.hideLoadingMsg();
 
-            // Auto-load categories if credentials are configured
-            if (config.BaseUrl && config.Username) {
-                self.loadVodCategories();
-                self.loadSeriesCategories();
+            // Live categories auto-load (uses provider 0 credentials)
+            var p0 = self.providers[0];
+            if (p0 && p0.BaseUrl && p0.Username) {
                 self.loadLiveCategories();
             }
         });
@@ -162,79 +307,18 @@ const XtreamLibraryConfig = {
         Dashboard.showLoadingMsg();
         const self = this;
 
+        // Flush current UI state into providers array before saving
+        self.updateActiveProviderFromUI();
+
         ApiClient.getPluginConfiguration(this.pluginUniqueId).then(function (config) {
-            config.BaseUrl = document.getElementById('txtBaseUrl').value.trim().replace(/\/$/, '');
-            config.Username = document.getElementById('txtUsername').value.trim();
-            config.Password = document.getElementById('txtPassword').value;
-            config.UserAgent = document.getElementById('txtUserAgent').value.trim();
-            config.LibraryPath = document.getElementById('txtLibraryPath').value.trim();
-            config.SyncMovies = document.getElementById('chkSyncMovies').checked;
-            config.SyncSeries = document.getElementById('chkSyncSeries').checked;
+            // Write providers array
+            config.Providers = self.providers;
+
+            // Global settings only
             config.SyncIntervalMinutes = parseInt(document.getElementById('txtSyncInterval').value) || 60;
             config.TriggerLibraryScan = document.getElementById('chkTriggerScan').checked;
-            config.CleanupOrphans = document.getElementById('chkCleanupOrphans').checked;
-
-            // Folder mode
-            config.MovieFolderMode = document.getElementById('selMovieFolderMode').value;
-            config.SeriesFolderMode = document.getElementById('selSeriesFolderMode').value;
-
-            // Get selected category IDs based on folder mode
-            if (config.MovieFolderMode === 'Single') {
-                config.SelectedVodCategoryIds = self.getSelectedCategoryIds('vod');
-                config.MovieFolderMappings = '';
-            } else {
-                // In multi-folder mode, collect all categories from folder definitions
-                self.updateFolderDefinitionsFromUI('vod');
-                config.SelectedVodCategoryIds = self.getAllCategoryIdsFromFolders('vod');
-                config.MovieFolderMappings = self.buildFolderMappings(self.vodFolderDefinitions);
-            }
-
-            if (config.SeriesFolderMode === 'Single') {
-                config.SelectedSeriesCategoryIds = self.getSelectedCategoryIds('series');
-                config.SeriesFolderMappings = '';
-            } else {
-                self.updateFolderDefinitionsFromUI('series');
-                config.SelectedSeriesCategoryIds = self.getAllCategoryIdsFromFolders('series');
-                config.SeriesFolderMappings = self.buildFolderMappings(self.seriesFolderDefinitions);
-            }
-
-            // Folder ID overrides
-            config.TmdbFolderIdOverrides = document.getElementById('txtTmdbFolderIdOverrides').value;
-            config.TvdbFolderIdOverrides = document.getElementById('txtTvdbFolderIdOverrides').value;
-
-            // Metadata lookup
             config.EnableMetadataLookup = document.getElementById('chkEnableMetadataLookup').checked;
-            config.FallbackToYearlessLookup = document.getElementById('chkFallbackToYearlessLookup').checked;
             config.MetadataParallelism = parseInt(document.getElementById('txtMetadataParallelism').value) || 3;
-            config.SyncParallelism = parseInt(document.getElementById('txtSyncParallelism').value) || 10;
-            config.CategoryBatchSize = parseInt(document.getElementById('txtCategoryBatchSize').value) || 25;
-
-            // Custom title removal terms
-            var txtCustomTermsSave = document.getElementById('txtCustomTitleRemoveTerms');
-            if (txtCustomTermsSave) config.CustomTitleRemoveTerms = txtCustomTermsSave.value;
-            var txtRegexPatternsSave = document.getElementById('txtRegexRemovalPatterns');
-            if (txtRegexPatternsSave) config.RegexRemovalPatterns = txtRegexPatternsSave.value;
-
-            // Rate limiting
-            config.RequestDelayMs = parseInt(document.getElementById('txtRequestDelayMs').value) || 50;
-            config.MaxRetries = parseInt(document.getElementById('txtMaxRetries').value) || 3;
-            config.RetryDelayMs = parseInt(document.getElementById('txtRetryDelayMs').value) || 1000;
-
-            // Artwork download for unmatched
-            config.DownloadArtworkForUnmatched = document.getElementById('chkDownloadArtworkForUnmatched').checked;
-
-            // Incremental sync
-            config.EnableIncrementalSync = document.getElementById('chkEnableIncrementalSync').checked;
-            config.FullSyncIntervalDays = parseInt(document.getElementById('txtFullSyncIntervalDays').value) || 7;
-            config.FullSyncChangeThreshold = (parseInt(document.getElementById('txtFullSyncChangeThreshold').value) || 50) / 100;
-
-            // Proactive media info
-            config.EnableProactiveMediaInfo = document.getElementById('chkEnableProactiveMediaInfo').checked;
-
-            // Dispatcharr mode
-            config.EnableDispatcharrMode = document.getElementById('chkEnableDispatcharrMode').checked;
-            config.DispatcharrApiUser = document.getElementById('txtDispatcharrApiUser').value.trim();
-            config.DispatcharrApiPass = document.getElementById('txtDispatcharrApiPass').value;
 
             // Schedule settings
             config.SyncScheduleType = document.getElementById('selSyncScheduleType').value;
@@ -846,7 +930,7 @@ const XtreamLibraryConfig = {
         statusSpan.innerHTML = '<span style="color: orange;">Loading...</span>';
         const self = this;
 
-        fetch(ApiClient.getUrl('XtreamLibrary/Categories/Vod'), {
+        fetch(ApiClient.getUrl('XtreamLibrary/Categories/Vod') + '?providerIndex=' + this.activeProviderIndex, {
             method: 'GET',
             headers: {
                 'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
@@ -875,7 +959,7 @@ const XtreamLibraryConfig = {
         statusSpan.innerHTML = '<span style="color: orange;">Loading...</span>';
         const self = this;
 
-        fetch(ApiClient.getUrl('XtreamLibrary/Categories/Series'), {
+        fetch(ApiClient.getUrl('XtreamLibrary/Categories/Series') + '?providerIndex=' + this.activeProviderIndex, {
             method: 'GET',
             headers: {
                 'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
@@ -1004,7 +1088,7 @@ const XtreamLibraryConfig = {
         const statusSpan = document.getElementById('dispatcharrStatus');
         statusSpan.innerHTML = '<span style="color: orange;">Testing...</span>';
 
-        fetch(ApiClient.getUrl('XtreamLibrary/TestDispatcharr'), {
+        fetch(ApiClient.getUrl('XtreamLibrary/TestDispatcharr') + '?providerIndex=' + this.activeProviderIndex, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -1066,7 +1150,7 @@ const XtreamLibraryConfig = {
         const statusDiv = document.getElementById('cleanLibrariesStatus');
         statusDiv.innerHTML = '<span style="color: orange;">Deleting...</span>';
 
-        fetch(ApiClient.getUrl('XtreamLibrary/' + endpoint), {
+        fetch(ApiClient.getUrl('XtreamLibrary/' + endpoint) + '?providerIndex=' + XtreamLibraryConfig.activeProviderIndex, {
             method: 'POST',
             headers: {
                 'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
@@ -1738,6 +1822,45 @@ function initXtreamLibraryConfig() {
         btnRefreshLiveTvCache.addEventListener('click', function (e) {
             e.preventDefault();
             XtreamLibraryConfig.refreshLiveTvCache();
+        });
+    }
+
+    // Provider selector
+    var selActiveProvider = document.getElementById('selActiveProvider');
+    if (selActiveProvider) {
+        selActiveProvider.addEventListener('change', function () {
+            XtreamLibraryConfig.updateActiveProviderFromUI();
+            var newIndex = parseInt(this.value);
+            XtreamLibraryConfig.loadProviderIntoUI(newIndex);
+        });
+    }
+
+    var btnAddProvider = document.getElementById('btnAddProvider');
+    if (btnAddProvider) {
+        btnAddProvider.addEventListener('click', function (e) {
+            e.preventDefault();
+            XtreamLibraryConfig.updateActiveProviderFromUI();
+            var newIndex = XtreamLibraryConfig.providers.length;
+            XtreamLibraryConfig.providers.push(XtreamLibraryConfig.makeDefaultProvider(newIndex));
+            XtreamLibraryConfig.renderProviderSelector();
+            XtreamLibraryConfig.loadProviderIntoUI(newIndex);
+        });
+    }
+
+    var btnRemoveProvider = document.getElementById('btnRemoveProvider');
+    if (btnRemoveProvider) {
+        btnRemoveProvider.addEventListener('click', function (e) {
+            e.preventDefault();
+            if (XtreamLibraryConfig.providers.length <= 1) {
+                Dashboard.alert('At least one provider is required.');
+                return;
+            }
+            var idx = XtreamLibraryConfig.activeProviderIndex;
+            var name = XtreamLibraryConfig.providers[idx].Name || ('Provider ' + (idx + 1));
+            if (!confirm('Remove "' + name + '"? This cannot be undone.')) return;
+            XtreamLibraryConfig.providers.splice(idx, 1);
+            XtreamLibraryConfig.renderProviderSelector();
+            XtreamLibraryConfig.loadProviderIntoUI(0);
         });
     }
 
