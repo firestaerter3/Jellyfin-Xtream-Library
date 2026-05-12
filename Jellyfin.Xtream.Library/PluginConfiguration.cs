@@ -14,6 +14,8 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using MediaBrowser.Model.Plugins;
 
 namespace Jellyfin.Xtream.Library;
@@ -23,35 +25,18 @@ namespace Jellyfin.Xtream.Library;
 /// </summary>
 public class PluginConfiguration : BasePluginConfiguration
 {
-    /// <summary>
-    /// Gets or sets the base URL of the Xtream provider (including protocol and port, no trailing slash).
-    /// </summary>
-    public string BaseUrl { get; set; } = string.Empty;
+    // =====================
+    // Multi-Provider List
+    // =====================
 
     /// <summary>
-    /// Gets or sets the username for Xtream authentication.
+    /// Gets or sets the list of configured Xtream providers.
     /// </summary>
-    public string Username { get; set; } = string.Empty;
+    public List<ProviderConfig> Providers { get; set; } = new();
 
-    /// <summary>
-    /// Gets or sets the password for Xtream authentication.
-    /// </summary>
-    public string Password { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Gets or sets the library path where STRM files will be created.
-    /// </summary>
-    public string LibraryPath { get; set; } = "/config/xtream-library";
-
-    /// <summary>
-    /// Gets or sets a value indicating whether to sync movies/VOD content.
-    /// </summary>
-    public bool SyncMovies { get; set; } = true;
-
-    /// <summary>
-    /// Gets or sets a value indicating whether to sync series content.
-    /// </summary>
-    public bool SyncSeries { get; set; } = true;
+    // =====================
+    // Global: Schedule
+    // =====================
 
     /// <summary>
     /// Gets or sets the sync interval in minutes.
@@ -62,116 +47,6 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Gets or sets a value indicating whether to trigger a Jellyfin library scan after sync.
     /// </summary>
     public bool TriggerLibraryScan { get; set; }
-
-    /// <summary>
-    /// Gets or sets a value indicating whether to remove orphaned STRM files (content removed from provider).
-    /// </summary>
-    public bool CleanupOrphans { get; set; } = true;
-
-    /// <summary>
-    /// Gets or sets the orphan safety threshold (0.0 to 1.0).
-    /// If more than this fraction of content would be deleted, orphan cleanup is skipped as a safety measure.
-    /// Default: 0.20 (20% of content).
-    /// </summary>
-    public double OrphanSafetyThreshold { get; set; } = 0.20;
-
-    /// <summary>
-    /// Gets or sets an optional custom User-Agent string for API requests.
-    /// </summary>
-    public string UserAgent { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Gets or sets the array of selected VOD category IDs to sync.
-    /// Empty array means sync all categories (backward compatible).
-    /// </summary>
-    public int[] SelectedVodCategoryIds { get; set; } = Array.Empty<int>();
-
-    /// <summary>
-    /// Gets or sets the array of selected Series category IDs to sync.
-    /// Empty array means sync all categories (backward compatible).
-    /// </summary>
-    public int[] SelectedSeriesCategoryIds { get; set; } = Array.Empty<int>();
-
-    /// <summary>
-    /// Gets or sets the number of parallel API requests during sync.
-    /// Higher values speed up sync but may overload the provider.
-    /// </summary>
-    public int SyncParallelism { get; set; } = 10;
-
-    /// <summary>
-    /// Gets or sets a value indicating whether to skip series that already have STRM files.
-    /// This avoids unnecessary API calls for existing content.
-    /// </summary>
-    public bool SmartSkipExisting { get; set; } = true;
-
-    /// <summary>
-    /// Gets or sets folder name to TMDb ID overrides for movies.
-    /// Format: one mapping per line, "FolderName=TmdbID".
-    /// Example: "The Matrix (1999)=603" forces TMDb ID 603 for that folder.
-    /// </summary>
-    public string TmdbFolderIdOverrides { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Gets or sets folder name to TVDb ID overrides for series.
-    /// Format: one mapping per line, "FolderName=TvdbID".
-    /// Example: "Breaking Bad (2008)=81189" forces TVDb ID 81189 for that folder.
-    /// </summary>
-    public string TvdbFolderIdOverrides { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Gets or sets a value indicating whether automatic metadata ID lookup is enabled.
-    /// When enabled, uses Jellyfin's configured metadata providers to automatically
-    /// look up TMDb/TVDb IDs during sync.
-    /// </summary>
-    public bool EnableMetadataLookup { get; set; } = true;
-
-    /// <summary>
-    /// Gets or sets the metadata cache age in days before refresh.
-    /// Cached lookup results older than this will be re-fetched.
-    /// </summary>
-    public int MetadataCacheAgeDays { get; set; } = 30;
-
-    /// <summary>
-    /// Gets or sets the number of parallel metadata lookups.
-    /// Higher values speed up first sync but may trigger API rate limits.
-    /// </summary>
-    public int MetadataParallelism { get; set; } = 3;
-
-    /// <summary>
-    /// Gets or sets custom terms to remove from movie and series titles.
-    /// One term per line. Applied before built-in title cleaning patterns.
-    /// </summary>
-    public string CustomTitleRemoveTerms { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Gets or sets regex patterns to remove from STRM file names.
-    /// One .NET regex per line. Applied to file names ONLY (not folder names),
-    /// so folders keep tags Jellyfin uses for metadata identification (e.g. [tmdbid-N]).
-    /// Invalid patterns are skipped with a warning and do not abort the sync.
-    /// Useful for cleaning file names for downstream tools like OpenSubtitles.
-    /// </summary>
-    public string RegexRemovalPatterns { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Gets or sets a value indicating whether to download artwork from the provider
-    /// for content that could not be matched to TMDb/TVDb.
-    /// This ensures unmatched content still has posters and thumbnails.
-    /// </summary>
-    public bool DownloadArtworkForUnmatched { get; set; } = true;
-
-    /// <summary>
-    /// Gets or sets a value indicating whether to proactively fetch media info
-    /// (resolution, codec, audio channels) during sync and write NFO sidecar files.
-    /// This allows Jellyfin to display media info without first-time playback.
-    /// </summary>
-    public bool EnableProactiveMediaInfo { get; set; }
-
-    /// <summary>
-    /// Gets or sets the number of categories to process per batch during sync.
-    /// Lower values reduce memory usage but may increase sync duration.
-    /// Set to 0 to disable batching (process all categories at once).
-    /// </summary>
-    public int CategoryBatchSize { get; set; } = 25;
 
     /// <summary>
     /// Gets or sets the sync schedule type.
@@ -189,90 +64,26 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Gets or sets the minute (0-59) to run the daily sync.
     /// Only used when SyncScheduleType is "Daily".
     /// </summary>
-    public int SyncDailyMinute { get; set; } = 0;
-
-    /// <summary>
-    /// Gets or sets the movie folder mode.
-    /// "Single" = all movies sync to root Movies folder.
-    /// "Multiple" = movies sync to custom subfolders based on category mappings.
-    /// </summary>
-    public string MovieFolderMode { get; set; } = "Single";
-
-    /// <summary>
-    /// Gets or sets the movie folder mappings.
-    /// Format: one mapping per line, "FolderName=CategoryId1,CategoryId2,CategoryId3".
-    /// Categories can appear in multiple folder mappings (content synced to multiple locations).
-    /// Example: "Kids=10,15,20" creates Movies/Kids/ with categories 10, 15, and 20.
-    /// </summary>
-    public string MovieFolderMappings { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Gets or sets the series folder mode.
-    /// "Single" = all series sync to root Series folder.
-    /// "Multiple" = series sync to custom subfolders based on category mappings.
-    /// </summary>
-    public string SeriesFolderMode { get; set; } = "Single";
-
-    /// <summary>
-    /// Gets or sets the series folder mappings.
-    /// Format: one mapping per line, "FolderName=CategoryId1,CategoryId2,CategoryId3".
-    /// Categories can appear in multiple folder mappings (content synced to multiple locations).
-    /// Example: "Kids=5,8" creates Series/Kids/ with categories 5 and 8.
-    /// </summary>
-    public string SeriesFolderMappings { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Gets or sets a value indicating whether to retry metadata lookup without the year
-    /// if the year-qualified lookup returns no result.
-    /// Useful when the provider has incorrect years in stream names.
-    /// Note: year-based false-positive protection is weaker for the fallback result.
-    /// </summary>
-    public bool FallbackToYearlessLookup { get; set; } = false;
+    public int SyncDailyMinute { get; set; }
 
     // =====================
-    // Dispatcharr Mode Settings
+    // Global: Metadata
     // =====================
 
     /// <summary>
-    /// Gets or sets a value indicating whether Dispatcharr mode is enabled.
-    /// When enabled, discovers all stream variants per movie via Dispatcharr's
-    /// REST API and creates multiple STRM files with proxy URLs.
+    /// Gets or sets a value indicating whether automatic metadata ID lookup is enabled.
     /// </summary>
-    public bool EnableDispatcharrMode { get; set; }
+    public bool EnableMetadataLookup { get; set; } = true;
 
     /// <summary>
-    /// Gets or sets the Dispatcharr REST API username (Django admin account).
+    /// Gets or sets the metadata cache age in days before refresh.
     /// </summary>
-    public string DispatcharrApiUser { get; set; } = string.Empty;
+    public int MetadataCacheAgeDays { get; set; } = 30;
 
     /// <summary>
-    /// Gets or sets the Dispatcharr REST API password (Django admin account).
+    /// Gets or sets the number of parallel metadata lookups.
     /// </summary>
-    public string DispatcharrApiPass { get; set; } = string.Empty;
-
-    // =====================
-    // Incremental Sync Settings
-    // =====================
-
-    /// <summary>
-    /// Gets or sets a value indicating whether incremental sync is enabled.
-    /// When enabled, only new, modified, and removed content is processed after the first full sync.
-    /// </summary>
-    public bool EnableIncrementalSync { get; set; } = true;
-
-    /// <summary>
-    /// Gets or sets the number of days between forced full syncs.
-    /// Even with incremental sync enabled, a full sync is performed periodically to ensure consistency.
-    /// </summary>
-    public int FullSyncIntervalDays { get; set; } = 7;
-
-    /// <summary>
-    /// Gets or sets the change threshold (0.0 to 1.0) that triggers a full sync.
-    /// If more than this fraction of content changed in a delta, fall back to full sync
-    /// as a safety measure against provider data corruption.
-    /// Default: 0.50 (50% of content).
-    /// </summary>
-    public double FullSyncChangeThreshold { get; set; } = 0.50;
+    public int MetadataParallelism { get; set; } = 3;
 
     // =====================
     // Live TV Settings
@@ -280,14 +91,11 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>
     /// Gets or sets a value indicating whether Live TV support is enabled.
-    /// When enabled, M3U and EPG endpoints become available.
     /// </summary>
     public bool EnableLiveTv { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether the native tuner host is enabled.
-    /// When enabled, registers a custom ITunerHost that skips FFmpeg stream probing
-    /// for faster channel switching. Requires adding "Xtream Library" tuner in Live TV settings.
     /// </summary>
     public bool EnableNativeTuner { get; set; }
 
@@ -334,101 +142,222 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>
     /// Gets or sets a value indicating whether channel name cleaning is enabled.
-    /// Removes country prefixes, quality tags, codec info from channel names.
     /// </summary>
     public bool EnableChannelNameCleaning { get; set; } = true;
 
     /// <summary>
-    /// Gets or sets custom terms to remove from channel names.
-    /// One term per line.
+    /// Gets or sets custom terms to remove from channel names. One term per line.
     /// </summary>
     public string ChannelRemoveTerms { get; set; } = string.Empty;
 
     /// <summary>
     /// Gets or sets channel overrides.
     /// Format: StreamId=Name|Number|LogoUrl (one per line, fields optional).
-    /// Example: "123=BBC One|1|http://logo.png".
     /// </summary>
     public string ChannelOverrides { get; set; } = string.Empty;
 
     /// <summary>
     /// Gets or sets a value indicating whether catch-up/timeshift is enabled.
-    /// Only channels with tv_archive=1 support catch-up.
     /// </summary>
     public bool EnableCatchup { get; set; }
 
     /// <summary>
     /// Gets or sets the number of catch-up days to show.
-    /// Limited by the channel's tv_archive_duration.
     /// </summary>
     public int CatchupDays { get; set; } = 7;
 
     // =====================
-    // Rate Limiting Settings
+    // Legacy fields — kept for XML deserialization during migration only.
+    // Read by MigrateConfigurationIfNeeded() in Plugin.cs, then cleared.
+    // =====================
+
+#pragma warning disable CS0618, SA1623
+    /// <summary>Gets or sets the legacy base URL. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].BaseUrl. Will be removed in a future version.")]
+    public string BaseUrl { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the legacy username. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].Username. Will be removed in a future version.")]
+    public string Username { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the legacy password. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].Password. Will be removed in a future version.")]
+    public string Password { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the legacy user agent. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].UserAgent. Will be removed in a future version.")]
+    public string UserAgent { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the legacy library path. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].LibraryPath. Will be removed in a future version.")]
+    public string LibraryPath { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the legacy sync movies flag. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].SyncMovies. Will be removed in a future version.")]
+    public bool SyncMovies { get; set; } = true;
+
+    /// <summary>Gets or sets the legacy sync series flag. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].SyncSeries. Will be removed in a future version.")]
+    public bool SyncSeries { get; set; } = true;
+
+    /// <summary>Gets or sets the legacy cleanup orphans flag. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].CleanupOrphans. Will be removed in a future version.")]
+    public bool CleanupOrphans { get; set; } = true;
+
+    /// <summary>Gets or sets the legacy orphan safety threshold. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].OrphanSafetyThreshold. Will be removed in a future version.")]
+    public double OrphanSafetyThreshold { get; set; } = 0.20;
+
+    /// <summary>Gets or sets the legacy selected VOD category IDs. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].SelectedVodCategoryIds. Will be removed in a future version.")]
+    public int[] SelectedVodCategoryIds { get; set; } = Array.Empty<int>();
+
+    /// <summary>Gets or sets the legacy selected Series category IDs. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].SelectedSeriesCategoryIds. Will be removed in a future version.")]
+    public int[] SelectedSeriesCategoryIds { get; set; } = Array.Empty<int>();
+
+    /// <summary>Gets or sets the legacy sync parallelism. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].SyncParallelism. Will be removed in a future version.")]
+    public int SyncParallelism { get; set; } = 10;
+
+    /// <summary>Gets or sets the legacy smart skip existing flag. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].SmartSkipExisting. Will be removed in a future version.")]
+    public bool SmartSkipExisting { get; set; } = true;
+
+    /// <summary>Gets or sets the legacy TMDb folder ID overrides. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].TmdbFolderIdOverrides. Will be removed in a future version.")]
+    public string TmdbFolderIdOverrides { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the legacy TVDb folder ID overrides. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].TvdbFolderIdOverrides. Will be removed in a future version.")]
+    public string TvdbFolderIdOverrides { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the legacy custom title remove terms. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].CustomTitleRemoveTerms. Will be removed in a future version.")]
+    public string CustomTitleRemoveTerms { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the legacy regex removal patterns. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].RegexRemovalPatterns. Will be removed in a future version.")]
+    public string RegexRemovalPatterns { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the legacy download artwork flag. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].DownloadArtworkForUnmatched. Will be removed in a future version.")]
+    public bool DownloadArtworkForUnmatched { get; set; } = true;
+
+    /// <summary>Gets or sets the legacy proactive media info flag. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].EnableProactiveMediaInfo. Will be removed in a future version.")]
+    public bool EnableProactiveMediaInfo { get; set; }
+
+    /// <summary>Gets or sets the legacy category batch size. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].CategoryBatchSize. Will be removed in a future version.")]
+    public int CategoryBatchSize { get; set; } = 25;
+
+    /// <summary>Gets or sets the legacy movie folder mode. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].MovieFolderMode. Will be removed in a future version.")]
+    public string MovieFolderMode { get; set; } = "Single";
+
+    /// <summary>Gets or sets the legacy movie folder mappings. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].MovieFolderMappings. Will be removed in a future version.")]
+    public string MovieFolderMappings { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the legacy series folder mode. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].SeriesFolderMode. Will be removed in a future version.")]
+    public string SeriesFolderMode { get; set; } = "Single";
+
+    /// <summary>Gets or sets the legacy series folder mappings. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].SeriesFolderMappings. Will be removed in a future version.")]
+    public string SeriesFolderMappings { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the legacy fallback to yearless lookup flag. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].FallbackToYearlessLookup. Will be removed in a future version.")]
+    public bool FallbackToYearlessLookup { get; set; }
+
+    /// <summary>Gets or sets the legacy Dispatcharr mode flag. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].EnableDispatcharrMode. Will be removed in a future version.")]
+    public bool EnableDispatcharrMode { get; set; }
+
+    /// <summary>Gets or sets the legacy Dispatcharr API user. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].DispatcharrApiUser. Will be removed in a future version.")]
+    public string DispatcharrApiUser { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the legacy Dispatcharr API password. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].DispatcharrApiPass. Will be removed in a future version.")]
+    public string DispatcharrApiPass { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the legacy incremental sync flag. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].EnableIncrementalSync. Will be removed in a future version.")]
+    public bool EnableIncrementalSync { get; set; } = true;
+
+    /// <summary>Gets or sets the legacy full sync interval days. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].FullSyncIntervalDays. Will be removed in a future version.")]
+    public int FullSyncIntervalDays { get; set; } = 7;
+
+    /// <summary>Gets or sets the legacy full sync change threshold. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].FullSyncChangeThreshold. Will be removed in a future version.")]
+    public double FullSyncChangeThreshold { get; set; } = 0.50;
+
+    /// <summary>Gets or sets the legacy request delay ms. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].RequestDelayMs. Will be removed in a future version.")]
+    public int RequestDelayMs { get; set; } = 50;
+
+    /// <summary>Gets or sets the legacy max retries. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].MaxRetries. Will be removed in a future version.")]
+    public int MaxRetries { get; set; } = 3;
+
+    /// <summary>Gets or sets the legacy retry delay ms. Migrated to Providers[0].</summary>
+    [Obsolete("Migrated to Providers[0].RetryDelayMs. Will be removed in a future version.")]
+    public int RetryDelayMs { get; set; } = 1000;
+#pragma warning restore CS0618, SA1623
+
+    // =====================
+    // Helpers
     // =====================
 
     /// <summary>
-    /// Gets or sets the delay in milliseconds between API requests.
-    /// Helps prevent rate limiting (429 errors) from the provider.
-    /// Set to 0 for no delay. Default: 50ms.
+    /// Gets or sets a value indicating whether any two providers share the same LibraryPath.
+    /// Set by Validate(). Callers should log a warning when this is true.
     /// </summary>
-    public int RequestDelayMs { get; set; } = 50;
+    public bool HasDuplicateLibraryPaths { get; set; }
 
     /// <summary>
-    /// Gets or sets the maximum number of retries for rate-limited requests.
-    /// When a 429 response is received, the request will be retried after a delay.
+    /// Gets the first provider with a configured BaseUrl, used for Live TV.
     /// </summary>
-    public int MaxRetries { get; set; } = 3;
-
-    /// <summary>
-    /// Gets or sets the initial retry delay in milliseconds after a 429 response.
-    /// Each subsequent retry doubles this delay (exponential backoff).
-    /// </summary>
-    public int RetryDelayMs { get; set; } = 1000;
+    /// <returns>The first enabled provider, or null if none configured.</returns>
+    public ProviderConfig? GetLiveTvProvider() =>
+        Providers.FirstOrDefault(p => !string.IsNullOrEmpty(p.BaseUrl));
 
     /// <summary>
     /// Validates and clamps all configuration values to safe ranges.
-    /// Call this before using configuration values to ensure they are within valid bounds.
     /// </summary>
     public void Validate()
     {
-        // Clamp parallelism settings to reasonable values
-        SyncParallelism = Math.Clamp(SyncParallelism, 1, 20);
+        // Global: metadata
         MetadataParallelism = Math.Clamp(MetadataParallelism, 1, 10);
-        EpgParallelism = Math.Clamp(EpgParallelism, 1, 20);
-
-        // Clamp time intervals to positive values
         SyncIntervalMinutes = Math.Max(SyncIntervalMinutes, 1);
         MetadataCacheAgeDays = Math.Max(MetadataCacheAgeDays, 0);
+
+        // Global: Live TV
+        EpgParallelism = Math.Clamp(EpgParallelism, 1, 20);
         M3UCacheMinutes = Math.Max(M3UCacheMinutes, 1);
         EpgCacheMinutes = Math.Max(EpgCacheMinutes, 1);
         EpgDaysToFetch = Math.Clamp(EpgDaysToFetch, 1, 14);
         CatchupDays = Math.Clamp(CatchupDays, 1, 30);
 
-        // Clamp batch size to reasonable values (0 = unlimited)
-        if (CategoryBatchSize < 0)
-        {
-            CategoryBatchSize = 0;
-        }
-        else if (CategoryBatchSize > 100)
-        {
-            CategoryBatchSize = 100;
-        }
-
-        // Clamp daily schedule to valid time ranges
+        // Global: daily schedule
         SyncDailyHour = Math.Clamp(SyncDailyHour, 0, 23);
         SyncDailyMinute = Math.Clamp(SyncDailyMinute, 0, 59);
 
-        // Clamp rate limiting settings
-        RequestDelayMs = Math.Max(RequestDelayMs, 0);
-        MaxRetries = Math.Clamp(MaxRetries, 0, 10);
-        RetryDelayMs = Math.Max(RetryDelayMs, 0);
+        // Per-provider validation
+        foreach (var provider in Providers)
+        {
+            provider.Validate();
+        }
 
-        // Clamp orphan safety threshold to 0.0-1.0
-        OrphanSafetyThreshold = Math.Clamp(OrphanSafetyThreshold, 0.0, 1.0);
-
-        // Clamp incremental sync settings
-        FullSyncIntervalDays = Math.Clamp(FullSyncIntervalDays, 1, 30);
-        FullSyncChangeThreshold = Math.Clamp(FullSyncChangeThreshold, 0.0, 1.0);
+        // Warn on duplicate library paths (orphan cleanup cross-contamination)
+        var paths = Providers
+            .Where(p => !string.IsNullOrEmpty(p.LibraryPath))
+            .Select(p => p.LibraryPath)
+            .ToList();
+        HasDuplicateLibraryPaths = paths.Count != paths.Distinct(StringComparer.OrdinalIgnoreCase).Count();
     }
 }

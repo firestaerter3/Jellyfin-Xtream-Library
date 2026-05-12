@@ -13,6 +13,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+// CS0618: Legacy PluginConfiguration fields are still read here; Phase 4 migrates all usages to ProviderConfig.
+#pragma warning disable CS0618
+
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -3745,4 +3748,10 @@ public class FailedItem
     /// Gets or sets the time of failure.
     /// </summary>
     public DateTime FailedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Gets or sets the index into PluginConfiguration.Providers for the provider that owns this item.
+    /// Defaults to 0 for backward compatibility with persisted history.
+    /// </summary>
+    public int ProviderIndex { get; set; }
 }

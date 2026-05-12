@@ -1,3 +1,6 @@
+// CS0618: Legacy PluginConfiguration fields still used here; Phase 3 adds ProviderConfig overload.
+#pragma warning disable CS0618
+
 using System;
 using System.Collections.Generic;
 using System.Globalization;

@@ -1,3 +1,6 @@
+// CS0618: Legacy PluginConfiguration fields used in Creds property; Phase 2 replaces with GetCreds(int).
+#pragma warning disable CS0618
+
 // Copyright (C) 2024  Roland Breitschaft
 
 // This program is free software: you can redistribute it and/or modify
