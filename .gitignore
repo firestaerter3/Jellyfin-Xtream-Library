@@ -65,3 +65,6 @@ CLAUDE.local.md
 
 # Bug tracker (contains reporter names/details)
 BUGS.md
+
+# Git worktrees
+.worktrees/
