@@ -13,6 +13,13 @@ const XtreamLibraryConfig = {
     selectedSeriesCategoryIds: [],
     selectedLiveCategoryIds: [],
 
+    // Per-channel Live TV exclusions (stream IDs that are unchecked under their category)
+    excludedLiveStreamIds: [],
+    // Session cache of channels per category (not persisted)
+    liveChannelsByCategory: {},
+    // Track which Live TV categories are currently expanded in the UI
+    expandedLiveCategories: {},
+
     // Folder definitions for multi-folder mode
     // Each entry: { name: 'FolderName', categoryIds: [1, 2, 3] }
     vodFolderDefinitions: [],
@@ -274,6 +281,7 @@ const XtreamLibraryConfig = {
             document.getElementById('txtEpgDaysToFetch').value = config.EpgDaysToFetch || 2;
             document.getElementById('txtEpgParallelism').value = config.EpgParallelism || 5;
             self.selectedLiveCategoryIds = config.SelectedLiveCategoryIds || [];
+            self.excludedLiveStreamIds = config.ExcludedLiveStreamIds || [];
 
             // Title cleaning
             document.getElementById('chkEnableChannelNameCleaning').checked = config.EnableChannelNameCleaning !== false;
@@ -336,6 +344,7 @@ const XtreamLibraryConfig = {
             config.EpgDaysToFetch = parseInt(document.getElementById('txtEpgDaysToFetch').value) || 2;
             config.EpgParallelism = parseInt(document.getElementById('txtEpgParallelism').value) || 5;
             config.SelectedLiveCategoryIds = self.getSelectedCategoryIds('live');
+            config.ExcludedLiveStreamIds = self.excludedLiveStreamIds.slice();
 
             // Title cleaning
             config.EnableChannelNameCleaning = document.getElementById('chkEnableChannelNameCleaning').checked;
@@ -1004,20 +1013,41 @@ const XtreamLibraryConfig = {
         categories.forEach(function (category, index) {
             const isChecked = selectedIds.indexOf(category.CategoryId) !== -1 ? 'checked' : '';
             const checkboxId = type + 'Cat_' + category.CategoryId;
-            html += '<div class="checkboxContainer">';
-            html += '<label class="emby-checkbox-label">';
-            html += '<input is="emby-checkbox" type="checkbox" id="' + checkboxId + '" ';
-            html += 'data-category-id="' + category.CategoryId + '" data-category-type="' + type + '" ';
-            html += 'data-index="' + index + '" ' + isChecked + '/>';
-            html += '<span>' + self.escapeHtml(category.CategoryName) + ' <small style="opacity:0.5;">(ID: ' + category.CategoryId + ')</small></span>';
-            html += '</label>';
-            html += '</div>';
+            if (type === 'live') {
+                const isExpanded = !!self.expandedLiveCategories[category.CategoryId];
+                html += '<div class="live-cat-row" data-cat-id="' + category.CategoryId + '">';
+                html += '<div style="display: flex; align-items: center;">';
+                html += '<button type="button" class="live-cat-expand" data-cat-id="' + category.CategoryId + '" ';
+                html += 'aria-label="Toggle channels" ';
+                html += 'style="margin-right: 8px; background: none; border: 1px solid rgba(255,255,255,0.2); color: inherit; cursor: pointer; font-size: 0.85em; padding: 2px 8px; min-width: 24px; border-radius: 3px;">';
+                html += isExpanded ? '▾' : '▸';
+                html += '</button>';
+                html += '<label class="emby-checkbox-label" style="flex: 1;">';
+                html += '<input is="emby-checkbox" type="checkbox" id="' + checkboxId + '" ';
+                html += 'data-category-id="' + category.CategoryId + '" data-category-type="' + type + '" ';
+                html += 'data-index="' + index + '" ' + isChecked + '/>';
+                html += '<span>' + self.escapeHtml(category.CategoryName) + ' <small style="opacity:0.5;">(ID: ' + category.CategoryId + ')</small></span>';
+                html += '</label>';
+                html += '</div>';
+                html += '<div class="live-channel-list" data-cat-id="' + category.CategoryId + '" ';
+                html += 'style="margin-left: 36px; margin-top: 4px; ' + (isExpanded ? '' : 'display: none;') + '"></div>';
+                html += '</div>';
+            } else {
+                html += '<div class="checkboxContainer">';
+                html += '<label class="emby-checkbox-label">';
+                html += '<input is="emby-checkbox" type="checkbox" id="' + checkboxId + '" ';
+                html += 'data-category-id="' + category.CategoryId + '" data-category-type="' + type + '" ';
+                html += 'data-index="' + index + '" ' + isChecked + '/>';
+                html += '<span>' + self.escapeHtml(category.CategoryName) + ' <small style="opacity:0.5;">(ID: ' + category.CategoryId + ')</small></span>';
+                html += '</label>';
+                html += '</div>';
+            }
         });
 
         container.innerHTML = html;
 
-        // Add shift+click range selection support
-        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+        // Add shift+click range selection support — scoped to category checkboxes only.
+        const checkboxes = container.querySelectorAll('input[data-category-type="' + type + '"]');
         checkboxes.forEach(function (checkbox) {
             checkbox.addEventListener('click', function (e) {
                 const currentIndex = parseInt(checkbox.getAttribute('data-index'));
@@ -1034,6 +1064,162 @@ const XtreamLibraryConfig = {
                 self.lastClickedIndex[type] = currentIndex;
             });
         });
+
+        if (type === 'live') {
+            container.querySelectorAll('.live-cat-expand').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    const catId = parseInt(btn.getAttribute('data-cat-id'));
+                    self.toggleLiveCategory(catId, btn);
+                });
+            });
+
+            // Auto-render channels for categories that were expanded before this re-render.
+            Object.keys(self.expandedLiveCategories).forEach(function (catIdStr) {
+                if (!self.expandedLiveCategories[catIdStr]) return;
+                const catId = parseInt(catIdStr);
+                const channels = self.liveChannelsByCategory[catId];
+                if (channels) {
+                    self.renderLiveChannels(catId);
+                } else {
+                    self.fetchLiveChannelsForCategory(catId);
+                }
+            });
+        }
+    },
+
+    toggleLiveCategory: function (categoryId, btn) {
+        const self = this;
+        const panel = document.querySelector('.live-channel-list[data-cat-id="' + categoryId + '"]');
+        if (!panel) return;
+
+        const isExpanded = !!self.expandedLiveCategories[categoryId];
+        if (isExpanded) {
+            self.expandedLiveCategories[categoryId] = false;
+            panel.style.display = 'none';
+            if (btn) btn.textContent = '▸';
+            return;
+        }
+
+        self.expandedLiveCategories[categoryId] = true;
+        panel.style.display = '';
+        if (btn) btn.textContent = '▾';
+
+        if (self.liveChannelsByCategory[categoryId]) {
+            self.renderLiveChannels(categoryId);
+        } else {
+            self.fetchLiveChannelsForCategory(categoryId);
+        }
+    },
+
+    fetchLiveChannelsForCategory: function (categoryId) {
+        const self = this;
+        const panel = document.querySelector('.live-channel-list[data-cat-id="' + categoryId + '"]');
+        if (!panel) return;
+
+        panel.innerHTML = '<div class="fieldDescription" style="padding: 4px 0;">Loading channels...</div>';
+
+        fetch(ApiClient.getUrl('XtreamLibrary/Channels/Live?categoryId=' + encodeURIComponent(categoryId)), {
+            headers: { 'X-Emby-Token': ApiClient.accessToken() }
+        })
+            .then(function (r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
+            .then(function (channels) {
+                self.liveChannelsByCategory[categoryId] = channels || [];
+                self.renderLiveChannels(categoryId);
+            })
+            .catch(function (error) {
+                console.error('Failed to load channels for category ' + categoryId + ':', error);
+                panel.innerHTML = '<div style="color: #d33; padding: 4px 0;">Failed to load channels. ' +
+                    '<button type="button" class="live-channel-retry" data-cat-id="' + categoryId + '" ' +
+                    'style="background: none; border: 1px solid rgba(255,255,255,0.2); color: inherit; cursor: pointer; padding: 2px 8px; margin-left: 8px; border-radius: 3px;">Retry</button></div>';
+                const retry = panel.querySelector('.live-channel-retry');
+                if (retry) {
+                    retry.addEventListener('click', function () {
+                        self.fetchLiveChannelsForCategory(categoryId);
+                    });
+                }
+            });
+    },
+
+    renderLiveChannels: function (categoryId) {
+        const self = this;
+        const panel = document.querySelector('.live-channel-list[data-cat-id="' + categoryId + '"]');
+        if (!panel) return;
+
+        const channels = self.liveChannelsByCategory[categoryId] || [];
+        if (channels.length === 0) {
+            panel.innerHTML = '<div class="fieldDescription" style="padding: 4px 0;">No channels in this category.</div>';
+            return;
+        }
+
+        const excluded = {};
+        self.excludedLiveStreamIds.forEach(function (id) { excluded[id] = true; });
+
+        let html = '';
+        html += '<div style="margin: 4px 0;">';
+        html += '<button type="button" class="live-ch-select-all" data-cat-id="' + categoryId + '" ';
+        html += 'style="background: none; border: 1px solid rgba(255,255,255,0.2); color: inherit; cursor: pointer; padding: 2px 8px; border-radius: 3px; margin-right: 6px;">Select all</button>';
+        html += '<button type="button" class="live-ch-deselect-all" data-cat-id="' + categoryId + '" ';
+        html += 'style="background: none; border: 1px solid rgba(255,255,255,0.2); color: inherit; cursor: pointer; padding: 2px 8px; border-radius: 3px;">Deselect all</button>';
+        html += '<small style="opacity: 0.6; margin-left: 10px;">' + channels.length + ' channels</small>';
+        html += '</div>';
+
+        channels.forEach(function (channel) {
+            const isChecked = !excluded[channel.StreamId] ? 'checked' : '';
+            html += '<div class="checkboxContainer" style="margin: 2px 0;">';
+            html += '<label class="emby-checkbox-label">';
+            html += '<input is="emby-checkbox" type="checkbox" class="live-channel-cb" ';
+            html += 'data-stream-id="' + channel.StreamId + '" ' + isChecked + '/>';
+            html += '<span>' + self.escapeHtml(channel.Name || '(unnamed)');
+            if (channel.Num) {
+                html += ' <small style="opacity:0.5;">#' + channel.Num + '</small>';
+            }
+            html += '</span></label></div>';
+        });
+
+        panel.innerHTML = html;
+
+        panel.querySelectorAll('.live-channel-cb').forEach(function (cb) {
+            cb.addEventListener('change', function () {
+                const streamId = parseInt(cb.getAttribute('data-stream-id'));
+                self.updateLiveExclusion(streamId, !cb.checked);
+            });
+        });
+
+        const selectAll = panel.querySelector('.live-ch-select-all');
+        if (selectAll) {
+            selectAll.addEventListener('click', function () {
+                panel.querySelectorAll('.live-channel-cb').forEach(function (cb) {
+                    if (!cb.checked) {
+                        cb.checked = true;
+                        self.updateLiveExclusion(parseInt(cb.getAttribute('data-stream-id')), false);
+                    }
+                });
+            });
+        }
+        const deselectAll = panel.querySelector('.live-ch-deselect-all');
+        if (deselectAll) {
+            deselectAll.addEventListener('click', function () {
+                panel.querySelectorAll('.live-channel-cb').forEach(function (cb) {
+                    if (cb.checked) {
+                        cb.checked = false;
+                        self.updateLiveExclusion(parseInt(cb.getAttribute('data-stream-id')), true);
+                    }
+                });
+            });
+        }
+    },
+
+    updateLiveExclusion: function (streamId, shouldBeExcluded) {
+        const self = this;
+        const idx = self.excludedLiveStreamIds.indexOf(streamId);
+        if (shouldBeExcluded && idx === -1) {
+            self.excludedLiveStreamIds.push(streamId);
+        } else if (!shouldBeExcluded && idx !== -1) {
+            self.excludedLiveStreamIds.splice(idx, 1);
+        }
     },
 
     getSelectedCategoryIds: function (type) {

@@ -218,6 +218,49 @@ public class LiveTvController : ControllerBase
     }
 
     /// <summary>
+    /// Gets all Live TV channels for a given category.
+    /// </summary>
+    /// <param name="categoryId">The Live TV category ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>List of channels in the category.</returns>
+    [HttpGet("Channels/Live")]
+    [Authorize(Policy = "RequiresElevation")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<IEnumerable<LiveChannelDto>>> GetLiveChannels(
+        [FromQuery] int categoryId,
+        CancellationToken cancellationToken)
+    {
+        var config = Plugin.Instance.Configuration;
+        if (string.IsNullOrEmpty(config.BaseUrl) || string.IsNullOrEmpty(config.Username))
+        {
+            return BadRequest("Provider credentials not configured.");
+        }
+
+        try
+        {
+            var connectionInfo = Plugin.Instance.GetCreds(0);
+            var channels = await _client.GetLiveStreamsByCategoryAsync(connectionInfo, categoryId, cancellationToken).ConfigureAwait(false);
+
+            var result = channels.Select(c => new LiveChannelDto
+            {
+                StreamId = c.StreamId,
+                Name = c.Name,
+                Num = c.Num,
+                EpgChannelId = c.EpgChannelId,
+                StreamIcon = c.StreamIcon,
+            }).OrderBy(c => c.Num).ThenBy(c => c.Name);
+
+            return Ok(result);
+        }
+        catch (System.Exception ex)
+        {
+            _logger.LogError(ex, "Failed to fetch Live TV channels for category {CategoryId}", categoryId);
+            return BadRequest($"Failed to fetch channels: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// Invalidates the Live TV cache (M3U and EPG).
     /// </summary>
     /// <returns>Success status.</returns>
@@ -230,4 +273,25 @@ public class LiveTvController : ControllerBase
         _logger.LogInformation("Live TV cache refreshed via API");
         return Ok(new { Success = true, Message = "Live TV cache invalidated." });
     }
+}
+
+/// <summary>
+/// Data transfer object for a Live TV channel.
+/// </summary>
+public class LiveChannelDto
+{
+    /// <summary>Gets or sets the upstream stream ID.</summary>
+    public int StreamId { get; set; }
+
+    /// <summary>Gets or sets the channel name.</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the channel number from the provider.</summary>
+    public int Num { get; set; }
+
+    /// <summary>Gets or sets the EPG channel identifier.</summary>
+    public string EpgChannelId { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the channel logo URL.</summary>
+    public string StreamIcon { get; set; } = string.Empty;
 }

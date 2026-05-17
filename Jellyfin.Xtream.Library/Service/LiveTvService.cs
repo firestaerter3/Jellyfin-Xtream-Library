@@ -218,6 +218,9 @@ public class LiveTvService : IDisposable
             allChannels = allChannels.Where(c => !c.IsAdult).ToList();
         }
 
+        // Apply per-channel exclusions
+        allChannels = FilterExcludedChannels(allChannels, config.ExcludedLiveStreamIds);
+
         // Apply channel overrides
         var overrides = ChannelOverrideParser.Parse(config.ChannelOverrides);
         foreach (var channel in allChannels)
@@ -230,6 +233,24 @@ public class LiveTvService : IDisposable
 
         _logger.LogInformation("Fetched {Count} Live TV channels", allChannels.Count);
         return allChannels;
+    }
+
+    /// <summary>
+    /// Removes channels whose stream IDs appear in <paramref name="excludedStreamIds"/>.
+    /// Public for unit testing; safe to call with empty/null exclusion lists.
+    /// </summary>
+    /// <param name="channels">Source list of channels.</param>
+    /// <param name="excludedStreamIds">Stream IDs to exclude. Null or empty returns the list unchanged.</param>
+    /// <returns>Filtered list of channels.</returns>
+    internal static List<LiveStreamInfo> FilterExcludedChannels(List<LiveStreamInfo> channels, int[]? excludedStreamIds)
+    {
+        if (excludedStreamIds == null || excludedStreamIds.Length == 0)
+        {
+            return channels;
+        }
+
+        var excluded = new HashSet<int>(excludedStreamIds);
+        return channels.Where(c => !excluded.Contains(c.StreamId)).ToList();
     }
 
     private static string GenerateM3U(List<LiveStreamInfo> channels, PluginConfiguration config, bool catchupOnly)

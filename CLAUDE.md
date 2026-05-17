@@ -43,6 +43,8 @@ dotnet publish Jellyfin.Xtream.Library -c Release -o /tmp/claude/xtream-library-
 
 ## Release Process
 
+Releases go to the **beta channel first**, then are promoted to stable. Never publish directly to stable.
+
 ### 1. Update Version
 Edit `Jellyfin.Xtream.Library/Jellyfin.Xtream.Library.csproj`:
 ```xml
@@ -73,15 +75,26 @@ gh release create vX.Y.Z.0 /tmp/claude/jellyfin-xtream-library_X.Y.Z.0.zip \
   --notes "Changelog here"
 ```
 
-### 5. Update Plugin Repository Manifest
-Edit `../jellyfin-plugin-repo/manifest.json` (sibling directory):
+### 5. Publish to Beta Channel
+Edit `../jellyfin-plugin-repo/manifest-dev.json` (sibling directory):
 - Add new version entry at the top of the versions array
 - Include: version, changelog, targetAbi, sourceUrl, checksum, timestamp
 
 ```bash
 cd ../jellyfin-plugin-repo
+git add manifest-dev.json
+git commit -m "Beta: Xtream Library vX.Y.Z.0: Description"
+git push
+```
+
+### 6. Promote to Stable (separate step, on user request)
+Edit `../jellyfin-plugin-repo/manifest.json`:
+- Add the same version entry at the top of the versions array
+
+```bash
+cd ../jellyfin-plugin-repo
 git add manifest.json
-git commit -m "Add Xtream Library vX.Y.Z.0: Description"
+git commit -m "Stable: Xtream Library vX.Y.Z.0: Description"
 git push
 ```
 

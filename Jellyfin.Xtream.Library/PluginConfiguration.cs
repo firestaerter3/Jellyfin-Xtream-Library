@@ -106,6 +106,12 @@ public class PluginConfiguration : BasePluginConfiguration
     public int[] SelectedLiveCategoryIds { get; set; } = Array.Empty<int>();
 
     /// <summary>
+    /// Gets or sets stream IDs to exclude from Live TV sync, even if their category is selected.
+    /// Empty array means no per-channel exclusions.
+    /// </summary>
+    public int[] ExcludedLiveStreamIds { get; set; } = Array.Empty<int>();
+
+    /// <summary>
     /// Gets or sets a value indicating whether to generate EPG data.
     /// </summary>
     public bool EnableEpg { get; set; } = true;
