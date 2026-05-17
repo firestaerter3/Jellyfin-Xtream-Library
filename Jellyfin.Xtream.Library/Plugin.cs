@@ -128,9 +128,10 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 #pragma warning restore CS0618
     }
 
-    private static PluginPageInfo CreateStatic(string name) => new()
+    private static PluginPageInfo CreateStatic(string name, bool enableInMainMenu = false) => new()
     {
         Name = name,
+        EnableInMainMenu = enableInMainMenu,
         EmbeddedResourcePath = string.Format(
             CultureInfo.InvariantCulture,
             "{0}.Configuration.Web.{1}",
@@ -141,10 +142,10 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     /// <inheritdoc />
     public IEnumerable<PluginPageInfo> GetPages()
     {
-        return new[]
-        {
-            CreateStatic("config.html"),
+        return
+        [
+            CreateStatic("config.html", enableInMainMenu: true),
             CreateStatic("config.js"),
-        };
+        ];
     }
 }
