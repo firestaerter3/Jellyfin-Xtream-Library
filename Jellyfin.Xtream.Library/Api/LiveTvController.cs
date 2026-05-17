@@ -1,6 +1,3 @@
-// CS0618: Legacy PluginConfiguration fields still used here; Phase 5 migrates to GetLiveTvProvider().
-#pragma warning disable CS0618
-
 // Copyright (C) 2024  Roland Breitschaft
 
 // This program is free software: you can redistribute it and/or modify
@@ -77,7 +74,7 @@ public class LiveTvController : ControllerBase
             return BadRequest(new { Error = "Live TV is not enabled in plugin settings." });
         }
 
-        if (string.IsNullOrEmpty(config.BaseUrl) || string.IsNullOrEmpty(config.Username))
+        if (!HasProviderCredentials(config))
         {
             return BadRequest(new { Error = "Provider credentials not configured." });
         }
@@ -120,7 +117,7 @@ public class LiveTvController : ControllerBase
             return BadRequest(new { Error = "EPG is not enabled in plugin settings." });
         }
 
-        if (string.IsNullOrEmpty(config.BaseUrl) || string.IsNullOrEmpty(config.Username))
+        if (!HasProviderCredentials(config))
         {
             return BadRequest(new { Error = "Provider credentials not configured." });
         }
@@ -163,7 +160,7 @@ public class LiveTvController : ControllerBase
             return BadRequest(new { Error = "Catch-up is not enabled in plugin settings." });
         }
 
-        if (string.IsNullOrEmpty(config.BaseUrl) || string.IsNullOrEmpty(config.Username))
+        if (!HasProviderCredentials(config))
         {
             return BadRequest(new { Error = "Provider credentials not configured." });
         }
@@ -192,7 +189,7 @@ public class LiveTvController : ControllerBase
     public async Task<ActionResult<IEnumerable<CategoryDto>>> GetLiveCategories(CancellationToken cancellationToken)
     {
         var config = Plugin.Instance.Configuration;
-        if (string.IsNullOrEmpty(config.BaseUrl) || string.IsNullOrEmpty(config.Username))
+        if (!HasProviderCredentials(config))
         {
             return BadRequest("Provider credentials not configured.");
         }
@@ -232,7 +229,7 @@ public class LiveTvController : ControllerBase
         CancellationToken cancellationToken)
     {
         var config = Plugin.Instance.Configuration;
-        if (string.IsNullOrEmpty(config.BaseUrl) || string.IsNullOrEmpty(config.Username))
+        if (!HasProviderCredentials(config))
         {
             return BadRequest("Provider credentials not configured.");
         }
@@ -272,6 +269,14 @@ public class LiveTvController : ControllerBase
         _liveTvService.InvalidateCache();
         _logger.LogInformation("Live TV cache refreshed via API");
         return Ok(new { Success = true, Message = "Live TV cache invalidated." });
+    }
+
+    private static bool HasProviderCredentials(PluginConfiguration config)
+    {
+        var provider = config.Providers.FirstOrDefault();
+        return provider is not null
+            && !string.IsNullOrEmpty(provider.BaseUrl)
+            && !string.IsNullOrEmpty(provider.Username);
     }
 }
 
