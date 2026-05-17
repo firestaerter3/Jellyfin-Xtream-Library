@@ -174,146 +174,114 @@ public class PluginConfiguration : BasePluginConfiguration
 
     // =====================
     // Legacy fields — kept for XML deserialization during migration only.
-    // Read by MigrateConfigurationIfNeeded() in Plugin.cs, then cleared.
+    // Read by MigrateConfigurationIfNeeded() in Plugin.cs.
+    // (Cannot use [Obsolete] here — .NET 9's XmlSerializer skips obsolete
+    // properties during deserialization, which would defeat migration.)
     // =====================
 
-#pragma warning disable CS0618, SA1623
+#pragma warning disable SA1623
     /// <summary>Gets or sets the legacy base URL. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].BaseUrl. Will be removed in a future version.")]
     public string BaseUrl { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the legacy username. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].Username. Will be removed in a future version.")]
     public string Username { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the legacy password. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].Password. Will be removed in a future version.")]
     public string Password { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the legacy user agent. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].UserAgent. Will be removed in a future version.")]
     public string UserAgent { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the legacy library path. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].LibraryPath. Will be removed in a future version.")]
     public string LibraryPath { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the legacy sync movies flag. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].SyncMovies. Will be removed in a future version.")]
     public bool SyncMovies { get; set; } = true;
 
     /// <summary>Gets or sets the legacy sync series flag. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].SyncSeries. Will be removed in a future version.")]
     public bool SyncSeries { get; set; } = true;
 
     /// <summary>Gets or sets the legacy cleanup orphans flag. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].CleanupOrphans. Will be removed in a future version.")]
     public bool CleanupOrphans { get; set; } = true;
 
     /// <summary>Gets or sets the legacy orphan safety threshold. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].OrphanSafetyThreshold. Will be removed in a future version.")]
     public double OrphanSafetyThreshold { get; set; } = 0.20;
 
     /// <summary>Gets or sets the legacy selected VOD category IDs. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].SelectedVodCategoryIds. Will be removed in a future version.")]
     public int[] SelectedVodCategoryIds { get; set; } = Array.Empty<int>();
 
     /// <summary>Gets or sets the legacy selected Series category IDs. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].SelectedSeriesCategoryIds. Will be removed in a future version.")]
     public int[] SelectedSeriesCategoryIds { get; set; } = Array.Empty<int>();
 
     /// <summary>Gets or sets the legacy sync parallelism. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].SyncParallelism. Will be removed in a future version.")]
     public int SyncParallelism { get; set; } = 10;
 
     /// <summary>Gets or sets the legacy smart skip existing flag. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].SmartSkipExisting. Will be removed in a future version.")]
     public bool SmartSkipExisting { get; set; } = true;
 
     /// <summary>Gets or sets the legacy TMDb folder ID overrides. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].TmdbFolderIdOverrides. Will be removed in a future version.")]
     public string TmdbFolderIdOverrides { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the legacy TVDb folder ID overrides. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].TvdbFolderIdOverrides. Will be removed in a future version.")]
     public string TvdbFolderIdOverrides { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the legacy custom title remove terms. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].CustomTitleRemoveTerms. Will be removed in a future version.")]
     public string CustomTitleRemoveTerms { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the legacy regex removal patterns. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].RegexRemovalPatterns. Will be removed in a future version.")]
     public string RegexRemovalPatterns { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the legacy download artwork flag. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].DownloadArtworkForUnmatched. Will be removed in a future version.")]
     public bool DownloadArtworkForUnmatched { get; set; } = true;
 
     /// <summary>Gets or sets the legacy proactive media info flag. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].EnableProactiveMediaInfo. Will be removed in a future version.")]
     public bool EnableProactiveMediaInfo { get; set; }
 
     /// <summary>Gets or sets the legacy category batch size. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].CategoryBatchSize. Will be removed in a future version.")]
     public int CategoryBatchSize { get; set; } = 25;
 
     /// <summary>Gets or sets the legacy movie folder mode. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].MovieFolderMode. Will be removed in a future version.")]
     public string MovieFolderMode { get; set; } = "Single";
 
     /// <summary>Gets or sets the legacy movie folder mappings. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].MovieFolderMappings. Will be removed in a future version.")]
     public string MovieFolderMappings { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the legacy series folder mode. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].SeriesFolderMode. Will be removed in a future version.")]
     public string SeriesFolderMode { get; set; } = "Single";
 
     /// <summary>Gets or sets the legacy series folder mappings. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].SeriesFolderMappings. Will be removed in a future version.")]
     public string SeriesFolderMappings { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the legacy fallback to yearless lookup flag. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].FallbackToYearlessLookup. Will be removed in a future version.")]
     public bool FallbackToYearlessLookup { get; set; }
 
     /// <summary>Gets or sets the legacy Dispatcharr mode flag. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].EnableDispatcharrMode. Will be removed in a future version.")]
     public bool EnableDispatcharrMode { get; set; }
 
     /// <summary>Gets or sets the legacy Dispatcharr API user. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].DispatcharrApiUser. Will be removed in a future version.")]
     public string DispatcharrApiUser { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the legacy Dispatcharr API password. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].DispatcharrApiPass. Will be removed in a future version.")]
     public string DispatcharrApiPass { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the legacy incremental sync flag. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].EnableIncrementalSync. Will be removed in a future version.")]
     public bool EnableIncrementalSync { get; set; } = true;
 
     /// <summary>Gets or sets the legacy full sync interval days. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].FullSyncIntervalDays. Will be removed in a future version.")]
     public int FullSyncIntervalDays { get; set; } = 7;
 
     /// <summary>Gets or sets the legacy full sync change threshold. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].FullSyncChangeThreshold. Will be removed in a future version.")]
     public double FullSyncChangeThreshold { get; set; } = 0.50;
 
     /// <summary>Gets or sets the legacy request delay ms. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].RequestDelayMs. Will be removed in a future version.")]
     public int RequestDelayMs { get; set; } = 50;
 
     /// <summary>Gets or sets the legacy max retries. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].MaxRetries. Will be removed in a future version.")]
     public int MaxRetries { get; set; } = 3;
 
     /// <summary>Gets or sets the legacy retry delay ms. Migrated to Providers[0].</summary>
-    [Obsolete("Migrated to Providers[0].RetryDelayMs. Will be removed in a future version.")]
     public int RetryDelayMs { get; set; } = 1000;
-#pragma warning restore CS0618, SA1623
+#pragma warning restore SA1623
 
     // =====================
     // Helpers

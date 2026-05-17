@@ -79,7 +79,6 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     {
         var config = Configuration;
 
-#pragma warning disable CS0618
         if (config.Providers.Count != 0 || string.IsNullOrEmpty(config.BaseUrl))
         {
             return;
@@ -125,7 +124,6 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             RetryDelayMs = config.RetryDelayMs,
         });
         SaveConfiguration();
-#pragma warning restore CS0618
     }
 
     private static PluginPageInfo CreateStatic(string name) => new()

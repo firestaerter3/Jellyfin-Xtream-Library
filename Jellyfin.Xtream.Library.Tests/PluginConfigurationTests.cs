@@ -13,6 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.IO;
+using System.Xml.Serialization;
 using FluentAssertions;
 using Xunit;
 
@@ -187,5 +189,61 @@ public class PluginConfigurationTests
     {
         var config = new PluginConfiguration();
         config.GetLiveTvProvider().Should().BeNull();
+    }
+
+    // =====================
+    // XML deserialization of legacy single-provider config (Phase 5 migration source)
+    // .NET's XmlSerializer silently skips [Obsolete] properties on deserialization,
+    // so legacy fields must NOT carry that attribute or migration breaks.
+    // =====================
+
+    [Fact]
+    public void XmlDeserialize_LegacyV131Schema_PopulatesLegacyFields()
+    {
+        const string legacyXml = @"<?xml version=""1.0"" encoding=""utf-8""?>
+<PluginConfiguration xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xmlns:xsd=""http://www.w3.org/2001/XMLSchema"">
+  <BaseUrl>http://provider.example:8080</BaseUrl>
+  <Username>alice</Username>
+  <Password>secret</Password>
+  <LibraryPath>/config/xtream-library</LibraryPath>
+  <SyncMovies>true</SyncMovies>
+  <SyncSeries>true</SyncSeries>
+  <SelectedVodCategoryIds />
+  <SelectedSeriesCategoryIds />
+  <EnableDispatcharrMode>true</EnableDispatcharrMode>
+  <DispatcharrApiUser>alice</DispatcharrApiUser>
+  <DispatcharrApiPass>dispatcharr-pass</DispatcharrApiPass>
+</PluginConfiguration>";
+
+        var serializer = new XmlSerializer(typeof(PluginConfiguration));
+        using var reader = new StringReader(legacyXml);
+        var config = (PluginConfiguration)serializer.Deserialize(reader)!;
+
+        config.BaseUrl.Should().Be("http://provider.example:8080");
+        config.Username.Should().Be("alice");
+        config.Password.Should().Be("secret");
+        config.LibraryPath.Should().Be("/config/xtream-library");
+        config.DispatcharrApiUser.Should().Be("alice");
+        config.DispatcharrApiPass.Should().Be("dispatcharr-pass");
+        config.EnableDispatcharrMode.Should().BeTrue();
+        config.SelectedVodCategoryIds.Should().BeEmpty();
+        config.SelectedSeriesCategoryIds.Should().BeEmpty();
+        config.Providers.Should().BeEmpty("the v1.31 schema predates the Providers collection");
+    }
+
+    [Fact]
+    public void XmlRoundtrip_DefaultConfig_DeserializesWithoutError()
+    {
+        var serializer = new XmlSerializer(typeof(PluginConfiguration));
+        var original = new PluginConfiguration();
+
+        using var writer = new StringWriter();
+        serializer.Serialize(writer, original);
+        using var reader = new StringReader(writer.ToString());
+        var roundtripped = (PluginConfiguration)serializer.Deserialize(reader)!;
+
+        roundtripped.Providers.Should().BeEmpty();
+        roundtripped.SelectedLiveCategoryIds.Should().BeEmpty();
+        roundtripped.BaseUrl.Should().BeEmpty();
     }
 }
