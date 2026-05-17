@@ -23,6 +23,7 @@ A Jellyfin plugin that syncs Xtream VOD, Series, and Live TV content to native J
 - **Channel Name Overrides**: Override name, number, or logo per channel (`StreamId=Name|Number|LogoUrl`)
 - **Adult Channel Filtering**: Exclude adult channels from guide and playlist
 - **Category Selection**: Filter Live TV channels by category (empty = all)
+- **Per-Channel Selection**: Expand any selected category to enable or disable individual channels
 - **Dispatcharr Integration**: Enhanced stream stats and multi-variant stream support
 
 ### Sync Options
@@ -145,6 +146,7 @@ For automatic TMDb/TVDb ID lookup:
 1. Go to the **Live TV** tab in plugin settings
 2. Enable **Live TV**
 3. Click **Load Categories** and select the Live TV categories you want
+   - Optionally, expand any category with the ▸ toggle to enable or disable individual channels (all enabled by default). After editing per-channel selections, hit **Refresh Live TV cache** for the M3U/EPG to pick up the change.
 4. Enable **Native Tuner** to register as a Jellyfin tuner (recommended)
 5. Enable **EPG** for programme guide data (fetches XMLTV automatically)
 6. Optionally enable **Catchup** for timeshift replay support
@@ -207,6 +209,7 @@ Once enabled, go to **Dashboard → Live TV** in Jellyfin — the Xtream Library
 | `/XtreamLibrary/Categories/Vod` | GET | Fetch VOD categories |
 | `/XtreamLibrary/Categories/Series` | GET | Fetch Series categories |
 | `/XtreamLibrary/Categories/Live` | GET | Fetch Live TV categories |
+| `/XtreamLibrary/Channels/Live` | GET | Fetch channels in a Live TV category (`?categoryId=`) |
 | `/XtreamLibrary/CleanMovies` | POST | Delete all Movies library content |
 | `/XtreamLibrary/CleanSeries` | POST | Delete all Series library content |
 | `/XtreamLibrary/ClearMetadataCache` | POST | Clear metadata lookup cache |
