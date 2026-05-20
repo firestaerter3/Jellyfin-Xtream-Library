@@ -19,10 +19,13 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml;
+using System.Xml.Linq;
 using Jellyfin.Xtream.Library.Client;
 using Jellyfin.Xtream.Library.Client.Models;
 using Microsoft.Extensions.Logging;
@@ -352,28 +355,177 @@ public class LiveTvService : IDisposable
         if (config.EnableEpg)
         {
             var connectionInfo = Plugin.Instance.GetCreds(0);
-            var epgData = await FetchEpgDataAsync(channels, connectionInfo, config, cancellationToken).ConfigureAwait(false);
 
-            foreach (var program in epgData.OrderBy(p => p.StartTimestamp))
+            // Build map: upstream epg_channel_id -> our xtream_{streamId} id
+            var idMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var ch in channels)
             {
-                var startStr = FormatXmltvTime(program.StartTimestamp);
-                var stopStr = FormatXmltvTime(program.StopTimestamp);
-                var channelId = !string.IsNullOrEmpty(program.ChannelId) ? program.ChannelId : program.EpgId;
-
-                sb.Append(CultureInfo.InvariantCulture, $"  <programme start=\"{startStr}\" stop=\"{stopStr}\" channel=\"{EscapeXml(channelId)}\">\n");
-                sb.Append(CultureInfo.InvariantCulture, $"    <title>{EscapeXml(DecodeBase64(program.Title))}</title>\n");
-                var desc = DecodeBase64(program.Description);
-                if (!string.IsNullOrEmpty(desc))
+                if (!string.IsNullOrEmpty(ch.EpgChannelId))
                 {
-                    sb.Append(CultureInfo.InvariantCulture, $"    <desc>{EscapeXml(desc)}</desc>\n");
+                    idMap[ch.EpgChannelId] = XtreamTunerHost.ChannelIdPrefix + ch.StreamId.ToString(CultureInfo.InvariantCulture);
                 }
+            }
 
-                sb.AppendLine("  </programme>");
+            // Prefer upstream XMLTV (preserves category, rating, credits, icon, etc.).
+            // Fall back to JSON-based fetch only if the upstream file is unavailable.
+            var passthroughCount = 0;
+            if (idMap.Count > 0)
+            {
+                var upstreamXml = await _client.GetXmltvAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(upstreamXml))
+                {
+                    passthroughCount = AppendUpstreamProgrammes(sb, upstreamXml, idMap, config, cancellationToken);
+                    _logger.LogInformation("Passed through {Count} programmes from upstream XMLTV", passthroughCount);
+                }
+            }
+
+            if (passthroughCount == 0)
+            {
+                _logger.LogInformation("Upstream XMLTV unavailable or empty; falling back to per-channel JSON EPG");
+                var epgData = await FetchEpgDataAsync(channels, connectionInfo, config, cancellationToken).ConfigureAwait(false);
+
+                foreach (var program in epgData.OrderBy(p => p.StartTimestamp))
+                {
+                    var startStr = FormatXmltvTime(program.StartTimestamp);
+                    var stopStr = FormatXmltvTime(program.StopTimestamp);
+                    var channelId = !string.IsNullOrEmpty(program.ChannelId) ? program.ChannelId : program.EpgId;
+
+                    sb.Append(CultureInfo.InvariantCulture, $"  <programme start=\"{startStr}\" stop=\"{stopStr}\" channel=\"{EscapeXml(channelId)}\">\n");
+                    sb.Append(CultureInfo.InvariantCulture, $"    <title>{EscapeXml(DecodeBase64(program.Title))}</title>\n");
+                    var desc = DecodeBase64(program.Description);
+                    if (!string.IsNullOrEmpty(desc))
+                    {
+                        sb.Append(CultureInfo.InvariantCulture, $"    <desc>{EscapeXml(desc)}</desc>\n");
+                    }
+
+                    sb.AppendLine("  </programme>");
+                }
             }
         }
 
         sb.AppendLine("</tv>");
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Streams the upstream XMLTV document and appends each &lt;programme&gt; whose channel
+    /// is in <paramref name="idMap"/>, rewriting its channel attribute to our xtream_ id.
+    /// All other programme child elements (category, rating, credits, icon, etc.) are
+    /// preserved verbatim.
+    /// </summary>
+    /// <returns>Number of programmes written.</returns>
+    private int AppendUpstreamProgrammes(
+        StringBuilder sb,
+        string upstreamXml,
+        Dictionary<string, string> idMap,
+        PluginConfiguration config,
+        CancellationToken cancellationToken)
+    {
+        var written = 0;
+        var nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var endUnix = DateTimeOffset.UtcNow.AddDays(config.EpgDaysToFetch).ToUnixTimeSeconds();
+
+        var settings = new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Ignore,
+            IgnoreWhitespace = true,
+            IgnoreComments = true,
+        };
+
+        try
+        {
+            using var stringReader = new StringReader(upstreamXml);
+            using var reader = XmlReader.Create(stringReader, settings);
+
+            while (reader.Read())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (reader.NodeType != XmlNodeType.Element || reader.Name != "programme")
+                {
+                    continue;
+                }
+
+                var upstreamCh = reader.GetAttribute("channel");
+                if (string.IsNullOrEmpty(upstreamCh) || !idMap.TryGetValue(upstreamCh, out var ourId))
+                {
+                    reader.Skip();
+                    continue;
+                }
+
+                // Optional time-window filter to keep the EPG file proportional to EpgDaysToFetch.
+                var startAttr = reader.GetAttribute("start");
+                var stopAttr = reader.GetAttribute("stop");
+                if (TryParseXmltvTime(stopAttr, out var stopUnix) && stopUnix < nowUnix)
+                {
+                    reader.Skip();
+                    continue;
+                }
+
+                if (TryParseXmltvTime(startAttr, out var startUnix) && startUnix > endUnix)
+                {
+                    reader.Skip();
+                    continue;
+                }
+
+                XElement element;
+                try
+                {
+                    element = (XElement)XNode.ReadFrom(reader);
+                }
+                catch (XmlException ex)
+                {
+                    _logger.LogDebug(ex, "Skipping malformed <programme> in upstream XMLTV");
+                    continue;
+                }
+
+                element.SetAttributeValue("channel", ourId);
+                sb.Append("  ").Append(element.ToString(SaveOptions.DisableFormatting)).Append('\n');
+                written++;
+            }
+        }
+        catch (XmlException ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse upstream XMLTV; falling back to JSON EPG");
+            return 0;
+        }
+
+        return written;
+    }
+
+    private static bool TryParseXmltvTime(string? value, out long unixSeconds)
+    {
+        unixSeconds = 0;
+        if (string.IsNullOrEmpty(value))
+        {
+            return false;
+        }
+
+        // XMLTV format: "YYYYMMDDHHMMSS +ZZZZ" (offset optional)
+        var space = value.IndexOf(' ', StringComparison.Ordinal);
+        var datePart = space >= 0 ? value.Substring(0, space) : value;
+        var offsetPart = space >= 0 ? value.Substring(space + 1) : "+0000";
+
+        if (!DateTime.TryParseExact(datePart, "yyyyMMddHHmmss", CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt))
+        {
+            return false;
+        }
+
+        var offset = TimeSpan.Zero;
+        if (offsetPart.Length >= 5 && (offsetPart[0] == '+' || offsetPart[0] == '-')
+            && int.TryParse(offsetPart.AsSpan(1, 2), NumberStyles.Integer, CultureInfo.InvariantCulture, out var hours)
+            && int.TryParse(offsetPart.AsSpan(3, 2), NumberStyles.Integer, CultureInfo.InvariantCulture, out var minutes))
+        {
+            offset = new TimeSpan(hours, minutes, 0);
+            if (offsetPart[0] == '-')
+            {
+                offset = -offset;
+            }
+        }
+
+        var dto = new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Unspecified), offset);
+        unixSeconds = dto.ToUnixTimeSeconds();
+        return true;
     }
 
     private async Task<List<EpgProgram>> FetchEpgDataAsync(

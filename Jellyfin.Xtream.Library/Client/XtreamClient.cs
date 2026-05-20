@@ -330,4 +330,20 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
             return null;
         }
     }
+
+    public async Task<string?> GetXmltvAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var creds = EncodeCredentials(connectionInfo);
+            var path = string.IsNullOrEmpty(creds) ? "/xmltv.php" : $"/xmltv.php?{creds}";
+            var uri = new Uri(connectionInfo.BaseUrl + path);
+            return await GetStringWithRetryAsync(uri, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to fetch upstream XMLTV from {BaseUrl}", connectionInfo.BaseUrl);
+            return null;
+        }
+    }
 }

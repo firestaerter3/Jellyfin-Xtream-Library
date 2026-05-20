@@ -67,4 +67,14 @@ public interface IXtreamClient
     Task<List<LiveStreamInfo>> GetAllLiveStreamsAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken);
 
     Task<EpgListings?> GetSimpleDataTableAsync(ConnectionInfo connectionInfo, int streamId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Fetches the upstream XMLTV EPG file (xmltv.php) as a raw string.
+    /// Unlike get_simple_data_table this preserves the provider's full programme metadata
+    /// (category, rating, credits, icon, etc.).
+    /// </summary>
+    /// <param name="connectionInfo">Connection info.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The raw XMLTV document, or null on failure.</returns>
+    Task<string?> GetXmltvAsync(ConnectionInfo connectionInfo, CancellationToken cancellationToken);
 }
