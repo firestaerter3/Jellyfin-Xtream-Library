@@ -423,6 +423,8 @@ public class LiveTvService : IDisposable
     {
         var written = 0;
         var nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        // Keep programs that ended up to 1 hour ago to be resilient to timezone/clock skews
+        var pastGraceUnix = nowUnix - 3600;
         var endUnix = DateTimeOffset.UtcNow.AddDays(config.EpgDaysToFetch).ToUnixTimeSeconds();
 
         var settings = new XmlReaderSettings
@@ -437,12 +439,14 @@ public class LiveTvService : IDisposable
             using var stringReader = new StringReader(upstreamXml);
             using var reader = XmlReader.Create(stringReader, settings);
 
-            while (reader.Read())
+            reader.MoveToContent();
+            while (!reader.EOF)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
                 if (reader.NodeType != XmlNodeType.Element || reader.Name != "programme")
                 {
+                    reader.Read();
                     continue;
                 }
 
@@ -456,7 +460,7 @@ public class LiveTvService : IDisposable
                 // Optional time-window filter to keep the EPG file proportional to EpgDaysToFetch.
                 var startAttr = reader.GetAttribute("start");
                 var stopAttr = reader.GetAttribute("stop");
-                if (TryParseXmltvTime(stopAttr, out var stopUnix) && stopUnix < nowUnix)
+                if (TryParseXmltvTime(stopAttr, out var stopUnix) && stopUnix < pastGraceUnix)
                 {
                     reader.Skip();
                     continue;
@@ -502,13 +506,21 @@ public class LiveTvService : IDisposable
         }
 
         // XMLTV format: "YYYYMMDDHHMMSS +ZZZZ" (offset optional)
+        // Can also be "YYYYMMDDHHMMSS +ZZ:ZZ" or "YYYYMMDDHHMM" or "YYYYMMDD"
         var space = value.IndexOf(' ', StringComparison.Ordinal);
         var datePart = space >= 0 ? value.Substring(0, space) : value;
         var offsetPart = space >= 0 ? value.Substring(space + 1) : "+0000";
 
-        if (!DateTime.TryParseExact(datePart, "yyyyMMddHHmmss", CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt))
+        string[] formats = { "yyyyMMddHHmmss", "yyyyMMddHHmm", "yyyyMMdd" };
+        if (!DateTime.TryParseExact(datePart, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt))
         {
             return false;
+        }
+
+        // Normalize offsetPart: handle +HH:MM by removing the colon
+        if (offsetPart.Contains(':', StringComparison.Ordinal))
+        {
+            offsetPart = offsetPart.Replace(":", string.Empty, StringComparison.Ordinal);
         }
 
         var offset = TimeSpan.Zero;
@@ -539,6 +551,8 @@ public class LiveTvService : IDisposable
 
         // Calculate EPG time range
         var now = DateTimeOffset.UtcNow;
+        // Keep programs that ended up to 1 hour ago
+        var pastGraceTime = now.AddHours(-1);
         var endTime = now.AddDays(config.EpgDaysToFetch);
 
         var tasks = channels.Select(async channel =>
@@ -564,7 +578,7 @@ public class LiveTvService : IDisposable
 
                 // Filter to our time range
                 return epgListings.Listings
-                    .Where(p => p.StopTimestamp > now.ToUnixTimeSeconds() && p.StartTimestamp < endTime.ToUnixTimeSeconds())
+                    .Where(p => p.StopTimestamp > pastGraceTime.ToUnixTimeSeconds() && p.StartTimestamp < endTime.ToUnixTimeSeconds())
                     .ToList();
             }
             catch (Exception ex)
