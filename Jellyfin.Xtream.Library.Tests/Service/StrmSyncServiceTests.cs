@@ -992,6 +992,100 @@ public class StrmSyncServiceTests
 
     #endregion
 
+    #region TruncateFileNameToFsLimit Tests
+
+    [Fact]
+    public void TruncateFileNameToFsLimit_ShortName_ReturnsUnchanged()
+    {
+        var result = StrmSyncService.TruncateFileNameToFsLimit("Breaking Bad - S01E01 - Pilot.strm");
+
+        result.Should().Be("Breaking Bad - S01E01 - Pilot.strm");
+    }
+
+    [Fact]
+    public void TruncateFileNameToFsLimit_ExactlyAtLimit_ReturnsUnchanged()
+    {
+        // Build a name that comes out to exactly 255 bytes.
+        string stem = new string('a', StrmSyncService.MaxFileNameBytes - ".strm".Length);
+        string fileName = stem + ".strm";
+
+        var result = StrmSyncService.TruncateFileNameToFsLimit(fileName);
+
+        result.Should().Be(fileName);
+        System.Text.Encoding.UTF8.GetByteCount(result).Should().Be(StrmSyncService.MaxFileNameBytes);
+    }
+
+    [Fact]
+    public void TruncateFileNameToFsLimit_OverLimit_TruncatesAndPreservesExtension()
+    {
+        string stem = new string('a', 300);
+        string fileName = stem + ".strm";
+
+        var result = StrmSyncService.TruncateFileNameToFsLimit(fileName);
+
+        result.Should().EndWith(".strm");
+        System.Text.Encoding.UTF8.GetByteCount(result).Should().BeLessThanOrEqualTo(StrmSyncService.MaxFileNameBytes);
+    }
+
+    [Fact]
+    public void TruncateFileNameToFsLimit_MultiByteCharacters_RespectsUtf8Boundaries()
+    {
+        // Each Japanese character is 3 bytes in UTF-8; 100 of them is 300 bytes (over the 255 limit).
+        string stem = new string('あ', 100);
+        string fileName = stem + ".strm";
+
+        var result = StrmSyncService.TruncateFileNameToFsLimit(fileName);
+
+        result.Should().EndWith(".strm");
+        System.Text.Encoding.UTF8.GetByteCount(result).Should().BeLessThanOrEqualTo(StrmSyncService.MaxFileNameBytes);
+        // Length should be a whole number of characters (no sliced multi-byte sequence).
+        result[..^".strm".Length].Should().MatchRegex("^あ+$");
+    }
+
+    [Fact]
+    public void TruncateFileNameToFsLimit_TrimsTrailingPunctuation()
+    {
+        // After truncation, the stem ends in "... - " — those separator chars should be trimmed.
+        string stem = "Series - S01E01 - " + new string('x', 250) + " - and more";
+        string fileName = stem + ".strm";
+
+        var result = StrmSyncService.TruncateFileNameToFsLimit(fileName);
+
+        string resultStem = result[..^".strm".Length];
+        resultStem.Should().NotEndWith(" ");
+        resultStem.Should().NotEndWith("-");
+        resultStem.Should().NotEndWith("_");
+        resultStem.Should().NotEndWith(".");
+    }
+
+    [Fact]
+    public void BuildEpisodeFileName_PathologicallyLongTitle_TruncatedToFsLimit()
+    {
+        // Reproduces the Interspecies Reviewers S01E10 case from issue #47: provider returned
+        // a 200+ character episode title that pushed the filename past Linux's 255-byte cap.
+        string longTitle = "Let Your Eyes Behold the Glory and Mystery of the Brothel with a Perfect Score! Take a Newlywed or a Horny Tutor or a Little Piggie as Your Lover! They'll Squeeze, Squeeze, Squeeze It Outta Ya! Infinite Pleasure Over a Samurai's Lifetime";
+        var episode = TestDataBuilder.CreateEpisode(episodeNum: 10, title: longTitle);
+
+        var result = StrmSyncService.BuildEpisodeFileName("Interspecies Reviewers", 1, episode);
+
+        result.Should().StartWith("Interspecies Reviewers - S01E10 - ");
+        result.Should().EndWith(".strm");
+        System.Text.Encoding.UTF8.GetByteCount(result).Should().BeLessThanOrEqualTo(StrmSyncService.MaxFileNameBytes);
+    }
+
+    [Fact]
+    public void BuildMovieStrmFileName_PathologicallyLongFolderName_TruncatedToFsLimit()
+    {
+        string longName = new string('a', 300);
+
+        var result = StrmSyncService.BuildMovieStrmFileName(longName, versionLabel: null);
+
+        result.Should().EndWith(".strm");
+        System.Text.Encoding.UTF8.GetByteCount(result).Should().BeLessThanOrEqualTo(StrmSyncService.MaxFileNameBytes);
+    }
+
+    #endregion
+
     #region SanitizeFileName Empty Brackets Tests
 
     [Fact]

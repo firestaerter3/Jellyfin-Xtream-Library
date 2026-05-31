@@ -42,6 +42,13 @@ namespace Jellyfin.Xtream.Library.Service;
 /// </summary>
 public partial class StrmSyncService
 {
+    /// <summary>
+    /// Maximum filename byte length for a single path component.
+    /// Linux ext4/xfs cap at 255 bytes (NAME_MAX). Windows/macOS limits are larger but counted in UTF-16
+    /// code units, so 255 bytes is the safe ceiling for cross-platform STRM file names.
+    /// </summary>
+    internal const int MaxFileNameBytes = 255;
+
     // Static HttpClient is intentional for connection pooling and efficient socket usage.
     // For image downloads, we don't need per-request configuration, and a shared client
     // improves performance by reusing TCP connections. A default User-Agent is set below.
@@ -2803,7 +2810,7 @@ public partial class StrmSyncService
             fileName = $"{seriesName} - S{seasonStr}E{episodeStr} - {episodeTitle}.strm";
         }
 
-        return ApplyFileNameRegexPatterns(fileName, regexRemovalPatterns);
+        return TruncateFileNameToFsLimit(ApplyFileNameRegexPatterns(fileName, regexRemovalPatterns));
     }
 
     internal static string SanitizeFileName(string? name, string? customRemoveTerms = null)
@@ -2911,7 +2918,7 @@ public partial class StrmSyncService
             ? $"{folderName} - {versionLabel}.strm"
             : $"{folderName}.strm";
 
-        return ApplyFileNameRegexPatterns(fileName, regexRemovalPatterns);
+        return TruncateFileNameToFsLimit(ApplyFileNameRegexPatterns(fileName, regexRemovalPatterns));
     }
 
     /// <summary>
@@ -2968,6 +2975,64 @@ public partial class StrmSyncService
         }
 
         return baseName + extension;
+    }
+
+    /// <summary>
+    /// Truncates a file name to fit within <see cref="MaxFileNameBytes"/> when UTF-8 encoded,
+    /// preserving its extension. Trims trailing whitespace and punctuation introduced by the cut,
+    /// and respects UTF-8 character boundaries so multi-byte characters aren't sliced.
+    /// </summary>
+    /// <param name="fileName">The candidate file name (with extension).</param>
+    /// <returns>The original name if it already fits, otherwise a shortened version with the extension intact.</returns>
+    internal static string TruncateFileNameToFsLimit(string fileName)
+    {
+        if (string.IsNullOrEmpty(fileName) || System.Text.Encoding.UTF8.GetByteCount(fileName) <= MaxFileNameBytes)
+        {
+            return fileName;
+        }
+
+        string extension = Path.GetExtension(fileName);
+        string stem = string.IsNullOrEmpty(extension) ? fileName : fileName[..^extension.Length];
+
+        int extensionBytes = System.Text.Encoding.UTF8.GetByteCount(extension);
+        int stemBudget = MaxFileNameBytes - extensionBytes;
+        if (stemBudget <= 0)
+        {
+            // Extension alone exceeds the budget — unrecoverable, return as-is.
+            return fileName;
+        }
+
+        string truncatedStem = TruncateToUtf8Bytes(stem, stemBudget).TrimEnd(' ', '-', '_', '.');
+        if (string.IsNullOrEmpty(truncatedStem))
+        {
+            // Trim ate the whole stem (all spaces/dashes); fall back to a raw byte cut.
+            truncatedStem = TruncateToUtf8Bytes(stem, stemBudget);
+        }
+
+        return truncatedStem + extension;
+    }
+
+    private static string TruncateToUtf8Bytes(string input, int maxBytes)
+    {
+        if (string.IsNullOrEmpty(input))
+        {
+            return input;
+        }
+
+        byte[] bytes = System.Text.Encoding.UTF8.GetBytes(input);
+        if (bytes.Length <= maxBytes)
+        {
+            return input;
+        }
+
+        // Walk back through UTF-8 continuation bytes (0x80-0xBF) so we don't slice mid-character.
+        int cut = maxBytes;
+        while (cut > 0 && (bytes[cut] & 0xC0) == 0x80)
+        {
+            cut--;
+        }
+
+        return System.Text.Encoding.UTF8.GetString(bytes, 0, cut);
     }
 
     internal static int? ExtractYear(string? name)
