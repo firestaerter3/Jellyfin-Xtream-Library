@@ -283,6 +283,15 @@ const XtreamLibraryConfig = {
             self.selectedLiveCategoryIds = config.SelectedLiveCategoryIds || [];
             self.excludedLiveStreamIds = config.ExcludedLiveStreamIds || [];
 
+            // Live channel selection mode (IncludeAll | Custom). Backend defaults to IncludeAll on
+            // fresh installs; existing configs with state are migrated to Custom on startup.
+            var liveMode = config.LiveChannelMode || 'IncludeAll';
+            var modeRadios = document.getElementsByName('LiveChannelMode');
+            for (var i = 0; i < modeRadios.length; i++) {
+                modeRadios[i].checked = (modeRadios[i].value === liveMode);
+            }
+            self.updateLiveChannelModeVisibility();
+
             // Title cleaning
             document.getElementById('chkEnableChannelNameCleaning').checked = config.EnableChannelNameCleaning !== false;
             document.getElementById('txtChannelRemoveTerms').value = config.ChannelRemoveTerms || '';
@@ -299,9 +308,9 @@ const XtreamLibraryConfig = {
 
             Dashboard.hideLoadingMsg();
 
-            // Live categories auto-load (uses provider 0 credentials)
+            // Live categories auto-load (uses provider 0 credentials). Only meaningful in Custom mode.
             var p0 = self.providers[0];
-            if (p0 && p0.BaseUrl && p0.Username) {
+            if (p0 && p0.BaseUrl && p0.Username && liveMode === 'Custom') {
                 self.loadLiveCategories();
             }
         });
@@ -345,6 +354,9 @@ const XtreamLibraryConfig = {
             config.EpgParallelism = parseInt(document.getElementById('txtEpgParallelism').value) || 5;
             config.SelectedLiveCategoryIds = self.getSelectedCategoryIds('live');
             config.ExcludedLiveStreamIds = self.excludedLiveStreamIds.slice();
+
+            var checkedMode = document.querySelector('input[name="LiveChannelMode"]:checked');
+            config.LiveChannelMode = checkedMode ? checkedMode.value : 'IncludeAll';
 
             // Title cleaning
             config.EnableChannelNameCleaning = document.getElementById('chkEnableChannelNameCleaning').checked;
@@ -1015,7 +1027,7 @@ const XtreamLibraryConfig = {
             const checkboxId = type + 'Cat_' + category.CategoryId;
             if (type === 'live') {
                 const isExpanded = !!self.expandedLiveCategories[category.CategoryId];
-                html += '<div class="live-cat-row" data-cat-id="' + category.CategoryId + '">';
+                html += '<div class="live-cat-row" data-cat-id="' + category.CategoryId + '" data-category-name="' + self.escapeHtml(category.CategoryName) + '">';
                 html += '<div style="display: flex; align-items: center;">';
                 html += '<button type="button" class="live-cat-expand" data-cat-id="' + category.CategoryId + '" ';
                 html += 'aria-label="Toggle channels" ';
@@ -1060,6 +1072,11 @@ const XtreamLibraryConfig = {
                     for (let i = start; i <= end; i++) {
                         checkboxes[i].checked = newState;
                     }
+                    // Programmatic check assignment skips the 'change' event, so the counter
+                    // needs an explicit nudge to reflect the range selection.
+                    if (type === 'live') {
+                        self.updateLiveCategoryCounter();
+                    }
                 }
                 self.lastClickedIndex[type] = currentIndex;
             });
@@ -1070,6 +1087,14 @@ const XtreamLibraryConfig = {
                 btn.addEventListener('click', function () {
                     const catId = parseInt(btn.getAttribute('data-cat-id'));
                     self.toggleLiveCategory(catId, btn);
+                });
+            });
+
+            // Update the counter whenever a category checkbox changes (including via shift+click,
+            // since the synthetic state changes in the click handler don't fire change events).
+            checkboxes.forEach(function (cb) {
+                cb.addEventListener('change', function () {
+                    self.updateLiveCategoryCounter();
                 });
             });
 
@@ -1084,6 +1109,8 @@ const XtreamLibraryConfig = {
                     self.fetchLiveChannelsForCategory(catId);
                 }
             });
+
+            self.updateLiveCategoryCounter();
         }
     },
 
@@ -1232,16 +1259,78 @@ const XtreamLibraryConfig = {
     },
 
     selectAllCategories: function (type) {
+        const self = this;
         const checkboxes = document.querySelectorAll('input[data-category-type="' + type + '"]');
         checkboxes.forEach(function (checkbox) {
             checkbox.checked = true;
         });
+        if (type === 'live') {
+            // Master "Select all" implies a clean slate: drop any per-channel exclusions so
+            // the user gets every channel from every category. Existing expanded panels
+            // need redrawing so the channel checkboxes follow the new state.
+            self.excludedLiveStreamIds = [];
+            self.redrawExpandedLiveChannelPanels();
+            self.updateLiveCategoryCounter();
+        }
     },
 
     deselectAllCategories: function (type) {
+        const self = this;
         const checkboxes = document.querySelectorAll('input[data-category-type="' + type + '"]');
         checkboxes.forEach(function (checkbox) {
             checkbox.checked = false;
+        });
+        if (type === 'live') {
+            // Same clean-slate logic as Select all — the per-channel exclusion list is
+            // meaningless when no category is selected, and leaving stale state behind was
+            // the root of the "Deselect All seems broken" report.
+            self.excludedLiveStreamIds = [];
+            self.redrawExpandedLiveChannelPanels();
+            self.updateLiveCategoryCounter();
+        }
+    },
+
+    clearChannelExclusions: function () {
+        const self = this;
+        self.excludedLiveStreamIds = [];
+        self.redrawExpandedLiveChannelPanels();
+        self.updateLiveCategoryCounter();
+    },
+
+    redrawExpandedLiveChannelPanels: function () {
+        const self = this;
+        Object.keys(self.expandedLiveCategories).forEach(function (categoryId) {
+            if (self.expandedLiveCategories[categoryId]) {
+                self.renderLiveChannels(parseInt(categoryId));
+            }
+        });
+    },
+
+    updateLiveCategoryCounter: function () {
+        const counter = document.getElementById('liveCategoryCounter');
+        if (!counter) return;
+        const all = document.querySelectorAll('input[data-category-type="live"]');
+        const checked = document.querySelectorAll('input[data-category-type="live"]:checked');
+        counter.textContent = checked.length + ' of ' + all.length + ' categories selected';
+    },
+
+    updateLiveChannelModeVisibility: function () {
+        const checked = document.querySelector('input[name="LiveChannelMode"]:checked');
+        const mode = checked ? checked.value : 'IncludeAll';
+        const customSection = document.getElementById('liveCustomSection');
+        if (customSection) {
+            customSection.style.display = (mode === 'Custom') ? '' : 'none';
+        }
+    },
+
+    filterLiveCategoryList: function () {
+        const input = document.getElementById('liveCategorySearch');
+        if (!input) return;
+        const query = input.value.trim().toLowerCase();
+        const items = document.querySelectorAll('#liveCategoryList .live-cat-row');
+        items.forEach(function (item) {
+            const name = (item.getAttribute('data-category-name') || '').toLowerCase();
+            item.style.display = (query === '' || name.indexOf(query) !== -1) ? '' : 'none';
         });
     },
 
@@ -2008,6 +2097,22 @@ function initXtreamLibraryConfig() {
         btnRefreshLiveTvCache.addEventListener('click', function (e) {
             e.preventDefault();
             XtreamLibraryConfig.refreshLiveTvCache();
+        });
+    }
+
+    // Live channel mode radio — show/hide the custom selection UI on change.
+    var liveModeRadios = document.getElementsByName('LiveChannelMode');
+    for (var i = 0; i < liveModeRadios.length; i++) {
+        liveModeRadios[i].addEventListener('change', function () {
+            XtreamLibraryConfig.updateLiveChannelModeVisibility();
+        });
+    }
+
+    // Live category search — instant client-side filter on the rendered list.
+    var liveCategorySearch = document.getElementById('liveCategorySearch');
+    if (liveCategorySearch) {
+        liveCategorySearch.addEventListener('input', function () {
+            XtreamLibraryConfig.filterLiveCategoryList();
         });
     }
 

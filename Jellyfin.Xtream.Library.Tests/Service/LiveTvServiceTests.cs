@@ -94,4 +94,33 @@ public class LiveTvServiceTests
 
         channels.Should().HaveCount(3);
     }
+
+    [Fact]
+    public void ChooseCategoryFetchStrategy_IncludeAllMode_AlwaysAllFromProvider()
+    {
+        LiveTvService.ChooseCategoryFetchStrategy(LiveChannelSelectionMode.IncludeAll, selectedCategoryCount: 0)
+            .Should().Be(LiveTvService.CategoryFetchStrategy.AllFromProvider);
+
+        LiveTvService.ChooseCategoryFetchStrategy(LiveChannelSelectionMode.IncludeAll, selectedCategoryCount: 5)
+            .Should().Be(LiveTvService.CategoryFetchStrategy.AllFromProvider);
+    }
+
+    [Fact]
+    public void ChooseCategoryFetchStrategy_CustomMode_EmptySelection_None()
+    {
+        // The headline regression-guard test: pre-v1.35 this same input (empty selection)
+        // ended up fetching every channel from the provider. Custom mode must now mean "none".
+        LiveTvService.ChooseCategoryFetchStrategy(LiveChannelSelectionMode.Custom, selectedCategoryCount: 0)
+            .Should().Be(LiveTvService.CategoryFetchStrategy.None);
+    }
+
+    [Fact]
+    public void ChooseCategoryFetchStrategy_CustomMode_NonEmptySelection_BySelectedCategories()
+    {
+        LiveTvService.ChooseCategoryFetchStrategy(LiveChannelSelectionMode.Custom, selectedCategoryCount: 1)
+            .Should().Be(LiveTvService.CategoryFetchStrategy.BySelectedCategories);
+
+        LiveTvService.ChooseCategoryFetchStrategy(LiveChannelSelectionMode.Custom, selectedCategoryCount: 47)
+            .Should().Be(LiveTvService.CategoryFetchStrategy.BySelectedCategories);
+    }
 }

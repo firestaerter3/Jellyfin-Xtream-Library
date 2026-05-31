@@ -21,6 +21,24 @@ using MediaBrowser.Model.Plugins;
 namespace Jellyfin.Xtream.Library;
 
 /// <summary>
+/// How Live TV channel selection should be interpreted.
+/// </summary>
+public enum LiveChannelSelectionMode
+{
+    /// <summary>
+    /// Sync every channel the provider exposes. <see cref="PluginConfiguration.SelectedLiveCategoryIds"/>
+    /// and <see cref="PluginConfiguration.ExcludedLiveStreamIds"/> are ignored.
+    /// </summary>
+    IncludeAll,
+
+    /// <summary>
+    /// Sync only channels from selected categories, minus per-channel exclusions.
+    /// Empty <see cref="PluginConfiguration.SelectedLiveCategoryIds"/> means zero channels (not "all").
+    /// </summary>
+    Custom,
+}
+
+/// <summary>
 /// Plugin configuration for Xtream Library.
 /// </summary>
 public class PluginConfiguration : BasePluginConfiguration
@@ -100,14 +118,24 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool EnableNativeTuner { get; set; }
 
     /// <summary>
+    /// Gets or sets how Live TV channel selection is interpreted.
+    /// In <see cref="LiveChannelSelectionMode.IncludeAll"/> mode the selection arrays are ignored.
+    /// In <see cref="LiveChannelSelectionMode.Custom"/> mode an empty <see cref="SelectedLiveCategoryIds"/>
+    /// means zero channels (not "all"). Defaults to <see cref="LiveChannelSelectionMode.IncludeAll"/>;
+    /// existing configs with populated selection state are migrated to <see cref="LiveChannelSelectionMode.Custom"/>
+    /// on startup (see <c>Plugin.MigrateConfigurationIfNeeded</c>).
+    /// </summary>
+    public LiveChannelSelectionMode LiveChannelMode { get; set; } = LiveChannelSelectionMode.IncludeAll;
+
+    /// <summary>
     /// Gets or sets the array of selected Live TV category IDs.
-    /// Empty array means include all Live TV categories.
+    /// Only honoured when <see cref="LiveChannelMode"/> is <see cref="LiveChannelSelectionMode.Custom"/>.
     /// </summary>
     public int[] SelectedLiveCategoryIds { get; set; } = Array.Empty<int>();
 
     /// <summary>
     /// Gets or sets stream IDs to exclude from Live TV sync, even if their category is selected.
-    /// Empty array means no per-channel exclusions.
+    /// Only honoured when <see cref="LiveChannelMode"/> is <see cref="LiveChannelSelectionMode.Custom"/>.
     /// </summary>
     public int[] ExcludedLiveStreamIds { get; set; } = Array.Empty<int>();
 
@@ -299,6 +327,22 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <returns>The first enabled provider, or null if none configured.</returns>
     public ProviderConfig? GetLiveTvProvider() =>
         Providers.FirstOrDefault(p => !string.IsNullOrEmpty(p.BaseUrl));
+
+    /// <summary>
+    /// Returns true when an upgrade-time migration should flip
+    /// <see cref="LiveChannelMode"/> from the default IncludeAll to Custom because
+    /// the user already has Live TV selection state from before the mode flag existed.
+    /// Pure decision function, exposed static for unit testing.
+    /// </summary>
+    /// <param name="currentMode">Current mode as read from disk.</param>
+    /// <param name="selectedCategoryCount">Number of entries in <see cref="SelectedLiveCategoryIds"/>.</param>
+    /// <param name="excludedStreamCount">Number of entries in <see cref="ExcludedLiveStreamIds"/>.</param>
+    /// <returns><c>true</c> when migration should occur; <c>false</c> when it should be skipped.</returns>
+    public static bool ShouldMigrateToCustomMode(LiveChannelSelectionMode currentMode, int selectedCategoryCount, int excludedStreamCount)
+    {
+        return currentMode == LiveChannelSelectionMode.IncludeAll
+            && (selectedCategoryCount > 0 || excludedStreamCount > 0);
+    }
 
     /// <summary>
     /// Validates and clamps all configuration values to safe ranges.

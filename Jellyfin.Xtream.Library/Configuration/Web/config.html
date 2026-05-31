@@ -920,26 +920,49 @@
                         </div>
 
                         <div class="verticalSection">
-                            <h3 class="sectionTitle">Live TV Categories</h3>
-                            <div class="fieldDescription">
-                                Select specific categories to include. Leave all unchecked to include all categories.
+                            <h3 class="sectionTitle">Live TV Channels</h3>
+
+                            <div class="fieldDescription" style="margin-bottom: 8px;">
+                                How should Xtream Library sync Live TV channels?
                             </div>
-                            <div>
-                                <button is="emby-button" type="button" id="btnLoadLiveCategories" class="raised button-submit">
-                                    <span>Load Categories</span>
-                                </button>
-                                <span id="liveCategoryLoadStatus" style="margin-left: 10px;"></span>
+
+                            <div style="margin-bottom: 10px;">
+                                <label class="emby-radio-label" style="display: block; margin-bottom: 4px;">
+                                    <input type="radio" is="emby-radio" name="LiveChannelMode" value="IncludeAll" />
+                                    <span>Sync ALL channels from provider</span>
+                                </label>
+                                <label class="emby-radio-label" style="display: block;">
+                                    <input type="radio" is="emby-radio" name="LiveChannelMode" value="Custom" />
+                                    <span>Pick specific channels (custom selection)</span>
+                                </label>
                             </div>
-                            <div id="liveSingleFolderSection" style="display: none;">
-                                <div class="category-actions">
-                                    <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.selectAllCategories('live')">
-                                        <span>Select All</span>
+
+                            <div id="liveCustomSection" style="display: none;">
+                                <div>
+                                    <button is="emby-button" type="button" id="btnLoadLiveCategories" class="raised button-submit">
+                                        <span>Load Categories</span>
                                     </button>
-                                    <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.deselectAllCategories('live')">
-                                        <span>Deselect All</span>
-                                    </button>
+                                    <span id="liveCategoryLoadStatus" style="margin-left: 10px;"></span>
                                 </div>
-                                <div id="liveCategoryList" class="category-list"></div>
+
+                                <div id="liveSingleFolderSection" style="display: none; margin-top: 12px;">
+                                    <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 10px 12px; margin-bottom: 10px;">
+                                        <div id="liveCategoryCounter" style="margin-bottom: 8px; font-weight: 500;">0 of 0 categories selected</div>
+                                        <div class="category-actions" style="margin-bottom: 8px;">
+                                            <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.selectAllCategories('live')">
+                                                <span>Select all</span>
+                                            </button>
+                                            <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.deselectAllCategories('live')">
+                                                <span>Deselect all</span>
+                                            </button>
+                                            <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.clearChannelExclusions()">
+                                                <span>Clear channel exclusions</span>
+                                            </button>
+                                        </div>
+                                        <input type="text" is="emby-input" id="liveCategorySearch" placeholder="Search categories..." style="width: 100%;" />
+                                    </div>
+                                    <div id="liveCategoryList" class="category-list"></div>
+                                </div>
                             </div>
                         </div>
 

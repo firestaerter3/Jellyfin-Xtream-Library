@@ -246,4 +246,77 @@ public class PluginConfigurationTests
         roundtripped.SelectedLiveCategoryIds.Should().BeEmpty();
         roundtripped.BaseUrl.Should().BeEmpty();
     }
+
+    // =====================
+    // LiveChannelMode migration
+    // =====================
+
+    [Fact]
+    public void ShouldMigrateToCustomMode_PreOverhaulConfigWithSelectedCategories_Migrates()
+    {
+        // Existing user upgraded from pre-v1.35: LiveChannelMode defaults to IncludeAll
+        // (the field didn't exist before), but SelectedLiveCategoryIds is populated.
+        // Must promote to Custom to preserve their selection behavior.
+        var shouldMigrate = PluginConfiguration.ShouldMigrateToCustomMode(
+            LiveChannelSelectionMode.IncludeAll,
+            selectedCategoryCount: 3,
+            excludedStreamCount: 0);
+
+        shouldMigrate.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ShouldMigrateToCustomMode_PreOverhaulConfigWithExcludedStreamsOnly_Migrates()
+    {
+        // Some configs only have per-channel exclusions but no category selection — still
+        // counts as user intent for selective sync, so migrate to Custom.
+        var shouldMigrate = PluginConfiguration.ShouldMigrateToCustomMode(
+            LiveChannelSelectionMode.IncludeAll,
+            selectedCategoryCount: 0,
+            excludedStreamCount: 17);
+
+        shouldMigrate.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ShouldMigrateToCustomMode_FreshConfigWithNoState_DoesNotMigrate()
+    {
+        // New install: no state, default IncludeAll. Leave it alone.
+        var shouldMigrate = PluginConfiguration.ShouldMigrateToCustomMode(
+            LiveChannelSelectionMode.IncludeAll,
+            selectedCategoryCount: 0,
+            excludedStreamCount: 0);
+
+        shouldMigrate.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ShouldMigrateToCustomMode_AlreadyCustomMode_DoesNotMigrate()
+    {
+        // Idempotency: once migrated, the guard skips on subsequent startups regardless of
+        // selection state changes.
+        PluginConfiguration.ShouldMigrateToCustomMode(LiveChannelSelectionMode.Custom, 0, 0).Should().BeFalse();
+        PluginConfiguration.ShouldMigrateToCustomMode(LiveChannelSelectionMode.Custom, 5, 10).Should().BeFalse();
+    }
+
+    [Fact]
+    public void LiveChannelMode_DefaultIsIncludeAll()
+    {
+        var config = new PluginConfiguration();
+        config.LiveChannelMode.Should().Be(LiveChannelSelectionMode.IncludeAll);
+    }
+
+    [Fact]
+    public void LiveChannelMode_RoundTripsThroughXmlSerialization()
+    {
+        var original = new PluginConfiguration { LiveChannelMode = LiveChannelSelectionMode.Custom };
+        var serializer = new XmlSerializer(typeof(PluginConfiguration));
+
+        using var writer = new StringWriter();
+        serializer.Serialize(writer, original);
+        using var reader = new StringReader(writer.ToString());
+        var roundtripped = (PluginConfiguration)serializer.Deserialize(reader)!;
+
+        roundtripped.LiveChannelMode.Should().Be(LiveChannelSelectionMode.Custom);
+    }
 }

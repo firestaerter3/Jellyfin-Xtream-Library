@@ -40,7 +40,8 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         : base(applicationPaths, xmlSerializer)
     {
         _instance = this;
-        MigrateConfigurationIfNeeded();
+        MigrateProvidersIfNeeded();
+        MigrateLiveChannelModeIfNeeded();
     }
 
     /// <inheritdoc />
@@ -75,7 +76,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         return new ConnectionInfo(p.BaseUrl, p.Username, p.Password);
     }
 
-    private void MigrateConfigurationIfNeeded()
+    private void MigrateProvidersIfNeeded()
     {
         var config = Configuration;
 
@@ -124,6 +125,24 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             RetryDelayMs = config.RetryDelayMs,
         });
         SaveConfiguration();
+    }
+
+    private void MigrateLiveChannelModeIfNeeded()
+    {
+        var config = Configuration;
+
+        // Pre-overhaul (v1.34.0.0 and earlier) configs default to IncludeAll because the field
+        // is new. If they have any Live TV selection state, the user clearly *intended* selective
+        // sync — promote them to Custom mode so the new empty-means-none semantics don't
+        // suddenly drop their previously-selected categories.
+        if (PluginConfiguration.ShouldMigrateToCustomMode(
+                config.LiveChannelMode,
+                config.SelectedLiveCategoryIds.Length,
+                config.ExcludedLiveStreamIds.Length))
+        {
+            config.LiveChannelMode = LiveChannelSelectionMode.Custom;
+            SaveConfiguration();
+        }
     }
 
     private static PluginPageInfo CreateStatic(string name) => new()

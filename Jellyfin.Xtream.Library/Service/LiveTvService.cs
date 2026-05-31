@@ -62,6 +62,22 @@ public class LiveTvService : IDisposable
     }
 
     /// <summary>
+    /// Decision for which fetch path <see cref="GetFilteredChannelsAsync"/> takes when
+    /// resolving Live TV channels for the active configuration.
+    /// </summary>
+    internal enum CategoryFetchStrategy
+    {
+        /// <summary>Fetch every channel the provider exposes.</summary>
+        AllFromProvider,
+
+        /// <summary>Don't fetch anything — produce an empty channel set.</summary>
+        None,
+
+        /// <summary>Fetch channels from the selected categories only.</summary>
+        BySelectedCategories,
+    }
+
+    /// <summary>
     /// Gets the M3U playlist for Live TV channels.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
@@ -182,8 +198,18 @@ public class LiveTvService : IDisposable
 
         List<LiveStreamInfo> allChannels;
 
-        // Fetch channels by category or all
-        if (config.SelectedLiveCategoryIds.Length > 0)
+        var strategy = ChooseCategoryFetchStrategy(config.LiveChannelMode, config.SelectedLiveCategoryIds.Length);
+        if (strategy == CategoryFetchStrategy.AllFromProvider)
+        {
+            allChannels = await _client.GetAllLiveStreamsAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
+        }
+        else if (strategy == CategoryFetchStrategy.None)
+        {
+            // Custom mode + nothing selected = sync nothing. Headline fix vs pre-v1.35,
+            // where this branch returned every channel from the provider.
+            allChannels = new List<LiveStreamInfo>();
+        }
+        else
         {
             allChannels = new List<LiveStreamInfo>();
             using var semaphore = new SemaphoreSlim(config.EpgParallelism);
@@ -210,10 +236,6 @@ public class LiveTvService : IDisposable
             // Remove duplicates by StreamId
             allChannels = allChannels.GroupBy(c => c.StreamId).Select(g => g.First()).ToList();
         }
-        else
-        {
-            allChannels = await _client.GetAllLiveStreamsAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
-        }
 
         // Filter adult channels
         if (!config.IncludeAdultChannels)
@@ -221,8 +243,11 @@ public class LiveTvService : IDisposable
             allChannels = allChannels.Where(c => !c.IsAdult).ToList();
         }
 
-        // Apply per-channel exclusions
-        allChannels = FilterExcludedChannels(allChannels, config.ExcludedLiveStreamIds);
+        // Apply per-channel exclusions only in Custom mode (IncludeAll deliberately ignores them).
+        if (config.LiveChannelMode == LiveChannelSelectionMode.Custom)
+        {
+            allChannels = FilterExcludedChannels(allChannels, config.ExcludedLiveStreamIds);
+        }
 
         // Apply channel overrides
         var overrides = ChannelOverrideParser.Parse(config.ChannelOverrides);
@@ -236,6 +261,25 @@ public class LiveTvService : IDisposable
 
         _logger.LogInformation("Fetched {Count} Live TV channels", allChannels.Count);
         return allChannels;
+    }
+
+    /// <summary>
+    /// Picks the fetch strategy from selection mode + selected-category count.
+    /// Internal for unit testing.
+    /// </summary>
+    /// <param name="mode">The configured <see cref="LiveChannelSelectionMode"/>.</param>
+    /// <param name="selectedCategoryCount">Number of entries in <c>SelectedLiveCategoryIds</c>.</param>
+    /// <returns>The strategy <see cref="GetFilteredChannelsAsync"/> should take.</returns>
+    internal static CategoryFetchStrategy ChooseCategoryFetchStrategy(LiveChannelSelectionMode mode, int selectedCategoryCount)
+    {
+        if (mode == LiveChannelSelectionMode.IncludeAll)
+        {
+            return CategoryFetchStrategy.AllFromProvider;
+        }
+
+        return selectedCategoryCount == 0
+            ? CategoryFetchStrategy.None
+            : CategoryFetchStrategy.BySelectedCategories;
     }
 
     /// <summary>
