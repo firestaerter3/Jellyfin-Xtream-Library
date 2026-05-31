@@ -54,6 +54,7 @@ public class SyncControllerTests
         var deltaCalculator = new DeltaCalculator(NullLogger<DeltaCalculator>.Instance);
 
         var mockDispatcharrClient = new Mock<IDispatcharrClient>();
+        var liveTvService = new LiveTvService(_mockClient.Object, appPathsMock.Object, NullLogger<LiveTvService>.Instance);
         _syncService = new StrmSyncService(
             _mockClient.Object,
             mockDispatcharrClient.Object,
@@ -61,6 +62,7 @@ public class SyncControllerTests
             _mockMetadataLookup.Object,
             snapshotService,
             deltaCalculator,
+            liveTvService,
             appPathsMock.Object,
             _mockSyncServiceLogger.Object);
 
@@ -250,6 +252,7 @@ public class SyncControllerTests
             var snapshotService = new SnapshotService(appPathsMock.Object, NullLogger<SnapshotService>.Instance);
             var deltaCalculator = new DeltaCalculator(NullLogger<DeltaCalculator>.Instance);
             var mockDispatcharrClient = new Mock<IDispatcharrClient>();
+            var liveTvService = new LiveTvService(_mockClient.Object, appPathsMock.Object, NullLogger<LiveTvService>.Instance);
             var syncService = new StrmSyncService(
                 _mockClient.Object,
                 mockDispatcharrClient.Object,
@@ -257,6 +260,7 @@ public class SyncControllerTests
                 _mockMetadataLookup.Object,
                 snapshotService,
                 deltaCalculator,
+                liveTvService,
                 appPathsMock.Object,
                 _mockSyncServiceLogger.Object);
 

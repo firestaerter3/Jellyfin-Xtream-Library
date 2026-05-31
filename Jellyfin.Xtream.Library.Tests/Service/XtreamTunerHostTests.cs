@@ -22,6 +22,7 @@ using Jellyfin.Xtream.Library.Client.Models;
 using Jellyfin.Xtream.Library.Service;
 using Jellyfin.Xtream.Library.Tests.Helpers;
 using MediaBrowser.Common.Configuration;
+using MediaBrowser.Controller;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Serialization;
 using Microsoft.Extensions.Logging;
@@ -66,7 +67,9 @@ public class XtreamTunerHostTests : IDisposable
         Plugin.Instance.Configuration.Providers.Add(TestDataBuilder.CreateProviderConfig());
 
         _mockClient = new Mock<IXtreamClient>();
-        _liveTvService = new LiveTvService(_mockClient.Object, NullLogger<LiveTvService>.Instance);
+        var serverAppPaths = new Mock<IServerApplicationPaths>();
+        serverAppPaths.Setup(p => p.DataPath).Returns(tempPath);
+        _liveTvService = new LiveTvService(_mockClient.Object, serverAppPaths.Object, NullLogger<LiveTvService>.Instance);
         _mockHttpClientFactory = new Mock<IHttpClientFactory>();
         _tunerHost = new XtreamTunerHost(
             _liveTvService,

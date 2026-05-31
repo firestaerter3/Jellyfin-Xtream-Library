@@ -776,15 +776,20 @@ const XtreamLibraryConfig = {
         if (progress.TotalItems > 0) {
             html += ' | Items: ' + progress.ItemsProcessed + '/' + progress.TotalItems;
         }
+        if (progress.LiveTvPhase) {
+            html += '<br/>' + this.escapeHtml(progress.LiveTvPhase);
+        }
         const created = [];
         if (progress.MoviesCreated > 0) created.push(progress.MoviesCreated + ' movies');
         if (progress.EpisodesCreated > 0) created.push(progress.EpisodesCreated + ' episodes');
+        if ((progress.ChannelsCreated || 0) > 0) created.push(progress.ChannelsCreated + ' channels');
         if (created.length > 0) {
             html += '<br/>Created: ' + created.join(', ');
         }
         const updated = [];
         if ((progress.MoviesUpdated || 0) > 0) updated.push(progress.MoviesUpdated + ' movies');
         if ((progress.EpisodesUpdated || 0) > 0) updated.push(progress.EpisodesUpdated + ' episodes');
+        if ((progress.ChannelsUpdated || 0) > 0) updated.push(progress.ChannelsUpdated + ' channels');
         if (updated.length > 0) {
             html += '<br/>Updated: ' + updated.join(', ');
         }
@@ -879,6 +884,22 @@ const XtreamLibraryConfig = {
         html += ', ' + (result.SeasonsCreated || 0) + ' added, ' + (result.SeasonsDeleted || 0) + ' deleted<br/>';
         html += '&nbsp;&nbsp;Episodes: ' + (result.TotalEpisodes || (result.EpisodesCreated + result.EpisodesSkipped)) + ' total';
         html += ', ' + result.EpisodesCreated + ' added' + ((result.EpisodesUpdated || 0) > 0 ? ', ' + result.EpisodesUpdated + ' updated' : '') + ', ' + (result.EpisodesDeleted || 0) + ' deleted';
+
+        // Live TV channel counts (shown when Live TV is enabled and any field is populated).
+        var hasLiveTv = (result.TotalChannels || 0) > 0
+            || (result.ChannelsCreated || 0) > 0
+            || (result.ChannelsUpdated || 0) > 0
+            || (result.ChannelsDeleted || 0) > 0
+            || (result.ChannelsSkipped || 0) > 0;
+        if (hasLiveTv) {
+            html += '<br/><br/><strong>Live TV</strong><br/>';
+            html += '&nbsp;&nbsp;Total: ' + (result.TotalChannels || ((result.ChannelsCreated || 0) + (result.ChannelsUpdated || 0) + (result.ChannelsSkipped || 0))) + ' channels<br/>';
+            var parts = [];
+            parts.push((result.ChannelsCreated || 0) + ' added');
+            if ((result.ChannelsUpdated || 0) > 0) parts.push(result.ChannelsUpdated + ' updated');
+            parts.push((result.ChannelsDeleted || 0) + ' deleted');
+            html += '&nbsp;&nbsp;' + parts.join(', ');
+        }
 
         if (result.Errors > 0) {
             html += '<br/><br/><span style="color: orange;"><strong>Errors:</strong> ' + result.Errors + '</span>';

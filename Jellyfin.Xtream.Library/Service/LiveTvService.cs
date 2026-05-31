@@ -28,7 +28,10 @@ using System.Xml;
 using System.Xml.Linq;
 using Jellyfin.Xtream.Library.Client;
 using Jellyfin.Xtream.Library.Client.Models;
+using Jellyfin.Xtream.Library.Service.Models;
+using MediaBrowser.Controller;
 using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
 
 namespace Jellyfin.Xtream.Library.Service;
 
@@ -38,9 +41,11 @@ namespace Jellyfin.Xtream.Library.Service;
 public class LiveTvService : IDisposable
 {
     private readonly IXtreamClient _client;
+    private readonly IServerApplicationPaths _appPaths;
     private readonly ILogger<LiveTvService> _logger;
     private readonly SemaphoreSlim _m3uLock = new(1, 1);
     private readonly SemaphoreSlim _epgLock = new(1, 1);
+    private readonly SemaphoreSlim _snapshotLock = new(1, 1);
 
     private string? _cachedM3U;
     private string? _cachedCatchupM3U;
@@ -54,10 +59,12 @@ public class LiveTvService : IDisposable
     /// Initializes a new instance of the <see cref="LiveTvService"/> class.
     /// </summary>
     /// <param name="client">The Xtream API client.</param>
+    /// <param name="appPaths">The Jellyfin application paths (used to locate the channel snapshot file).</param>
     /// <param name="logger">The logger instance.</param>
-    public LiveTvService(IXtreamClient client, ILogger<LiveTvService> logger)
+    public LiveTvService(IXtreamClient client, IServerApplicationPaths appPaths, ILogger<LiveTvService> logger)
     {
         _client = client;
+        _appPaths = appPaths;
         _logger = logger;
     }
 
@@ -189,6 +196,82 @@ public class LiveTvService : IDisposable
         _catchupCacheTime = DateTime.MinValue;
         _epgCacheTime = DateTime.MinValue;
         _logger.LogInformation("Live TV cache invalidated");
+    }
+
+    /// <summary>
+    /// Refreshes the Live TV channel set: fetches the current channels, computes a delta
+    /// against the previously persisted snapshot, persists the new snapshot, and invalidates
+    /// the M3U/EPG cache so the next tuner poll sees the fresh data.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The delta between the previous and current channel set.</returns>
+    public async Task<LiveChannelDelta> RefreshChannelsAsync(CancellationToken cancellationToken)
+    {
+        var channels = await GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
+
+        await _snapshotLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var previous = await LoadChannelSnapshotAsync(cancellationToken).ConfigureAwait(false);
+            var delta = LiveChannelSnapshot.ComputeDelta(previous, channels);
+            var next = LiveChannelSnapshot.FromChannels(channels);
+            await SaveChannelSnapshotAsync(next, cancellationToken).ConfigureAwait(false);
+
+            _logger.LogInformation(
+                "Live TV refresh: {Total} channels ({Added} added, {Updated} updated, {Removed} removed, {Unchanged} unchanged)",
+                delta.TotalChannels,
+                delta.AddedCount,
+                delta.UpdatedCount,
+                delta.RemovedCount,
+                delta.UnchangedCount);
+
+            // Force the next tuner poll to pick up the fresh channel set.
+            InvalidateCache();
+
+            return delta;
+        }
+        finally
+        {
+            _snapshotLock.Release();
+        }
+    }
+
+    private string GetChannelSnapshotPath() =>
+        Path.Combine(_appPaths.DataPath, "xtream-library", "live-tv-channels.json");
+
+    private async Task<LiveChannelSnapshot?> LoadChannelSnapshotAsync(CancellationToken cancellationToken)
+    {
+        var path = GetChannelSnapshotPath();
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
+            return JsonConvert.DeserializeObject<LiveChannelSnapshot>(json);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read Live TV channel snapshot at {Path} - treating as missing", path);
+            return null;
+        }
+    }
+
+    private async Task SaveChannelSnapshotAsync(LiveChannelSnapshot snapshot, CancellationToken cancellationToken)
+    {
+        var path = GetChannelSnapshotPath();
+        var directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        var json = JsonConvert.SerializeObject(snapshot, Newtonsoft.Json.Formatting.Indented);
+        var tempPath = path + ".tmp";
+        await File.WriteAllTextAsync(tempPath, json, cancellationToken).ConfigureAwait(false);
+        File.Move(tempPath, path, overwrite: true);
     }
 
     internal async Task<List<LiveStreamInfo>> GetFilteredChannelsAsync(CancellationToken cancellationToken)
@@ -695,6 +778,7 @@ public class LiveTvService : IDisposable
             {
                 _m3uLock.Dispose();
                 _epgLock.Dispose();
+                _snapshotLock.Dispose();
             }
 
             _disposed = true;

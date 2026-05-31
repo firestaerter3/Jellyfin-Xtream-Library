@@ -60,6 +60,7 @@ public partial class StrmSyncService
     private readonly IMetadataLookupService _metadataLookup;
     private readonly SnapshotService _snapshotService;
     private readonly DeltaCalculator _deltaCalculator;
+    private readonly LiveTvService _liveTvService;
     private readonly IServerApplicationPaths _appPaths;
     private readonly ILogger<StrmSyncService> _logger;
     private readonly object _ctsLock = new();
@@ -78,6 +79,7 @@ public partial class StrmSyncService
     /// <param name="metadataLookup">The metadata lookup service.</param>
     /// <param name="snapshotService">The snapshot persistence service.</param>
     /// <param name="deltaCalculator">The delta calculator for incremental sync.</param>
+    /// <param name="liveTvService">The Live TV service (used to refresh channels at the end of sync).</param>
     /// <param name="appPaths">The application paths service.</param>
     /// <param name="logger">The logger instance.</param>
     public StrmSyncService(
@@ -87,6 +89,7 @@ public partial class StrmSyncService
         IMetadataLookupService metadataLookup,
         SnapshotService snapshotService,
         DeltaCalculator deltaCalculator,
+        LiveTvService liveTvService,
         IServerApplicationPaths appPaths,
         ILogger<StrmSyncService> logger)
     {
@@ -96,6 +99,7 @@ public partial class StrmSyncService
         _metadataLookup = metadataLookup;
         _snapshotService = snapshotService;
         _deltaCalculator = deltaCalculator;
+        _liveTvService = liveTvService;
         _appPaths = appPaths;
         _logger = logger;
 
@@ -598,6 +602,9 @@ public partial class StrmSyncService
         CurrentProgress.MoviesUpdated = 0;
         CurrentProgress.EpisodesCreated = 0;
         CurrentProgress.EpisodesUpdated = 0;
+        CurrentProgress.ChannelsCreated = 0;
+        CurrentProgress.ChannelsUpdated = 0;
+        CurrentProgress.LiveTvPhase = string.Empty;
 
         // Warn if any two enabled providers share the same LibraryPath
         var duplicatePaths = config.Providers
@@ -640,11 +647,13 @@ public partial class StrmSyncService
                 MergeResult(globalResult, providerResult);
             }
 
+            await RefreshLiveTvChannelsAsync(config, globalResult, linkedToken).ConfigureAwait(false);
+
             globalResult.EndTime = DateTime.UtcNow;
             globalResult.Success = true;
 
             _logger.LogInformation(
-                "All providers synced: Movies({MoviesCreated} added, {MoviesUpdated} updated, {MoviesSkipped} skipped, {MoviesDeleted} deleted), Series({SeriesCreated} added, {SeriesSkipped} skipped), Episodes({EpisodesCreated} added, {EpisodesUpdated} updated, {EpisodesSkipped} skipped, {EpisodesDeleted} deleted)",
+                "All providers synced: Movies({MoviesCreated} added, {MoviesUpdated} updated, {MoviesSkipped} skipped, {MoviesDeleted} deleted), Series({SeriesCreated} added, {SeriesSkipped} skipped), Episodes({EpisodesCreated} added, {EpisodesUpdated} updated, {EpisodesSkipped} skipped, {EpisodesDeleted} deleted), Channels({ChannelsCreated} added, {ChannelsUpdated} updated, {ChannelsSkipped} skipped, {ChannelsDeleted} deleted)",
                 globalResult.MoviesCreated,
                 globalResult.MoviesUpdated,
                 globalResult.MoviesSkipped,
@@ -654,7 +663,11 @@ public partial class StrmSyncService
                 globalResult.EpisodesCreated,
                 globalResult.EpisodesUpdated,
                 globalResult.EpisodesSkipped,
-                globalResult.EpisodesDeleted);
+                globalResult.EpisodesDeleted,
+                globalResult.ChannelsCreated,
+                globalResult.ChannelsUpdated,
+                globalResult.ChannelsSkipped,
+                globalResult.ChannelsDeleted);
 
             // Flush metadata cache to disk
             if (config.EnableMetadataLookup)
@@ -729,6 +742,58 @@ public partial class StrmSyncService
         LastSyncResult = globalResult;
         RecordSyncHistory(globalResult);
         return globalResult;
+    }
+
+    /// <summary>
+    /// Refreshes the Live TV channel set, computes a delta vs the persisted snapshot, and
+    /// attaches the counts to <paramref name="globalResult"/>. Failures are logged but never
+    /// abort the sync - VOD/Series already succeeded by this point and a Live TV miss should
+    /// not nuke that result.
+    /// </summary>
+    /// <param name="config">Plugin configuration (Live TV refresh is skipped when disabled).</param>
+    /// <param name="globalResult">The current sync result to augment with channel counts.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task that completes when the refresh has run (or been skipped).</returns>
+    private async Task RefreshLiveTvChannelsAsync(
+        PluginConfiguration config,
+        SyncResult globalResult,
+        CancellationToken cancellationToken)
+    {
+        if (!config.EnableLiveTv)
+        {
+            return;
+        }
+
+        CurrentProgress.LiveTvPhase = "Refreshing Live TV channels";
+
+        try
+        {
+            var delta = await _liveTvService.RefreshChannelsAsync(cancellationToken).ConfigureAwait(false);
+
+            globalResult.ChannelsCreated = delta.AddedCount;
+            globalResult.ChannelsUpdated = delta.UpdatedCount;
+            globalResult.ChannelsDeleted = delta.RemovedCount;
+            globalResult.ChannelsSkipped = delta.UnchangedCount;
+
+            CurrentProgress.ChannelsCreated = delta.AddedCount;
+            CurrentProgress.ChannelsUpdated = delta.UpdatedCount;
+            CurrentProgress.LiveTvPhase = string.Empty;
+        }
+        catch (OperationCanceledException)
+        {
+            // Let the outer SyncAsync handler deal with cancellation.
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Live TV channel refresh failed");
+            CurrentProgress.LiveTvPhase = "Live TV refresh failed";
+
+            var liveTvError = "Live TV refresh failed: " + ex.Message;
+            globalResult.Error = string.IsNullOrEmpty(globalResult.Error)
+                ? liveTvError
+                : globalResult.Error + "; " + liveTvError;
+        }
     }
 
     /// <summary>
@@ -3514,12 +3579,15 @@ public class SyncProgress
     private int _moviesUpdated;
     private int _episodesCreated;
     private int _episodesUpdated;
+    private int _channelsCreated;
+    private int _channelsUpdated;
     private int _totalCategories;
     private int _categoriesProcessed;
     private volatile bool _isRunning;
     private volatile string _phase = string.Empty;
     private volatile string _moviePhase = string.Empty;
     private volatile string _seriesPhase = string.Empty;
+    private volatile string _liveTvPhase = string.Empty;
     private volatile string _currentItem = string.Empty;
 
     /// <summary>
@@ -3556,6 +3624,15 @@ public class SyncProgress
     {
         get => _seriesPhase;
         set => _seriesPhase = value;
+    }
+
+    /// <summary>
+    /// Gets or sets the current Live TV refresh phase (shown after VOD/Series finish).
+    /// </summary>
+    public string LiveTvPhase
+    {
+        get => _liveTvPhase;
+        set => _liveTvPhase = value;
     }
 
     /// <summary>
@@ -3637,6 +3714,24 @@ public class SyncProgress
     {
         get => Volatile.Read(ref _episodesUpdated);
         set => Volatile.Write(ref _episodesUpdated, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the number of Live TV channels added since the previous snapshot.
+    /// </summary>
+    public int ChannelsCreated
+    {
+        get => Volatile.Read(ref _channelsCreated);
+        set => Volatile.Write(ref _channelsCreated, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the number of Live TV channels updated since the previous snapshot.
+    /// </summary>
+    public int ChannelsUpdated
+    {
+        get => Volatile.Read(ref _channelsUpdated);
+        set => Volatile.Write(ref _channelsUpdated, value);
     }
 
     /// <summary>
@@ -3797,6 +3892,31 @@ public class SyncResult
     /// Gets the total number of episodes (created + skipped + updated).
     /// </summary>
     public int TotalEpisodes => EpisodesCreated + EpisodesSkipped + EpisodesUpdated;
+
+    /// <summary>
+    /// Gets or sets the number of Live TV channels added since the previous sync.
+    /// </summary>
+    public int ChannelsCreated { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of Live TV channels whose tracked metadata changed since the previous sync.
+    /// </summary>
+    public int ChannelsUpdated { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of Live TV channels that disappeared since the previous sync.
+    /// </summary>
+    public int ChannelsDeleted { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of Live TV channels present in both snapshots with no tracked changes.
+    /// </summary>
+    public int ChannelsSkipped { get; set; }
+
+    /// <summary>
+    /// Gets the total number of Live TV channels currently exposed to Jellyfin.
+    /// </summary>
+    public int TotalChannels => ChannelsCreated + ChannelsUpdated + ChannelsSkipped;
 
     /// <summary>
     /// Gets or sets the number of files deleted (orphans) - legacy, use specific counts.
