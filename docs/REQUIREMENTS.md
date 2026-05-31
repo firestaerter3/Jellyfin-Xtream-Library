@@ -55,6 +55,7 @@ Create STRM files that point to Xtream streaming URLs, allowing content to appea
 | FR-3.4 | STRM filename includes episode title when available | Should |
 | FR-3.5 | Sanitize filenames to remove invalid characters | Must |
 | FR-3.6 | Handle missing file extensions (default to mp4/mkv) | Must |
+| FR-3.7 | Truncate STRM filenames to 255 UTF-8 bytes (Linux NAME_MAX) while preserving the extension and UTF-8 character boundaries | Must |
 
 ### FR-4: Orphan Management
 

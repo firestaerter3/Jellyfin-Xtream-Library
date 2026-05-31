@@ -124,6 +124,7 @@ Core synchronization logic:
    - `SanitizeFileName` - Removes invalid chars, codec/quality tags, collapses underscores
    - `ExtractYear` - Parses year from title like "Movie (2024)"
    - `BuildEpisodeFileName` - Formats episode filename with padding
+   - `TruncateFileNameToFsLimit` - Caps STRM filenames at 255 UTF-8 bytes (Linux NAME_MAX), preserving the `.strm` extension and respecting multi-byte character boundaries
    - `CleanupEmptyDirectories` - Recursive empty dir removal
 
 ### SyncController
