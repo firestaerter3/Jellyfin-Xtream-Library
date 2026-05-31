@@ -1,1021 +1,123 @@
 <div id="XtreamLibraryConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
-     data-require="emby-input,emby-button,emby-checkbox,emby-select">
+     data-require="emby-button">
     <style>
-        .xtream-tabs {
-            display: flex;
-            border-bottom: 2px solid var(--theme-primary-color, #00a4dc);
-            margin-bottom: 20px;
+        .xtream-moved {
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 24px;
         }
-        .xtream-tab {
-            padding: 12px 24px;
-            cursor: pointer;
-            background: transparent;
-            border: none;
-            color: var(--theme-text-color, #fff);
-            font-size: 1em;
-            opacity: 0.7;
-            transition: opacity 0.2s, background 0.2s;
-        }
-        .xtream-tab:hover {
-            opacity: 1;
-            background: rgba(255,255,255,0.1);
-        }
-        .xtream-tab.active {
-            opacity: 1;
-            background: var(--theme-primary-color, #00a4dc);
-            border-radius: 4px 4px 0 0;
-        }
-        .xtream-tab-content {
-            display: none;
-        }
-        .xtream-tab-content.active {
-            display: block;
-        }
-        .category-list {
-            max-height: 400px;
-            overflow-y: auto;
-            border: 1px solid rgba(255,255,255,0.1);
-            padding: 10px;
-            border-radius: 4px;
-            margin-top: 10px;
-        }
-        .category-actions {
-            margin-bottom: 10px;
-        }
-        .sync-stats {
-            margin-top: 15px;
-            padding: 10px;
-            background: rgba(255,255,255,0.05);
-            border-radius: 4px;
-        }
-        .folder-item {
-            border: 1px solid rgba(255,255,255,0.2);
-            border-radius: 4px;
-            padding: 15px;
-            margin-bottom: 10px;
-            background: rgba(255,255,255,0.03);
-        }
-        .folder-item-header {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 10px;
-        }
-        .folder-item-header input {
-            flex: 1;
-            max-width: 300px;
-        }
-        .folder-item .category-list {
-            max-height: 200px;
-        }
-        .url-display {
-            background: rgba(0,0,0,0.3);
-            font-family: monospace;
-            font-size: 0.9em;
-        }
-        .advancedToggle {
-            cursor: pointer;
-            padding: 10px 0;
-            user-select: none;
-        }
-        .advancedToggle h3 {
-            display: inline-block;
-            margin: 0;
-        }
-        .advancedToggle:hover {
-            opacity: 0.8;
-        }
-        .dashboard-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-        }
-        @media (max-width: 800px) {
-            .dashboard-grid { grid-template-columns: 1fr; }
-        }
-        .dashboard-card {
-            background: rgba(255,255,255,0.05);
+        .xtream-moved-banner {
+            background: rgba(255, 152, 0, 0.12);
+            border: 2px solid #ff9800;
             border-radius: 8px;
-            padding: 15px;
+            padding: 24px;
+            margin-bottom: 28px;
         }
-        .dashboard-card h4 {
-            margin: 0 0 12px 0;
-            opacity: 0.8;
-            font-size: 0.95em;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+        .xtream-moved-banner h1 {
+            margin: 0 0 8px 0;
+            font-size: 1.6em;
+            color: #ff9800;
         }
-        .status-badge {
-            display: inline-block;
-            padding: 3px 10px;
+        .xtream-moved-banner p {
+            margin: 4px 0;
+            font-size: 1em;
+            line-height: 1.45;
+        }
+        .xtream-moved-steps {
+            background: rgba(255, 255, 255, 0.04);
+            border-left: 4px solid var(--theme-primary-color, #00a4dc);
+            padding: 18px 24px;
+            margin-bottom: 24px;
             border-radius: 4px;
-            font-size: 0.85em;
-            font-weight: 600;
         }
-        .status-badge-success { background: #1e3a1e; color: #82e0aa; }
-        .status-badge-failed { background: #3a1e1e; color: #e08282; }
-        .status-badge-running { background: #1e2a3a; color: #82b4e0; }
-        .status-badge-incremental { background: #1a5276; color: #85c1e9; }
-        .status-badge-full { background: #1e3a1e; color: #82e0aa; }
-        .dashboard-stat {
-            display: inline-block;
-            text-align: center;
-            padding: 8px 15px;
-            margin: 4px;
-            background: rgba(255,255,255,0.05);
-            border-radius: 6px;
+        .xtream-moved-steps ol {
+            margin: 0;
+            padding-left: 24px;
         }
-        .dashboard-stat .stat-value {
-            font-size: 1.4em;
-            font-weight: 700;
-            display: block;
+        .xtream-moved-steps li {
+            margin-bottom: 14px;
+            line-height: 1.5;
         }
-        .dashboard-stat .stat-label {
-            font-size: 0.8em;
-            opacity: 0.6;
+        .xtream-moved-steps li:last-child {
+            margin-bottom: 0;
         }
-        .dashboard-progress-bar {
-            width: 100%;
-            height: 8px;
-            background: rgba(255,255,255,0.1);
+        .xtream-moved-note {
+            background: rgba(76, 175, 80, 0.10);
+            border-left: 4px solid #4caf50;
+            padding: 14px 20px;
+            margin-bottom: 24px;
             border-radius: 4px;
-            overflow: hidden;
-            margin: 8px 0;
+            line-height: 1.5;
         }
-        .dashboard-progress-fill {
-            height: 100%;
-            background: var(--theme-primary-color, #00a4dc);
-            border-radius: 4px;
-            transition: width 0.3s ease;
-        }
-        .dashboard-history-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.9em;
-        }
-        .dashboard-history-table th,
-        .dashboard-history-table td {
-            padding: 6px 10px;
-            text-align: left;
-            border-bottom: 1px solid rgba(255,255,255,0.08);
-        }
-        .dashboard-history-table th {
-            opacity: 0.6;
-            font-weight: 600;
-            font-size: 0.85em;
-            text-transform: uppercase;
-        }
-        .library-stat-bar {
+        .xtream-moved-actions {
             display: flex;
-            align-items: center;
-            margin: 6px 0;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 24px;
         }
-        .library-stat-bar .bar-container {
-            flex: 1;
-            height: 10px;
-            background: rgba(255,255,255,0.1);
-            border-radius: 5px;
-            overflow: hidden;
-            margin: 0 10px;
+        .xtream-moved-actions a {
+            text-decoration: none;
         }
-        .library-stat-bar .bar-fill {
-            height: 100%;
-            background: #27ae60;
-            border-radius: 5px;
+        .xtream-moved-context {
+            font-size: 0.9em;
+            opacity: 0.7;
+            line-height: 1.5;
+        }
+        .xtream-moved-context a {
+            color: var(--theme-primary-color, #00a4dc);
+        }
+        .xtream-moved-guid {
+            font-family: monospace;
+            background: rgba(255, 255, 255, 0.06);
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 0.9em;
         }
     </style>
+
     <div data-role="content">
         <div class="content-primary">
-                <form id="XtreamLibraryConfigForm" class="XtreamLibraryConfigForm">
-                    <div class="sectionTitleContainer flex align-items-center">
-                        <h2 class="sectionTitle">Xtream Library Settings</h2>
-                    </div>
+            <div class="xtream-moved">
 
-                    <!-- Tab Navigation -->
-                    <div class="xtream-tabs" role="tablist">
-                        <button type="button" class="xtream-tab active" data-tab="dashboard" role="tab" aria-selected="true" aria-controls="tab-dashboard">Dashboard</button>
-                        <button type="button" class="xtream-tab" data-tab="general" role="tab" aria-selected="false" aria-controls="tab-general">General</button>
-                        <button type="button" class="xtream-tab" data-tab="movies" role="tab" aria-selected="false" aria-controls="tab-movies">Movies</button>
-                        <button type="button" class="xtream-tab" data-tab="series" role="tab" aria-selected="false" aria-controls="tab-series">Series</button>
-                        <button type="button" class="xtream-tab" data-tab="livetv" role="tab" aria-selected="false" aria-controls="tab-livetv">Live TV</button>
-                    </div>
+                <div class="xtream-moved-banner">
+                    <h1>⚠️ This plugin has moved</h1>
+                    <p>Xtream Library has migrated to a new plugin GUID. <strong>This entry will not receive any further updates.</strong></p>
+                    <p>Follow the three steps below to move to the new plugin. Your existing setup keeps working in the meantime.</p>
+                </div>
 
-                    <!-- Dashboard Tab -->
-                    <div id="tab-dashboard" class="xtream-tab-content active" role="tabpanel" aria-labelledby="dashboard">
-                        <div class="dashboard-grid">
-                            <!-- Sync Status Card -->
-                            <div class="dashboard-card">
-                                <h4>Sync Status</h4>
-                                <div id="dashboardSyncStatus">
-                                    <span style="opacity: 0.5;">Loading...</span>
-                                </div>
-                            </div>
+                <div class="xtream-moved-steps">
+                    <ol>
+                        <li>
+                            <strong>Open the plugin catalog</strong> and search for <em>Xtream Library</em>. You will see a separate entry alongside this one (different GUID, different icon).
+                        </li>
+                        <li>
+                            <strong>Install the new entry.</strong> Restart Jellyfin when prompted. You now have two "Xtream Library" plugins installed for a moment — that is expected.
+                        </li>
+                        <li>
+                            <strong>Come back to this page</strong>, then uninstall this plugin (the old one) and restart Jellyfin one more time.
+                        </li>
+                    </ol>
+                </div>
 
-                            <!-- Schedule Card -->
-                            <div class="dashboard-card">
-                                <h4>Schedule</h4>
-                                <div id="dashboardSchedule">
-                                    <span style="opacity: 0.5;">Loading...</span>
-                                </div>
-                            </div>
-                        </div>
+                <div class="xtream-moved-note">
+                    <strong>Your settings carry over automatically.</strong> Provider credentials, library folders, channel selections, and sync schedule live in a config file keyed by plugin namespace, not GUID — the new install picks them up on first start. No reconfiguration needed.
+                </div>
 
-                        <!-- Live Progress (hidden when not syncing) -->
-                        <div id="dashboardProgressSection" class="dashboard-card" style="display: none; margin-top: 20px;">
-                            <h4>Live Progress</h4>
-                            <div id="dashboardProgressContent"></div>
-                        </div>
+                <div class="xtream-moved-actions">
+                    <a is="emby-linkbutton" class="raised raised-mini button-submit" href="#!/addplugin.html?name=Xtream%20Library">
+                        Open plugin catalog
+                    </a>
+                    <a is="emby-linkbutton" class="raised raised-mini" href="https://github.com/firestaerter3/Jellyfin-Xtream-Library/issues/46" target="_blank" rel="noopener">
+                        Background context (issue #46)
+                    </a>
+                </div>
 
-                        <!-- Library Stats -->
-                        <div class="dashboard-card" style="margin-top: 20px;">
-                            <h4>Library Stats</h4>
-                            <div id="dashboardLibraryStats">
-                                <span style="opacity: 0.5;">Loading...</span>
-                            </div>
-                        </div>
+                <div class="xtream-moved-context">
+                    <p><strong>Why?</strong> The original plugin shipped with a placeholder GUID <span class="xtream-moved-guid">a1b2c3d4-e5f6-7890-abcd-ef1234567890</span> that collided with three other Jellyfin plugins. v1.33.3.0 replaced it with a fresh GUID <span class="xtream-moved-guid">63ba5fcd-c8ce-421a-83e8-ba0b11030d53</span>. Jellyfin tracks plugins by GUID, so the new release shows as a separate plugin to existing installs — the only way forward is to install it as new and uninstall this one.</p>
+                </div>
 
-                        <!-- Quick Actions -->
-                        <div class="dashboard-card" style="margin-top: 20px;">
-                            <h4>Quick Actions</h4>
-                            <button is="emby-button" type="button" id="btnDashboardSync" class="raised button-submit">
-                                <span>Run Sync Now</span>
-                            </button>
-                            <button is="emby-button" type="button" id="btnDashboardRetry" class="raised" style="margin-left: 10px; display: none;">
-                                <span>Retry Failed (<span id="dashboardFailedCount">0</span>)</span>
-                            </button>
-                            <span id="dashboardSyncAction" style="margin-left: 10px;"></span>
-                        </div>
-
-                        <!-- Sync History -->
-                        <div class="dashboard-card" style="margin-top: 20px;">
-                            <h4>Sync History</h4>
-                            <div id="dashboardHistory">
-                                <span style="opacity: 0.5;">No sync history yet.</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- General Tab -->
-                    <div id="tab-general" class="xtream-tab-content" role="tabpanel" aria-labelledby="general">
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Provider Credentials</h3>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtBaseUrl">Base URL</label>
-                                <input is="emby-input" type="text" id="txtBaseUrl" name="BaseUrl"
-                                       placeholder="http://provider.com:8000" required />
-                                <div class="fieldDescription">
-                                    The base URL of your Xtream provider (including protocol and port, no trailing slash).
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtUsername">Username</label>
-                                <input is="emby-input" type="text" id="txtUsername" name="Username" required />
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtPassword">Password</label>
-                                <input is="emby-input" type="password" id="txtPassword" name="Password" required />
-                            </div>
-                            <div>
-                                <button is="emby-button" type="button" id="btnTestConnection" class="raised button-submit">
-                                    <span>Test Connection</span>
-                                </button>
-                                <span id="connectionStatus" style="margin-left: 10px;"></span>
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Library Settings</h3>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtLibraryPath">Library Path</label>
-                                <input is="emby-input" type="text" id="txtLibraryPath" name="LibraryPath"
-                                       placeholder="/config/xtream-library" required />
-                                <div class="fieldDescription">
-                                    Path where STRM files will be created. Use /config/xtream-library for Docker setups.
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="selSyncScheduleType">Sync Schedule</label>
-                                <select is="emby-select" id="selSyncScheduleType" name="SyncScheduleType">
-                                    <option value="Interval">Interval (every X minutes)</option>
-                                    <option value="Daily">Daily (at specific time)</option>
-                                </select>
-                                <div class="fieldDescription">
-                                    Choose between interval-based sync or daily sync at a specific time.
-                                </div>
-                            </div>
-                            <div id="intervalSettings" class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtSyncInterval">Sync Interval (minutes)</label>
-                                <input is="emby-input" type="number" id="txtSyncInterval" name="SyncIntervalMinutes"
-                                       min="10" max="1440" step="1" />
-                                <div class="fieldDescription">
-                                    How often to sync content from the provider (10-1440 minutes).
-                                </div>
-                            </div>
-                            <div id="dailySettings" class="inputContainer" style="display: none;">
-                                <label class="inputLabel inputLabelUnfocused">Daily Sync Time</label>
-                                <div style="display: flex; gap: 10px; align-items: center;">
-                                    <select is="emby-select" id="selSyncDailyHour" style="width: 80px;">
-                                        <option value="0">00</option>
-                                        <option value="1">01</option>
-                                        <option value="2">02</option>
-                                        <option value="3">03</option>
-                                        <option value="4">04</option>
-                                        <option value="5">05</option>
-                                        <option value="6">06</option>
-                                        <option value="7">07</option>
-                                        <option value="8">08</option>
-                                        <option value="9">09</option>
-                                        <option value="10">10</option>
-                                        <option value="11">11</option>
-                                        <option value="12">12</option>
-                                        <option value="13">13</option>
-                                        <option value="14">14</option>
-                                        <option value="15">15</option>
-                                        <option value="16">16</option>
-                                        <option value="17">17</option>
-                                        <option value="18">18</option>
-                                        <option value="19">19</option>
-                                        <option value="20">20</option>
-                                        <option value="21">21</option>
-                                        <option value="22">22</option>
-                                        <option value="23">23</option>
-                                    </select>
-                                    <span>:</span>
-                                    <select is="emby-select" id="selSyncDailyMinute" style="width: 80px;">
-                                        <option value="0">00</option>
-                                        <option value="15">15</option>
-                                        <option value="30">30</option>
-                                        <option value="45">45</option>
-                                    </select>
-                                </div>
-                                <div class="fieldDescription">
-                                    Time of day to run the sync (24-hour format, server timezone).
-                                </div>
-                            </div>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input is="emby-checkbox" type="checkbox" id="chkTriggerScan" name="TriggerLibraryScan" />
-                                    <span>Trigger Library Scan After Sync</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">
-                                    Trigger a full Jellyfin library scan after sync. WARNING: With large libraries (10K+ items), this can consume excessive memory and cause instability. Jellyfin's file monitor already detects new/changed STRM files automatically, so this is usually unnecessary.
-                                </div>
-                            </div>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input is="emby-checkbox" type="checkbox" id="chkCleanupOrphans" name="CleanupOrphans" />
-                                    <span>Cleanup Orphaned Files</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">
-                                    Remove STRM files for content that no longer exists on the provider.
-                                </div>
-                            </div>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input is="emby-checkbox" type="checkbox" id="chkEnableMetadataLookup" name="EnableMetadataLookup" />
-                                    <span>Enable Automatic Metadata ID Lookup</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">
-                                    Automatically look up TMDb/TVDb IDs using Jellyfin's configured metadata providers.
-                                    Requires metadata plugins (TMDb, TVDb) to be installed and configured in Jellyfin.
-                                </div>
-                            </div>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input is="emby-checkbox" type="checkbox" id="chkFallbackToYearlessLookup" name="FallbackToYearlessLookup" />
-                                    <span>Fallback to Year-Free Lookup</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">
-                                    If a year-qualified metadata lookup returns no result, retry without the year.
-                                    Enable this if your provider has many incorrect years in stream names. Note: weakens
-                                    false-positive protection for ambiguous titles.
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtCustomTitleRemoveTerms">Custom Title Removal Terms (one per line)</label>
-                                <textarea is="emby-textarea" id="txtCustomTitleRemoveTerms" rows="4"
-                                    placeholder="(DE-)&#10;[Multi-Sub]&#10;FHD" style="width: 100%; font-family: monospace;"></textarea>
-                                <div class="fieldDescription">
-                                    Additional terms to remove from movie and series titles. One term per line.
-                                    Applied before built-in title cleaning (language tags, codec info, quality tags, etc.).
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtRegexRemovalPatterns">Regex Removal Patterns (file names only, one per line)</label>
-                                <textarea is="emby-textarea" id="txtRegexRemovalPatterns" rows="4"
-                                    placeholder="\s*\[tmdbid-\d+\]&#10;\s*\[tvdbid-\d+\]" style="width: 100%; font-family: monospace;"></textarea>
-                                <div class="fieldDescription">
-                                    .NET regex patterns to remove from STRM <strong>file names only</strong>. Folder names are left
-                                    untouched, so tags like <code>[tmdbid-N]</code> remain available for Jellyfin's metadata
-                                    identification. Useful for cleaning file names for tools like OpenSubtitles. One pattern per
-                                    line. Invalid patterns are skipped with a warning and do not abort the sync.
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <div class="advancedToggle" id="btnAdvancedToggle">
-                                <h3 class="sectionTitle">Advanced Settings <span id="advancedArrow">&#9656;</span></h3>
-                            </div>
-                            <div id="advancedSettings" style="display: none;">
-
-                                <h4 style="margin-top: 5px; opacity: 0.8;">Metadata</h4>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="txtUserAgent">Custom User-Agent (Optional)</label>
-                                    <input is="emby-input" type="text" id="txtUserAgent" name="UserAgent" />
-                                    <div class="fieldDescription">
-                                        Optional custom User-Agent string for API requests.
-                                    </div>
-                                </div>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="txtMetadataParallelism">Metadata Lookup Parallelism</label>
-                                    <input is="emby-input" type="number" id="txtMetadataParallelism" name="MetadataParallelism"
-                                           min="1" max="20" step="1" />
-                                    <div class="fieldDescription">
-                                        Number of parallel metadata lookups (1-20). Higher values speed up first sync but may
-                                        trigger API rate limits on TMDb/TVDb. Default: 3.
-                                    </div>
-                                </div>
-                                <div class="checkboxContainer checkboxContainer-withDescription">
-                                    <label class="emby-checkbox-label">
-                                        <input is="emby-checkbox" type="checkbox" id="chkDownloadArtworkForUnmatched" name="DownloadArtworkForUnmatched" />
-                                        <span>Download Artwork for Unmatched Content</span>
-                                    </label>
-                                    <div class="fieldDescription checkboxFieldDescription">
-                                        Download posters and fanart from the provider for content that couldn't be matched to TMDb/TVDb.
-                                        Ensures unmatched movies and series still have artwork in Jellyfin.
-                                    </div>
-                                </div>
-                                <div style="margin-top: 10px;">
-                                    <button is="emby-button" type="button" id="btnClearMetadataCache" class="raised">
-                                        <span>Clear Metadata Cache</span>
-                                    </button>
-                                    <span id="metadataCacheStatus" style="margin-left: 10px;"></span>
-                                </div>
-
-                                <h4 style="margin-top: 20px; opacity: 0.8;">Performance &amp; Rate Limiting</h4>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="txtSyncParallelism">Sync Parallelism</label>
-                                    <input is="emby-input" type="number" id="txtSyncParallelism" name="SyncParallelism"
-                                           min="1" max="10" step="1" />
-                                    <div class="fieldDescription">
-                                        Number of parallel API requests during sync (1-10). Lower values reduce rate limiting (429 errors)
-                                        from providers. Default: 3.
-                                    </div>
-                                </div>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="txtCategoryBatchSize">Category Batch Size</label>
-                                    <input is="emby-input" type="number" id="txtCategoryBatchSize" name="CategoryBatchSize"
-                                           min="0" max="100" step="1" />
-                                    <div class="fieldDescription">
-                                        Number of categories to process per batch during sync (1-100). Lower values reduce memory
-                                        usage for large libraries. Set to 0 to disable batching. Default: 10.
-                                    </div>
-                                </div>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="txtRequestDelayMs">Request Delay (ms)</label>
-                                    <input is="emby-input" type="number" id="txtRequestDelayMs" name="RequestDelayMs"
-                                           min="0" max="5000" step="50" />
-                                    <div class="fieldDescription">
-                                        Delay in milliseconds between API requests (0-5000). Helps prevent rate limiting (429 errors)
-                                        from providers that limit request frequency. Default: 100ms. Set to 0 for no delay.
-                                    </div>
-                                </div>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="txtMaxRetries">Max Retries for Rate Limits</label>
-                                    <input is="emby-input" type="number" id="txtMaxRetries" name="MaxRetries"
-                                           min="0" max="10" step="1" />
-                                    <div class="fieldDescription">
-                                        Maximum number of retries when rate limited (429 response). Each retry waits longer
-                                        (exponential backoff). Default: 3.
-                                    </div>
-                                </div>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="txtRetryDelayMs">Initial Retry Delay (ms)</label>
-                                    <input is="emby-input" type="number" id="txtRetryDelayMs" name="RetryDelayMs"
-                                           min="100" max="30000" step="100" />
-                                    <div class="fieldDescription">
-                                        Initial delay after a 429 response before retrying (100-30000ms). Each subsequent retry
-                                        doubles this delay. Default: 1000ms (1 second).
-                                    </div>
-                                </div>
-
-                                <h4 style="margin-top: 20px; opacity: 0.8;">Incremental Sync</h4>
-                                <div class="checkboxContainer checkboxContainer-withDescription">
-                                    <label class="emby-checkbox-label">
-                                        <input is="emby-checkbox" type="checkbox" id="chkEnableIncrementalSync" name="EnableIncrementalSync" />
-                                        <span>Enable Incremental Sync</span>
-                                    </label>
-                                    <div class="fieldDescription checkboxFieldDescription">
-                                        Only process new, modified, and removed content after the first full sync.
-                                        Dramatically reduces sync time and API load for subsequent syncs.
-                                    </div>
-                                </div>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="txtFullSyncIntervalDays">Full Sync Interval (days)</label>
-                                    <input is="emby-input" type="number" id="txtFullSyncIntervalDays" name="FullSyncIntervalDays"
-                                           min="1" max="30" step="1" />
-                                    <div class="fieldDescription">
-                                        Force a full sync every N days to ensure consistency (1-30). Default: 7.
-                                    </div>
-                                </div>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="txtFullSyncChangeThreshold">Change Threshold (%)</label>
-                                    <input is="emby-input" type="number" id="txtFullSyncChangeThreshold" name="FullSyncChangeThreshold"
-                                           min="0" max="100" step="5" />
-                                    <div class="fieldDescription">
-                                        If more than this percentage of content changed, fall back to full sync
-                                        as a safety measure (0-100%). Default: 50%.
-                                    </div>
-                                </div>
-
-                                <h4 style="margin-top: 20px; opacity: 0.8;">Experimental</h4>
-                                <div class="checkboxContainer checkboxContainer-withDescription">
-                                    <label class="emby-checkbox-label">
-                                        <input is="emby-checkbox" type="checkbox" id="chkEnableProactiveMediaInfo" name="EnableProactiveMediaInfo" />
-                                        <span>Proactive Media Info</span>
-                                    </label>
-                                    <div class="fieldDescription checkboxFieldDescription">
-                                        Fetch media info (resolution, codec, audio) during sync and write NFO sidecar files.
-                                        Shows media details in Jellyfin without first-time playback. Increases sync time.
-                                    </div>
-                                </div>
-
-                                <h4 style="margin-top: 20px; opacity: 0.8;">Dispatcharr</h4>
-                                <div class="checkboxContainer checkboxContainer-withDescription">
-                                    <label class="emby-checkbox-label">
-                                        <input is="emby-checkbox" type="checkbox" id="chkEnableDispatcharrMode" name="EnableDispatcharrMode" />
-                                        <span>Dispatcharr Mode</span>
-                                    </label>
-                                    <div class="fieldDescription checkboxFieldDescription">
-                                        Discovers all stream variants per movie via Dispatcharr's REST API.
-                                        Creates multiple STRM files so Jellyfin can show real codec, resolution, and audio info
-                                        in the version picker. Requires a Django admin account on your Dispatcharr instance.
-                                    </div>
-                                </div>
-                                <div id="dispatcharrSettings" style="display: none;">
-                                    <div class="inputContainer">
-                                        <label class="inputLabel inputLabelUnfocused" for="txtDispatcharrApiUser">API Username</label>
-                                        <input is="emby-input" type="text" id="txtDispatcharrApiUser" name="DispatcharrApiUser" />
-                                        <div class="fieldDescription">
-                                            Django admin username for the Dispatcharr REST API.
-                                        </div>
-                                    </div>
-                                    <div class="inputContainer">
-                                        <label class="inputLabel inputLabelUnfocused" for="txtDispatcharrApiPass">API Password</label>
-                                        <input is="emby-input" type="password" id="txtDispatcharrApiPass" name="DispatcharrApiPass" />
-                                        <div class="fieldDescription">
-                                            Django admin password for the Dispatcharr REST API.
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <button is="emby-button" type="button" id="btnTestDispatcharr" class="raised button-submit">
-                                            <span>Test Dispatcharr</span>
-                                        </button>
-                                        <span id="dispatcharrStatus" style="margin-left: 10px;"></span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Danger Zone</h3>
-                            <div class="fieldDescription" style="color: #ff6b6b; margin-bottom: 10px;">
-                                Warning: This will permanently delete synced content. Use before re-syncing with new metadata lookup settings.
-                            </div>
-                            <div>
-                                <button is="emby-button" type="button" id="btnCleanMovies" class="raised" style="background: #c0392b;">
-                                    <span>Delete Movies Library</span>
-                                </button>
-                                <button is="emby-button" type="button" id="btnCleanSeries" class="raised" style="background: #c0392b; margin-left: 10px;">
-                                    <span>Delete Series Library</span>
-                                </button>
-                            </div>
-                            <div id="cleanLibrariesStatus" style="margin-top: 8px;"></div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Diagnostics</h3>
-                            <div>
-                                <button is="emby-button" type="button" id="btnDownloadLog" class="raised">
-                                    <span>Download Log</span>
-                                </button>
-                                <span id="downloadLogStatus" style="margin-left: 10px;"></span>
-                            </div>
-                            <div class="fieldDescription">
-                                Downloads plugin log entries with credentials and IP addresses redacted. Safe to share for debugging.
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Manual Sync</h3>
-                            <div>
-                                <button is="emby-button" type="button" id="btnManualSync" class="raised button-submit">
-                                    <span>Run Sync Now</span>
-                                </button>
-                                <button is="emby-button" type="button" id="btnRetryFailed" class="raised" style="margin-left: 10px; display: none;">
-                                    <span>Retry Failed (<span id="failedCount">0</span>)</span>
-                                </button>
-                                <span id="syncStatus" style="margin-left: 10px;"></span>
-                            </div>
-                            <div id="lastSyncInfo" class="sync-stats"></div>
-                            <div id="failedItemsList" class="sync-stats" style="display: none; margin-top: 10px;">
-                                <strong>Failed Items:</strong>
-                                <div id="failedItemsContent"></div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Movies Tab -->
-                    <div id="tab-movies" class="xtream-tab-content" role="tabpanel" aria-labelledby="movies">
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Movies/VOD Settings</h3>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input is="emby-checkbox" type="checkbox" id="chkSyncMovies" name="SyncMovies" />
-                                    <span>Enable Movies/VOD Sync</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">
-                                    Enable syncing of movies and VOD content.
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Metadata Matching</h3>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtTmdbFolderIdOverrides">TMDb Folder ID Overrides (one per line)</label>
-                                <textarea is="emby-textarea" id="txtTmdbFolderIdOverrides" rows="4"
-                                    placeholder="The Matrix (1999)=603&#10;Avatar (2009)=19995" style="width: 100%; font-family: monospace;"></textarea>
-                                <div class="fieldDescription">
-                                    Force specific TMDb IDs for folders that don't match automatically.
-                                    Format: FolderName=TmdbID (one per line). Find IDs at themoviedb.org.
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Folder Organization</h3>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="selMovieFolderMode">Folder Mode</label>
-                                <select is="emby-select" id="selMovieFolderMode" name="MovieFolderMode">
-                                    <option value="Single">Single Folder (all movies in Movies/)</option>
-                                    <option value="Multiple">Multiple Folders (organize by category)</option>
-                                </select>
-                                <div class="fieldDescription">
-                                    Single: All movies sync to root Movies folder.<br/>
-                                    Multiple: Create subfolders and assign categories to each.
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Movie Categories</h3>
-                            <div class="fieldDescription" id="vodCategoryDescription">
-                                Select specific categories to sync. Leave all unchecked to sync all categories.
-                            </div>
-                            <div>
-                                <button is="emby-button" type="button" id="btnLoadVodCategories" class="raised button-submit">
-                                    <span>Load Categories</span>
-                                </button>
-                                <span id="vodCategoryLoadStatus" style="margin-left: 10px;"></span>
-                            </div>
-
-                            <!-- Single folder mode: simple category selection -->
-                            <div id="vodSingleFolderSection" style="display: none;">
-                                <div class="category-actions">
-                                    <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.selectAllCategories('vod')">
-                                        <span>Select All</span>
-                                    </button>
-                                    <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.deselectAllCategories('vod')">
-                                        <span>Deselect All</span>
-                                    </button>
-                                </div>
-                                <div id="vodCategoryList" class="category-list"></div>
-                            </div>
-
-                            <!-- Multiple folders mode: folder definitions -->
-                            <div id="vodMultiFolderSection" style="display: none;">
-                                <div id="vodFolderList"></div>
-                                <div style="margin-top: 10px;">
-                                    <button is="emby-button" type="button" class="raised button-submit" onclick="XtreamLibraryConfig.addFolder('vod')">
-                                        <span>+ Add Folder</span>
-                                    </button>
-                                </div>
-                                <div class="fieldDescription" style="margin-top: 10px;">
-                                    Categories not assigned to any folder will sync to the root Movies folder.
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Series Tab -->
-                    <div id="tab-series" class="xtream-tab-content" role="tabpanel" aria-labelledby="series">
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Series Settings</h3>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input is="emby-checkbox" type="checkbox" id="chkSyncSeries" name="SyncSeries" />
-                                    <span>Enable Series Sync</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">
-                                    Enable syncing of series content with proper season/episode structure.
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Metadata Matching</h3>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtTvdbFolderIdOverrides">TVDb Folder ID Overrides (one per line)</label>
-                                <textarea is="emby-textarea" id="txtTvdbFolderIdOverrides" rows="4"
-                                    placeholder="Breaking Bad (2008)=81189&#10;Game of Thrones (2011)=121361" style="width: 100%; font-family: monospace;"></textarea>
-                                <div class="fieldDescription">
-                                    Force specific TVDb IDs for folders that don't match automatically.
-                                    Format: FolderName=TvdbID (one per line). Find IDs at thetvdb.com.
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Folder Organization</h3>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="selSeriesFolderMode">Folder Mode</label>
-                                <select is="emby-select" id="selSeriesFolderMode" name="SeriesFolderMode">
-                                    <option value="Single">Single Folder (all series in Series/)</option>
-                                    <option value="Multiple">Multiple Folders (organize by category)</option>
-                                </select>
-                                <div class="fieldDescription">
-                                    Single: All series sync to root Series folder.<br/>
-                                    Multiple: Create subfolders and assign categories to each.
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Series Categories</h3>
-                            <div class="fieldDescription" id="seriesCategoryDescription">
-                                Select specific categories to sync. Leave all unchecked to sync all categories.
-                            </div>
-                            <div>
-                                <button is="emby-button" type="button" id="btnLoadSeriesCategories" class="raised button-submit">
-                                    <span>Load Categories</span>
-                                </button>
-                                <span id="seriesCategoryLoadStatus" style="margin-left: 10px;"></span>
-                            </div>
-
-                            <!-- Single folder mode: simple category selection -->
-                            <div id="seriesSingleFolderSection" style="display: none;">
-                                <div class="category-actions">
-                                    <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.selectAllCategories('series')">
-                                        <span>Select All</span>
-                                    </button>
-                                    <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.deselectAllCategories('series')">
-                                        <span>Deselect All</span>
-                                    </button>
-                                </div>
-                                <div id="seriesCategoryList" class="category-list"></div>
-                            </div>
-
-                            <!-- Multiple folders mode: folder definitions -->
-                            <div id="seriesMultiFolderSection" style="display: none;">
-                                <div id="seriesFolderList"></div>
-                                <div style="margin-top: 10px;">
-                                    <button is="emby-button" type="button" class="raised button-submit" onclick="XtreamLibraryConfig.addFolder('series')">
-                                        <span>+ Add Folder</span>
-                                    </button>
-                                </div>
-                                <div class="fieldDescription" style="margin-top: 10px;">
-                                    Categories not assigned to any folder will sync to the root Series folder.
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Live TV Tab -->
-                    <div id="tab-livetv" class="xtream-tab-content" role="tabpanel" aria-labelledby="livetv">
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Live TV Settings</h3>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input is="emby-checkbox" type="checkbox" id="chkEnableLiveTv" name="EnableLiveTv" />
-                                    <span>Enable Live TV</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">
-                                    Enable M3U and EPG endpoints for Jellyfin's Live TV tuner.
-                                </div>
-                            </div>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input is="emby-checkbox" type="checkbox" id="chkEnableNativeTuner" name="EnableNativeTuner" />
-                                    <span>Enable Native Tuner (faster channel switching)</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">
-                                    Registers a custom tuner type that skips FFmpeg probing, cutting channel switch time roughly in half.
-                                    After enabling, add "Xtream Library" tuner in Dashboard &rarr; Live TV &rarr; Tuner Devices.
-                                </div>
-                            </div>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input is="emby-checkbox" type="checkbox" id="chkEnableEpg" name="EnableEpg" />
-                                    <span>Enable EPG</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">
-                                    Generate XMLTV EPG data for program guide.
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="selLiveTvOutputFormat">Stream Format</label>
-                                <select is="emby-select" id="selLiveTvOutputFormat" name="LiveTvOutputFormat">
-                                    <option value="ts">MPEG-TS (recommended)</option>
-                                    <option value="m3u8">HLS (use if TS doesn't work with your provider)</option>
-                                </select>
-                                <div class="fieldDescription">
-                                    Output format for live streams. MPEG-TS enables direct streaming with no transcoding. Use HLS only if your provider does not support TS.
-                                </div>
-                            </div>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input is="emby-checkbox" type="checkbox" id="chkIncludeAdultChannels" name="IncludeAdultChannels" />
-                                    <span>Include Adult Channels</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">
-                                    Include channels marked as adult content.
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Cache Settings</h3>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtM3UCacheMinutes">M3U Cache (minutes)</label>
-                                <input is="emby-input" type="number" id="txtM3UCacheMinutes" name="M3UCacheMinutes"
-                                       min="1" max="60" step="1" />
-                                <div class="fieldDescription">
-                                    How long to cache the M3U playlist (1-60 minutes).
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtEpgCacheMinutes">EPG Cache (minutes)</label>
-                                <input is="emby-input" type="number" id="txtEpgCacheMinutes" name="EpgCacheMinutes"
-                                       min="5" max="120" step="1" />
-                                <div class="fieldDescription">
-                                    How long to cache the EPG data (5-120 minutes).
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtEpgDaysToFetch">EPG Days to Fetch</label>
-                                <input is="emby-input" type="number" id="txtEpgDaysToFetch" name="EpgDaysToFetch"
-                                       min="1" max="7" step="1" />
-                                <div class="fieldDescription">
-                                    Number of days of EPG data to fetch (1-7).
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtEpgParallelism">EPG Parallelism</label>
-                                <input is="emby-input" type="number" id="txtEpgParallelism" name="EpgParallelism"
-                                       min="1" max="10" step="1" />
-                                <div class="fieldDescription">
-                                    Number of parallel EPG fetch requests (1-10). Higher = faster but more load on provider.
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Live TV Categories</h3>
-                            <div class="fieldDescription">
-                                Select specific categories to include. Leave all unchecked to include all categories.
-                            </div>
-                            <div>
-                                <button is="emby-button" type="button" id="btnLoadLiveCategories" class="raised button-submit">
-                                    <span>Load Categories</span>
-                                </button>
-                                <span id="liveCategoryLoadStatus" style="margin-left: 10px;"></span>
-                            </div>
-                            <div id="liveSingleFolderSection" style="display: none;">
-                                <div class="category-actions">
-                                    <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.selectAllCategories('live')">
-                                        <span>Select All</span>
-                                    </button>
-                                    <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.deselectAllCategories('live')">
-                                        <span>Deselect All</span>
-                                    </button>
-                                </div>
-                                <div id="liveCategoryList" class="category-list"></div>
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Title Cleaning</h3>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input is="emby-checkbox" type="checkbox" id="chkEnableChannelNameCleaning" name="EnableChannelNameCleaning" />
-                                    <span>Enable Channel Name Cleaning</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">
-                                    Remove country prefixes, quality tags, and codec info from channel names.
-                                    E.g., "UK: BBC One | HD | HEVC" becomes "BBC One".
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtChannelRemoveTerms">Custom Removal Terms (one per line)</label>
-                                <textarea is="emby-textarea" id="txtChannelRemoveTerms" rows="4"
-                                    placeholder="| UK |&#10;FHD |&#10;HEVC" style="width: 100%; font-family: monospace;"></textarea>
-                                <div class="fieldDescription">
-                                    Additional terms to remove from channel names. One term per line.
-                                    Built-in patterns: Country prefixes (UK:, US:, etc.), Quality tags (HD, FHD, 4K),
-                                    Codecs (HEVC, H.264), Resolutions (1080p, 720p).
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Channel Overrides</h3>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtChannelOverrides">Channel Overrides (one per line)</label>
-                                <textarea is="emby-textarea" id="txtChannelOverrides" rows="6"
-                                    placeholder="123=BBC One&#10;456=CNN|2&#10;789=Sky News|5|http://logo.png&#10;101=|10|" style="width: 100%; font-family: monospace;"></textarea>
-                                <div class="fieldDescription">
-                                    Override channel name, number, or logo. Format: StreamId=Name|Number|LogoUrl<br/>
-                                    Examples:<br/>
-                                    <code>123=BBC One</code> - Just rename<br/>
-                                    <code>456=CNN|2</code> - Rename and set channel number<br/>
-                                    <code>789=Sky News|5|http://logo.png</code> - All fields<br/>
-                                    <code>101=|10|</code> - Just channel number (keep original name)
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Catch-up / Timeshift</h3>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input is="emby-checkbox" type="checkbox" id="chkEnableCatchup" name="EnableCatchup" />
-                                    <span>Enable Catch-up</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">
-                                    Enable catch-up attributes for channels that support timeshift.
-                                    Only channels with tv_archive=1 on the provider support this feature.
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtCatchupDays">Catch-up Days</label>
-                                <input is="emby-input" type="number" id="txtCatchupDays" name="CatchupDays"
-                                       min="1" max="14" step="1" />
-                                <div class="fieldDescription">
-                                    Number of days of catch-up to show (1-14). Limited by channel's archive duration.
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Setup URLs</h3>
-                            <div class="fieldDescription">
-                                Add these URLs to Jellyfin's Live TV settings (Dashboard → Live TV → Add Tuner).
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtM3UUrl">M3U Playlist URL</label>
-                                <div style="display: flex; gap: 10px;">
-                                    <input is="emby-input" type="text" id="txtM3UUrl" readonly style="flex: 1;" />
-                                    <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.copyToClipboard('txtM3UUrl')">
-                                        <span>Copy</span>
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtEpgUrl">EPG (XMLTV) URL</label>
-                                <div style="display: flex; gap: 10px;">
-                                    <input is="emby-input" type="text" id="txtEpgUrl" readonly style="flex: 1;" />
-                                    <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.copyToClipboard('txtEpgUrl')">
-                                        <span>Copy</span>
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtCatchupUrl">Catch-up M3U URL</label>
-                                <div style="display: flex; gap: 10px;">
-                                    <input is="emby-input" type="text" id="txtCatchupUrl" readonly style="flex: 1;" />
-                                    <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.copyToClipboard('txtCatchupUrl')">
-                                        <span>Copy</span>
-                                    </button>
-                                </div>
-                            </div>
-                            <div style="margin-top: 10px;">
-                                <button is="emby-button" type="button" id="btnRefreshLiveTvCache" class="raised">
-                                    <span>Refresh Cache</span>
-                                </button>
-                                <span id="liveTvCacheStatus" style="margin-left: 10px;"></span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div style="margin-top: 20px;">
-                        <button is="emby-button" type="submit" class="raised button-submit block">
-                            <span>Save</span>
-                        </button>
-                    </div>
-                </form>
             </div>
         </div>
+    </div>
     <script type="text/javascript" src="configurationpage?name=config.js"></script>
 </div>

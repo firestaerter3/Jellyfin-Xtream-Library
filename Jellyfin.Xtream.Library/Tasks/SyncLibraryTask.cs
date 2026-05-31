@@ -43,13 +43,13 @@ public class SyncLibraryTask : IScheduledTask, IConfigurableScheduledTask
     }
 
     /// <inheritdoc />
-    public string Name => "Sync Xtream Library";
+    public string Name => "⚠️ [MOVED] Sync Xtream Library";
 
     /// <inheritdoc />
     public string Key => "XtreamLibrarySync";
 
     /// <inheritdoc />
-    public string Description => "Syncs VOD and Series content from Xtream provider to STRM files for native Jellyfin library integration.";
+    public string Description => "⚠️ This plugin has moved to a new GUID. Open plugin settings for migration steps. Sync still runs as usual until you migrate.";
 
     /// <inheritdoc />
     public string Category => "Xtream Library";
@@ -66,6 +66,8 @@ public class SyncLibraryTask : IScheduledTask, IConfigurableScheduledTask
     /// <inheritdoc />
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
+        _logger.LogWarning(
+            "Xtream Library has moved to a new GUID. Open the plugin settings page for migration steps. This sync still runs as usual until you migrate.");
         _logger.LogInformation("Starting Xtream Library sync task");
         progress.Report(0);
 

@@ -47,6 +47,10 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     public override string Name => "Xtream Library";
 
     /// <inheritdoc />
+    public override string Description =>
+        "⚠️ MOVED — this plugin has migrated to a new GUID. After updating, uninstall this entry and install 'Xtream Library' from the catalog (it will appear separately with a new icon). Your provider settings, library folders, and channel selections carry over automatically.";
+
+    /// <inheritdoc />
     public override Guid Id => Guid.Parse("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
 
     /// <summary>
