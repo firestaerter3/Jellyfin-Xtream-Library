@@ -1092,9 +1092,15 @@ const XtreamLibraryConfig = {
 
             // Update the counter whenever a category checkbox changes (including via shift+click,
             // since the synthetic state changes in the click handler don't fire change events).
+            // Also re-render any expanded child panel so per-channel checkboxes track the new
+            // category state (see renderLiveChannels for the categorySelected gating).
             checkboxes.forEach(function (cb) {
                 cb.addEventListener('change', function () {
                     self.updateLiveCategoryCounter();
+                    const catId = parseInt(cb.getAttribute('data-category-id'));
+                    if (self.expandedLiveCategories[catId] && self.liveChannelsByCategory[catId]) {
+                        self.renderLiveChannels(catId);
+                    }
                 });
             });
 
@@ -1184,6 +1190,15 @@ const XtreamLibraryConfig = {
         const excluded = {};
         self.excludedLiveStreamIds.forEach(function (id) { excluded[id] = true; });
 
+        // If the parent category isn't selected, the whole category is skipped at sync time —
+        // reflect that in the UI so per-channel checkboxes don't show as ticked when they
+        // won't actually sync. Without this, Deselect-All-Categories clears the exclusion
+        // list and every channel underneath would pop back on as "checked", which is what
+        // Estarna reported on issue #46 against v1.35.1.
+        const categoryCb = document.querySelector(
+            'input[data-category-type="live"][data-category-id="' + categoryId + '"]');
+        const categorySelected = categoryCb ? categoryCb.checked : false;
+
         let html = '';
         html += '<div style="margin: 4px 0;">';
         html += '<button type="button" class="live-ch-select-all" data-cat-id="' + categoryId + '" ';
@@ -1191,10 +1206,13 @@ const XtreamLibraryConfig = {
         html += '<button type="button" class="live-ch-deselect-all" data-cat-id="' + categoryId + '" ';
         html += 'style="background: none; border: 1px solid rgba(255,255,255,0.2); color: inherit; cursor: pointer; padding: 2px 8px; border-radius: 3px;">Deselect all</button>';
         html += '<small style="opacity: 0.6; margin-left: 10px;">' + channels.length + ' channels</small>';
+        if (!categorySelected) {
+            html += '<small style="opacity: 0.6; margin-left: 10px; font-style: italic;">Category is deselected — tick a channel or the category to include it.</small>';
+        }
         html += '</div>';
 
         channels.forEach(function (channel) {
-            const isChecked = !excluded[channel.StreamId] ? 'checked' : '';
+            const isChecked = categorySelected && !excluded[channel.StreamId] ? 'checked' : '';
             html += '<div class="checkboxContainer" style="margin: 2px 0;">';
             html += '<label class="emby-checkbox-label">';
             html += '<input is="emby-checkbox" type="checkbox" class="live-channel-cb" ';
@@ -1211,6 +1229,12 @@ const XtreamLibraryConfig = {
         panel.querySelectorAll('.live-channel-cb').forEach(function (cb) {
             cb.addEventListener('change', function () {
                 const streamId = parseInt(cb.getAttribute('data-stream-id'));
+                // Ticking a channel under a deselected category implies the user wants the
+                // category included — auto-tick the parent so the channel actually syncs.
+                if (cb.checked && categoryCb && !categoryCb.checked) {
+                    categoryCb.checked = true;
+                    self.updateLiveCategoryCounter();
+                }
                 self.updateLiveExclusion(streamId, !cb.checked);
             });
         });
@@ -1218,6 +1242,10 @@ const XtreamLibraryConfig = {
         const selectAll = panel.querySelector('.live-ch-select-all');
         if (selectAll) {
             selectAll.addEventListener('click', function () {
+                if (categoryCb && !categoryCb.checked) {
+                    categoryCb.checked = true;
+                    self.updateLiveCategoryCounter();
+                }
                 panel.querySelectorAll('.live-channel-cb').forEach(function (cb) {
                     if (!cb.checked) {
                         cb.checked = true;
