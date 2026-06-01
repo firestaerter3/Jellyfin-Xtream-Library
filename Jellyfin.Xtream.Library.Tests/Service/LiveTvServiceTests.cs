@@ -13,10 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+#pragma warning disable CS0618 // Legacy config fields exercised in regression tests for BUG-008
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using FluentAssertions;
+using Jellyfin.Xtream.Library;
 using Jellyfin.Xtream.Library.Client.Models;
 using Jellyfin.Xtream.Library.Service;
 using Xunit;
@@ -122,5 +124,88 @@ public class LiveTvServiceTests
 
         LiveTvService.ChooseCategoryFetchStrategy(LiveChannelSelectionMode.Custom, selectedCategoryCount: 47)
             .Should().Be(LiveTvService.CategoryFetchStrategy.BySelectedCategories);
+    }
+
+    // BUG-008: multi-provider configs (Providers[0] populated, legacy fields empty) used to
+    // produce m3u stream URLs shaped like "/live///{streamId}.ts" because BuildStreamUrl
+    // read the legacy single-provider fields directly. These tests pin the resolver and the
+    // two URL builders to the multi-provider data model.
+
+    [Fact]
+    public void ResolveLiveTvProvider_ProvidersPopulated_ReturnsProviderCredentials()
+    {
+        var config = new PluginConfiguration();
+        config.Providers.Add(new ProviderConfig
+        {
+            BaseUrl = "http://multi.example.com:5656",
+            Username = "multiuser",
+            Password = "multipass",
+        });
+
+        // Legacy fields left empty — represents a fresh v1.32+ install configured via the
+        // multi-provider UI.
+        var result = LiveTvService.ResolveLiveTvProvider(config);
+
+        result.BaseUrl.Should().Be("http://multi.example.com:5656");
+        result.Username.Should().Be("multiuser");
+        result.Password.Should().Be("multipass");
+    }
+
+    [Fact]
+    public void ResolveLiveTvProvider_LegacyOnly_FallsBackToLegacyFields()
+    {
+        var config = new PluginConfiguration
+        {
+            BaseUrl = "http://legacy.example.com",
+            Username = "legacyuser",
+            Password = "legacypass",
+        };
+
+        // Providers list deliberately empty — represents a config caught mid-migration.
+        var result = LiveTvService.ResolveLiveTvProvider(config);
+
+        result.BaseUrl.Should().Be("http://legacy.example.com");
+        result.Username.Should().Be("legacyuser");
+        result.Password.Should().Be("legacypass");
+    }
+
+    [Fact]
+    public void ResolveLiveTvProvider_BothPopulated_PrefersProviders()
+    {
+        var config = new PluginConfiguration
+        {
+            BaseUrl = "http://legacy.example.com",
+            Username = "legacyuser",
+            Password = "legacypass",
+        };
+        config.Providers.Add(new ProviderConfig
+        {
+            BaseUrl = "http://multi.example.com:5656",
+            Username = "multiuser",
+            Password = "multipass",
+        });
+
+        var result = LiveTvService.ResolveLiveTvProvider(config);
+
+        result.BaseUrl.Should().Be("http://multi.example.com:5656");
+        result.Username.Should().Be("multiuser");
+    }
+
+    [Fact]
+    public void BuildStreamUrl_MultiProviderOnly_UsesProviderCredentials()
+    {
+        var config = new PluginConfiguration { LiveTvOutputFormat = "ts" };
+        config.Providers.Add(new ProviderConfig
+        {
+            BaseUrl = "http://multi.example.com:5656",
+            Username = "multiuser",
+            Password = "multipass",
+        });
+
+        var channel = new LiveStreamInfo { StreamId = 2420044, Name = "X", Num = 1 };
+        var url = LiveTvService.BuildStreamUrl(config, channel);
+
+        url.Should().Be("http://multi.example.com:5656/live/multiuser/multipass/2420044.ts");
+        url.Should().NotContain("///");
     }
 }

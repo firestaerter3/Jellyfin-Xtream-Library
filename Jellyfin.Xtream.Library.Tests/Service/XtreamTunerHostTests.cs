@@ -307,6 +307,36 @@ public class XtreamTunerHostTests : IDisposable
         result[0].Path.Should().Contain("/live/testuser/testpass/100.ts");
     }
 
+    // BUG-008: when the user configured their provider via the multi-provider UI introduced in
+    // v1.32 (and never touched the legacy fields), the tuner used to emit "/live///{streamId}.ts"
+    // because BuildStreamUrl read config.BaseUrl/Username/Password directly. Pin the multi-provider
+    // path here so a regression would surface immediately.
+    [Fact]
+    public async Task GetChannelStreamMediaSources_MultiProviderOnly_UsesProviderCredentials()
+    {
+        var config = Plugin.Instance.Configuration;
+        config.BaseUrl = string.Empty;
+        config.Username = string.Empty;
+        config.Password = string.Empty;
+        config.LiveTvOutputFormat = "ts";
+
+        // Replace the default seeded provider with one whose values do not match any legacy field.
+        config.Providers.Clear();
+        config.Providers.Add(new ProviderConfig
+        {
+            BaseUrl = "http://multi.example.com:5656",
+            Username = "multiuser",
+            Password = "multipass",
+            IsEnabled = true,
+        });
+
+        var result = await _tunerHost.GetChannelStreamMediaSources("xtream_100", CancellationToken.None);
+
+        result.Should().HaveCount(1);
+        result[0].Path.Should().Be("http://multi.example.com:5656/live/multiuser/multipass/100.ts");
+        result[0].Path.Should().NotContain("///");
+    }
+
     [Fact]
     public async Task GetChannelStreamMediaSources_ReturnsEmpty_ForNonXtreamChannelId()
     {

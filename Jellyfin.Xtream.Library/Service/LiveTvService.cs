@@ -438,8 +438,9 @@ public class LiveTvService : IDisposable
 
     internal static string BuildStreamUrl(PluginConfiguration config, LiveStreamInfo channel)
     {
+        var (baseUrl, username, password) = ResolveLiveTvProvider(config);
         var extension = string.Equals(config.LiveTvOutputFormat, "ts", StringComparison.OrdinalIgnoreCase) ? "ts" : "m3u8";
-        return string.Create(CultureInfo.InvariantCulture, $"{config.BaseUrl}/live/{config.Username}/{config.Password}/{channel.StreamId}.{extension}");
+        return string.Create(CultureInfo.InvariantCulture, $"{baseUrl}/live/{username}/{password}/{channel.StreamId}.{extension}");
     }
 
     private static string BuildCatchupUrl(PluginConfiguration config, LiveStreamInfo channel)
@@ -449,7 +450,22 @@ public class LiveTvService : IDisposable
         // {start} = program start timestamp
         // {end} = program end timestamp
         // {duration} = duration in seconds
-        return string.Create(CultureInfo.InvariantCulture, $"{config.BaseUrl}/timeshift/{config.Username}/{config.Password}/{{duration}}/{{start}}/{channel.StreamId}.ts");
+        var (baseUrl, username, password) = ResolveLiveTvProvider(config);
+        return string.Create(CultureInfo.InvariantCulture, $"{baseUrl}/timeshift/{username}/{password}/{{duration}}/{{start}}/{channel.StreamId}.ts");
+    }
+
+    // Resolves credentials for the Live TV provider. Reads Providers[0] when populated
+    // (the multi-provider data model since v1.32), falling back to the legacy single-provider
+    // fields for any pre-migration config still in flight. See BUG-008 in BUGS.md.
+    internal static (string BaseUrl, string Username, string Password) ResolveLiveTvProvider(PluginConfiguration config)
+    {
+        var p = config.Providers.FirstOrDefault();
+        if (p != null && !string.IsNullOrEmpty(p.BaseUrl))
+        {
+            return (p.BaseUrl, p.Username, p.Password);
+        }
+
+        return (config.BaseUrl, config.Username, config.Password);
     }
 
     private async Task<string> GenerateXmltvAsync(List<LiveStreamInfo> channels, PluginConfiguration config, CancellationToken cancellationToken)

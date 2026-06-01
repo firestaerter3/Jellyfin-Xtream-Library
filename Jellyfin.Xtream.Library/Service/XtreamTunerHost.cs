@@ -258,8 +258,9 @@ public class XtreamTunerHost : ITunerHost
 
     private static string BuildStreamUrl(PluginConfiguration config, int streamId)
     {
+        var (baseUrl, username, password) = LiveTvService.ResolveLiveTvProvider(config);
         var extension = string.Equals(config.LiveTvOutputFormat, "ts", StringComparison.OrdinalIgnoreCase) ? "ts" : "m3u8";
-        return string.Create(CultureInfo.InvariantCulture, $"{config.BaseUrl}/live/{config.Username}/{config.Password}/{streamId}.{extension}");
+        return string.Create(CultureInfo.InvariantCulture, $"{baseUrl}/live/{username}/{password}/{streamId}.{extension}");
     }
 
     private static MediaSourceInfo CreateMediaSourceInfo(int streamId, string streamUrl, StreamStatsInfo? stats, bool isHls, ILogger logger)
