@@ -1,9 +1,21 @@
+// Copyright (C) 2024  Roland Breitschaft
 
-using System;
-using System.Reflection;
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+using FluentAssertions;
 using Jellyfin.Xtream.Library.Service;
 using Xunit;
-using FluentAssertions;
 
 namespace Jellyfin.Xtream.Library.Tests.Service;
 
@@ -19,11 +31,9 @@ public class EpgParsingTests
     [InlineData("20240522100000 -05:00", 1716390000)]
     public void TryParseXmltvTime_HandlesVariousFormats(string input, long expectedUnix)
     {
-        var method = typeof(LiveTvService).GetMethod("TryParseXmltvTime", BindingFlags.Static | BindingFlags.NonPublic);
-        var args = new object[] { input, 0L };
-        var result = (bool)method.Invoke(null, args);
+        var result = LiveTvService.TryParseXmltvTime(input, out var unixSeconds);
 
         result.Should().BeTrue();
-        ((long)args[1]).Should().Be(expectedUnix);
+        unixSeconds.Should().Be(expectedUnix);
     }
 }

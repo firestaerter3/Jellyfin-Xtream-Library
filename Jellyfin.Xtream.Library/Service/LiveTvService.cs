@@ -640,7 +640,7 @@ public class LiveTvService : IDisposable
         return written;
     }
 
-    private static bool TryParseXmltvTime(string? value, out long unixSeconds)
+    internal static bool TryParseXmltvTime(string? value, out long unixSeconds)
     {
         unixSeconds = 0;
         if (string.IsNullOrEmpty(value))
