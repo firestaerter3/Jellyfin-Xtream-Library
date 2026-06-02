@@ -849,8 +849,11 @@
                                     <span>Enable Native Tuner (faster channel switching)</span>
                                 </label>
                                 <div class="fieldDescription checkboxFieldDescription">
-                                    Registers a custom tuner type that skips FFmpeg probing, cutting channel switch time roughly in half.
-                                    After enabling, add "Xtream Library" tuner in Dashboard &rarr; Live TV &rarr; Tuner Devices.
+                                    Registers a custom tuner type that skips FFmpeg probing, cutting channel switch time roughly in half. Channels are published automatically; the tuner does not appear under Dashboard &rarr; Live TV &rarr; Tuner Devices because Jellyfin only lists tuners added through that UI.
+                                    <br><br>
+                                    <strong>Pick one tuner mode, not both.</strong> If you have also added the M3U Playlist URL below as a manual HDHomeRun tuner under Dashboard &rarr; Live TV &rarr; Tuner Devices, every channel will appear twice in the Live TV Guide. Either disable this checkbox, or remove the manually-added M3U tuner from the Dashboard.
+                                    <br><br>
+                                    Trade-off: the native tuner currently forces transcoding while the manual M3U tuner remuxes. If your provider stream and client both support direct stream, the M3U path uses less CPU.
                                 </div>
                             </div>
                             <div class="checkboxContainer checkboxContainer-withDescription">
@@ -1033,6 +1036,8 @@
                             <h3 class="sectionTitle">Setup URLs</h3>
                             <div class="fieldDescription">
                                 Add these URLs to Jellyfin's Live TV settings (Dashboard → Live TV → Add Tuner).
+                                <br>
+                                <strong>Do not also enable the Native Tuner option above</strong> — adding the M3U URL here as a manual tuner while the native tuner is active causes every channel to appear twice in the Live TV Guide.
                             </div>
                             <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="txtM3UUrl">M3U Playlist URL</label>
