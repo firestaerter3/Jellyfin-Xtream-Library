@@ -41,8 +41,12 @@ public class LiveStreamInfo
     [JsonProperty("epg_channel_id")]
     public string EpgChannelId { get; set; } = string.Empty;
 
+    // String, not long: providers return "added" as either a Unix timestamp ("1716372000")
+    // or a formatted date string ("22/05/2024 10:00:00"). The field is not read by app code
+    // (only by JSON deserialization), so the loosest type that accepts both is right here.
+    // Matches StreamInfo.Added. See GitHub #41 for the underlying provider quirk.
     [JsonProperty("added")]
-    public long Added { get; set; }
+    public string Added { get; set; } = string.Empty;
 
     [JsonProperty("category_id")]
     public int? CategoryId { get; set; }
