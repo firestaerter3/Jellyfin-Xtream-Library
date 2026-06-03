@@ -361,9 +361,10 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         Console.WriteLine($"[Xtream.Library.OrphanImport] {message}");
     }
 
-    private static PluginPageInfo CreateStatic(string name) => new()
+    private static PluginPageInfo CreateStatic(string name, bool enableInMainMenu = false) => new()
     {
         Name = name,
+        EnableInMainMenu = enableInMainMenu,
         EmbeddedResourcePath = string.Format(
             CultureInfo.InvariantCulture,
             "{0}.Configuration.Web.{1}",
@@ -376,7 +377,10 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     {
         return new[]
         {
-            CreateStatic("config.html"),
+            // EnableInMainMenu surfaces an "Xtream Library" entry directly under
+            // Dashboard → Plugins in the admin sidebar, alongside the existing
+            // Dashboard → Plugins → Xtream Library path.
+            CreateStatic("config.html", enableInMainMenu: true),
             CreateStatic("config.js"),
         };
     }

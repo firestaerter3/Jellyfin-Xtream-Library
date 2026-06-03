@@ -16,6 +16,7 @@
 #pragma warning disable CS0618 // BUG-009 tests intentionally exercise the legacy single-provider fields
 using System;
 using System.IO;
+using System.Linq;
 using FluentAssertions;
 using Jellyfin.Xtream.Library.Tests.Helpers;
 using MediaBrowser.Common.Configuration;
@@ -116,6 +117,29 @@ public class PluginTests : IDisposable
         plugin.Configuration.BaseUrl.Should().BeNullOrEmpty();
         plugin.Configuration.MovieFolderMappings.Should().BeNullOrEmpty();
         Directory.GetFiles(_tempDir).Should().NotContain(p => p.EndsWith(".bak", StringComparison.Ordinal));
+    }
+
+    // GitHub PR #36 (dwizzle204): config.html should be exposed via Jellyfin's main menu so
+    // an "Xtream Library" entry appears directly under Dashboard → Plugins in the admin
+    // sidebar. Verifies the PluginPageInfo registration shape.
+    [Fact]
+    public void GetPages_RegistersConfigPageInMainMenu()
+    {
+        var serializer = new RealXmlSerializer();
+        var plugin = new Plugin(_appPaths.Object, serializer);
+
+        var pages = plugin.GetPages().ToList();
+
+        pages.Should().ContainSingle(p => p.Name == "config.html");
+        pages.Should().ContainSingle(p => p.Name == "config.js");
+
+        var configPage = pages.Single(p => p.Name == "config.html");
+        configPage.EnableInMainMenu.Should().BeTrue();
+        configPage.EmbeddedResourcePath.Should().Be("Jellyfin.Xtream.Library.Configuration.Web.config.html");
+
+        // config.js is a script asset, not a navigable page, so it stays out of the sidebar.
+        var configJs = pages.Single(p => p.Name == "config.js");
+        configJs.EnableInMainMenu.Should().BeFalse();
     }
 
     [Fact]
