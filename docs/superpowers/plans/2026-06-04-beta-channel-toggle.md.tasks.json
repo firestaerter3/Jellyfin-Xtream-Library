@@ -1,0 +1,40 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-04-beta-channel-toggle.md",
+  "tasks": [
+    {
+      "id": 9,
+      "subject": "Task 1: Add UseBetaChannel to PluginConfiguration",
+      "status": "pending",
+      "description": "**Goal:** Persist the user's beta-channel opt-in as a single bool on the existing plugin configuration, defaulting to false.\n\n**Files:**\n- Modify: `Jellyfin.Xtream.Library/PluginConfiguration.cs`\n- Modify: `Jellyfin.Xtream.Library.Tests/PluginConfigurationTests.cs`\n\n**Acceptance Criteria:**\n- UseBetaChannel exists as bool with default false\n- XML round-trip preserves the value\n- Build succeeds with no new warnings\n\n**Verify:** `dotnet test -c Release --filter \"FullyQualifiedName~PluginConfigurationTests\"`\n\n```json:metadata\n{\"files\": [\"Jellyfin.Xtream.Library/PluginConfiguration.cs\", \"Jellyfin.Xtream.Library.Tests/PluginConfigurationTests.cs\"], \"verifyCommand\": \"dotnet test -c Release --filter \\\"FullyQualifiedName~PluginConfigurationTests\\\"\", \"acceptanceCriteria\": [\"UseBetaChannel exists as bool with default false\", \"XML round-trip preserves the value\", \"Build succeeds with no new warnings\"]}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 2: Implement BetaChannelManager pure decision logic",
+      "status": "pending",
+      "blockedBy": [9],
+      "description": "**Goal:** Land ComputeNextRepositories and StructurallyEqual as pure static methods on a new BetaChannelManager shell, with the full unit-test matrix passing.\n\n**Files:**\n- Create: `Jellyfin.Xtream.Library/Service/BetaChannelManager.cs`\n- Create: `Jellyfin.Xtream.Library.Tests/Service/BetaChannelManagerTests.cs`\n\n**Acceptance Criteria:**\n- ComputeNextRepositories matches the spec algorithm (URL match case-insensitive, append on enable when absent, remove on disable, no-op otherwise; never modifies enabled/name on existing match)\n- StructurallyEqual returns true only when arrays have identical Name+Url+Enabled triples in order\n- 11 unit tests pass\n- Class is partial in preparation for Task 3\n\n**Verify:** `dotnet test -c Release --filter \"FullyQualifiedName~BetaChannelManagerTests\"`\n\n```json:metadata\n{\"files\": [\"Jellyfin.Xtream.Library/Service/BetaChannelManager.cs\", \"Jellyfin.Xtream.Library.Tests/Service/BetaChannelManagerTests.cs\"], \"verifyCommand\": \"dotnet test -c Release --filter \\\"FullyQualifiedName~BetaChannelManagerTests\\\"\", \"acceptanceCriteria\": [\"ComputeNextRepositories matches spec algorithm\", \"StructurallyEqual returns true only when Name+Url+Enabled triples match in order\", \"11 unit tests pass\", \"Class declared partial\"]}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Task 3: Wire BetaChannelManager as IHostedService",
+      "status": "pending",
+      "blockedBy": [10],
+      "description": "**Goal:** Connect the pure logic to the live IServerConfigurationManager. The manager subscribes to Plugin.Instance.ConfigurationChanged in StartAsync, performs an initial sync, and unsubscribes in StopAsync.\n\n**Files:**\n- Create: `Jellyfin.Xtream.Library/Service/BetaChannelManager.HostedService.cs`\n- Modify: `Jellyfin.Xtream.Library/PluginServiceRegistrator.cs`\n- Modify: `Jellyfin.Xtream.Library/Jellyfin.Xtream.Library.csproj` (InternalsVisibleTo if not present)\n- Create: `Jellyfin.Xtream.Library.Tests/Service/BetaChannelManagerIntegrationTests.cs`\n\n**Acceptance Criteria:**\n- Implements IHostedService\n- StartAsync syncs + subscribes; StopAsync unsubscribes\n- SaveConfiguration called only on structural change\n- IOException/UnauthorizedAccessException caught and logged at warning level\n- Null Plugin.Instance handled gracefully\n- 4 integration tests pass\n- Registered in PluginServiceRegistrator\n- Build clean\n\n**Verify:** `dotnet test -c Release --filter \"FullyQualifiedName~BetaChannelManager\" && dotnet build -c Release`\n\n```json:metadata\n{\"files\": [\"Jellyfin.Xtream.Library/Service/BetaChannelManager.HostedService.cs\", \"Jellyfin.Xtream.Library/PluginServiceRegistrator.cs\", \"Jellyfin.Xtream.Library/Jellyfin.Xtream.Library.csproj\", \"Jellyfin.Xtream.Library.Tests/Service/BetaChannelManagerIntegrationTests.cs\"], \"verifyCommand\": \"dotnet test -c Release --filter \\\"FullyQualifiedName~BetaChannelManager\\\" && dotnet build -c Release\", \"acceptanceCriteria\": [\"Implements IHostedService\", \"StartAsync syncs + subscribes; StopAsync unsubscribes\", \"SaveConfiguration called only on structural change\", \"IOException/UnauthorizedAccessException caught and logged\", \"Null Plugin.Instance handled gracefully\", \"4 integration tests pass\", \"Registered in PluginServiceRegistrator\", \"Build clean\"]}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "Task 4: Add \"Updates\" section to config UI",
+      "status": "pending",
+      "blockedBy": [11],
+      "description": "**Goal:** Surface the new flag in the General tab as a single labeled checkbox with description text, wired into config.js's load + save paths.\n\n**Files:**\n- Modify: `Jellyfin.Xtream.Library/Configuration/Web/config.html`\n- Modify: `Jellyfin.Xtream.Library/Configuration/Web/config.js`\n\n**Acceptance Criteria:**\n- Updates section with chkUseBetaChannel checkbox visible in General tab\n- Checkbox state loads from config.UseBetaChannel\n- Save persists config.UseBetaChannel\n- Build clean\n\n**Verify:** `dotnet build -c Release` (manual visual confirmation is part of Task 5)\n\n```json:metadata\n{\"files\": [\"Jellyfin.Xtream.Library/Configuration/Web/config.html\", \"Jellyfin.Xtream.Library/Configuration/Web/config.js\"], \"verifyCommand\": \"dotnet build -c Release\", \"acceptanceCriteria\": [\"Updates section with chkUseBetaChannel checkbox in General tab\", \"Checkbox loads from config.UseBetaChannel\", \"Save persists config.UseBetaChannel\", \"Build clean\"]}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "Task 5: Manual verification on dev Jellyfin server",
+      "status": "pending",
+      "blockedBy": [12],
+      "description": "**Goal:** Confirm end-to-end behaviour on the real server: the checkbox round-trips, Jellyfin's system.xml gains/loses the beta RepositoryInfo entry, and the plugin catalog reflects the change.\n\n**Files:** None (verification only).\n\n**Acceptance Criteria:**\n- Checkbox visible and unchecked by default\n- Toggle ON adds RepositoryInfo with beta URL to system.xml\n- Restart preserves ON state\n- Catalog shows beta versions when ON\n- Toggle OFF removes RepositoryInfo from system.xml\n- Restart preserves OFF state\n\n**Verify:** Inspect system.xml on the dev server (host bind path in CLAUDE.local.md); check Dashboard → Plugins → Catalog visually.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"manual\", \"acceptanceCriteria\": [\"Checkbox visible and unchecked by default\", \"Toggle ON adds RepositoryInfo to system.xml\", \"Restart preserves ON state\", \"Catalog shows beta versions when ON\", \"Toggle OFF removes RepositoryInfo\", \"Restart preserves OFF state\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-04T00:00:00Z"
+}
