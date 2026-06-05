@@ -21,6 +21,7 @@ using MediaBrowser.Controller.LiveTv;
 using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Jellyfin.Xtream.Library;
 
@@ -42,5 +43,6 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<LiveTvService>();
         serviceCollection.AddSingleton<ITunerHost, XtreamTunerHost>();
         serviceCollection.AddSingleton<IScheduledTask, SyncLibraryTask>();
+        serviceCollection.AddHostedService<Service.BetaChannelManager>();
     }
 }

@@ -85,6 +85,17 @@ public class PluginConfiguration : BasePluginConfiguration
     public int SyncDailyMinute { get; set; }
 
     // =====================
+    // Global: Updates
+    // =====================
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the plugin's beta manifest URL
+    /// is registered in Jellyfin's plugin repository list. When true, beta
+    /// releases appear in Dashboard → Plugins → Catalog like any other plugin.
+    /// </summary>
+    public bool UseBetaChannel { get; set; }
+
+    // =====================
     // Global: Metadata
     // =====================
 

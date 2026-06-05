@@ -262,6 +262,7 @@ const XtreamLibraryConfig = {
             document.getElementById('txtSyncInterval').value = config.SyncIntervalMinutes || 60;
             document.getElementById('chkTriggerScan').checked = config.TriggerLibraryScan === true;
             document.getElementById('chkEnableMetadataLookup').checked = config.EnableMetadataLookup !== false;
+            document.getElementById('chkUseBetaChannel').checked = config.UseBetaChannel === true;
             document.getElementById('txtMetadataParallelism').value = config.MetadataParallelism || 3;
 
             // Schedule settings
@@ -335,6 +336,7 @@ const XtreamLibraryConfig = {
             config.SyncIntervalMinutes = parseInt(document.getElementById('txtSyncInterval').value) || 60;
             config.TriggerLibraryScan = document.getElementById('chkTriggerScan').checked;
             config.EnableMetadataLookup = document.getElementById('chkEnableMetadataLookup').checked;
+            config.UseBetaChannel = document.getElementById('chkUseBetaChannel').checked;
             config.MetadataParallelism = parseInt(document.getElementById('txtMetadataParallelism').value) || 3;
 
             // Schedule settings

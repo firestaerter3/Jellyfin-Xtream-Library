@@ -319,4 +319,25 @@ public class PluginConfigurationTests
 
         roundtripped.LiveChannelMode.Should().Be(LiveChannelSelectionMode.Custom);
     }
+
+    [Fact]
+    public void UseBetaChannel_DefaultsToFalse()
+    {
+        var config = new PluginConfiguration();
+        config.UseBetaChannel.Should().BeFalse();
+    }
+
+    [Fact]
+    public void UseBetaChannel_XmlRoundtrip_PreservesTrueValue()
+    {
+        var serializer = new XmlSerializer(typeof(PluginConfiguration));
+        var original = new PluginConfiguration { UseBetaChannel = true };
+
+        using var writer = new StringWriter();
+        serializer.Serialize(writer, original);
+        using var reader = new StringReader(writer.ToString());
+        var roundtripped = (PluginConfiguration)serializer.Deserialize(reader)!;
+
+        roundtripped.UseBetaChannel.Should().BeTrue();
+    }
 }
