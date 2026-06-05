@@ -36,6 +36,8 @@ public class BetaChannelManagerIntegrationTests
 
         public int SaveCount { get; private set; }
 
+        public bool ThrowOnNextSave { get; set; }
+
         public IServerApplicationPaths ApplicationPaths => throw new NotSupportedException();
 
         IApplicationPaths IConfigurationManager.CommonApplicationPaths => throw new NotSupportedException();
@@ -61,7 +63,16 @@ public class BetaChannelManagerIntegrationTests
 
         public void ReplaceConfiguration(BaseApplicationConfiguration newConfiguration) => throw new NotSupportedException();
 
-        public void SaveConfiguration() { SaveCount++; }
+        public void SaveConfiguration()
+        {
+            if (ThrowOnNextSave)
+            {
+                ThrowOnNextSave = false;
+                throw new IOException("Simulated disk error.");
+            }
+
+            SaveCount++;
+        }
 
         public void SaveConfiguration(string key, object configuration) => throw new NotSupportedException();
 
@@ -120,6 +131,23 @@ public class BetaChannelManagerIntegrationTests
 
         fake.Configuration.PluginRepositories.Should().ContainSingle(r => r.Url == BetaChannelManager.BetaRepoUrl);
         fake.SaveCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task StartAsync_SaveThrowsIOException_RollsBackInMemoryStateAndDoesNotThrow()
+    {
+        var fake = new FakeServerConfigurationManager { ThrowOnNextSave = true };
+        var manager = Build(fake);
+        manager.SetConfigurationForTesting(ConfigWith(useBeta: true));
+
+        Func<Task> act = () => manager.StartAsync(CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+        // In-memory PluginRepositories must be rolled back to the pre-Sync state so a
+        // subsequent Sync() detects the divergence and retries the save instead of
+        // treating the failed-but-still-in-memory state as already persisted.
+        fake.Configuration.PluginRepositories.Should().BeEmpty();
+        fake.SaveCount.Should().Be(0);
     }
 
     // NOTE: the actual production-side unsubscription path
