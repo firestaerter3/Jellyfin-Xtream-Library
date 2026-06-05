@@ -40,7 +40,9 @@ Jellyfin.Xtream.Library/
 │   │   └── ...
 │   └── *Converter.cs           # JSON converters for API quirks
 ├── Service/
-│   └── StrmSyncService.cs      # Core sync logic
+│   ├── StrmSyncService.cs      # Core sync logic
+│   ├── BetaChannelManager.cs   # Pure decision logic for beta repo entry
+│   └── BetaChannelManager.HostedService.cs  # IHostedService wiring
 ├── Tasks/
 │   └── SyncLibraryTask.cs      # Scheduled task wrapper
 ├── Configuration/
@@ -63,6 +65,7 @@ Jellyfin.Xtream.Library/
 - Provider credentials (BaseUrl, Username, Password)
 - Sync options (LibraryPath, SyncMovies, SyncSeries)
 - Behavior settings (SyncInterval, TriggerLibraryScan, CleanupOrphans)
+- Updates (UseBetaChannel — opt-in for pre-release versions)
 
 ### PluginServiceRegistrator.cs
 - Registers services with Jellyfin's DI container:
@@ -70,6 +73,13 @@ Jellyfin.Xtream.Library/
   - `IDispatcharrClient` → `DispatcharrClient` (HttpClient)
   - `StrmSyncService` (Singleton)
   - `IScheduledTask` → `SyncLibraryTask` (Singleton)
+  - `BetaChannelManager` (IHostedService)
+
+### BetaChannelManager
+- Two-file partial class split for testability:
+  - `BetaChannelManager.cs` holds pure decision logic — `ComputeNextRepositories` (append or remove the beta `RepositoryInfo` based on `UseBetaChannel`) and `StructurallyEqual` (Name+Url+Enabled triple comparison). No DI, no I/O, no `Plugin.Instance` access — covered by 13 unit tests.
+  - `BetaChannelManager.HostedService.cs` wires the pure logic to `IServerConfigurationManager`. `StartAsync` performs an initial reconcile and subscribes to `Plugin.Instance.ConfigurationChanged`; `StopAsync` unsubscribes. `Sync()` mutates `ServerConfiguration.PluginRepositories` and calls `SaveConfiguration()`, with `IOException`/`UnauthorizedAccessException` caught and rolled back in-memory so a transient disk error never leaves runtime state divergent from `system.xml`.
+- The beta manifest URL (`https://firestaerter3.github.io/jellyfin-plugin-repo/manifest-dev.json`) is matched URL-only and case-insensitively, so a user-renamed entry is treated as the beta entry and not duplicated.
 
 ### XtreamClient
 - HTTP client for Xtream API communication

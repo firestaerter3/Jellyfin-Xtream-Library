@@ -101,6 +101,16 @@ Then install "Xtream Library" from the plugin catalog (under General category).
    - Windows: `%APPDATA%\Jellyfin\plugins\Xtream Library\`
 3. Restart Jellyfin
 
+### Beta Channel (Opt-In)
+
+Pre-release versions ship to a separate beta channel before being promoted to stable. To opt in:
+
+1. Install the stable plugin first (steps above).
+2. Open **Dashboard → Plugins → Xtream Library → Settings → General → Updates**.
+3. Tick **Use beta channel** and click Save.
+
+Beta releases will then appear in **Dashboard → Plugins → Catalog** alongside stable versions. Untick the box to opt back out. Beta releases may contain bugs or incomplete features — opting in helps catch regressions before they reach the stable channel.
+
 ## Configuration
 
 ### Initial Setup
