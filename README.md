@@ -20,7 +20,7 @@ A Jellyfin plugin that syncs Xtream VOD, Series, and Live TV content to native J
 - **Pre-Populated Stream Stats**: Fetches codec, resolution, fps, and bitrate from provider to skip FFmpeg probing
 - **Catchup / Timeshift**: Replay past programmes with configurable catchup window (1-30 days)
 - **Channel Name Cleaning**: Strips tags like `| HD |`, `[EN]`, `UK:`, codec info, and resolution suffixes
-- **Channel Name Overrides**: Override name, number, or logo per channel (`StreamId=Name|Number|LogoUrl`)
+- **Channel Name Overrides**: Override name, number, or logo per channel (`StreamId=Name|Number|Logo`). The logo can be an http(s) URL or a local file path readable by the Jellyfin server (bind-mount the folder into the container for Docker installs).
 - **Adult Channel Filtering**: Exclude adult channels from guide and playlist
 - **Category Selection**: Filter Live TV channels by category (empty = all)
 - **Per-Channel Selection**: Expand any selected category to enable or disable individual channels
@@ -231,6 +231,7 @@ Once enabled, go to **Dashboard → Live TV** in Jellyfin — the Xtream Library
 | `/XtreamLibrary/LiveTv.m3u` | GET | M3U playlist (no auth) |
 | `/XtreamLibrary/Epg.xml` | GET | XMLTV EPG data (no auth) |
 | `/XtreamLibrary/Catchup.m3u` | GET | Catch-up channels M3U (no auth) |
+| `/XtreamLibrary/ChannelLogo/{streamId}` | GET | Serve a local-path channel override logo (no auth) |
 
 ## Scheduled Task
 

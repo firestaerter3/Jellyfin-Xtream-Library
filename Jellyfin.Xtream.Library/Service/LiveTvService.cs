@@ -42,6 +42,7 @@ public class LiveTvService : IDisposable
 {
     private readonly IXtreamClient _client;
     private readonly IServerApplicationPaths _appPaths;
+    private readonly IServerApplicationHost _appHost;
     private readonly ILogger<LiveTvService> _logger;
     private readonly SemaphoreSlim _m3uLock = new(1, 1);
     private readonly SemaphoreSlim _epgLock = new(1, 1);
@@ -60,11 +61,13 @@ public class LiveTvService : IDisposable
     /// </summary>
     /// <param name="client">The Xtream API client.</param>
     /// <param name="appPaths">The Jellyfin application paths (used to locate the channel snapshot file).</param>
+    /// <param name="appHost">The Jellyfin application host (used to resolve the server base URL for channel-logo proxy links).</param>
     /// <param name="logger">The logger instance.</param>
-    public LiveTvService(IXtreamClient client, IServerApplicationPaths appPaths, ILogger<LiveTvService> logger)
+    public LiveTvService(IXtreamClient client, IServerApplicationPaths appPaths, IServerApplicationHost appHost, ILogger<LiveTvService> logger)
     {
         _client = client;
         _appPaths = appPaths;
+        _appHost = appHost;
         _logger = logger;
     }
 
@@ -83,6 +86,16 @@ public class LiveTvService : IDisposable
         /// <summary>Fetch channels from the selected categories only.</summary>
         BySelectedCategories,
     }
+
+    /// <summary>
+    /// Resolves a channel logo value for output: local filesystem paths are rewritten to the
+    /// ChannelLogo proxy endpoint; http(s) URLs pass through. See issue #53.
+    /// </summary>
+    /// <param name="streamIcon">The channel's logo value (may be null).</param>
+    /// <param name="streamId">The channel stream ID.</param>
+    /// <returns>The logo URL to expose to Jellyfin, or null if there is no logo.</returns>
+    public string? ResolveChannelLogoUrl(string? streamIcon, int streamId)
+        => ChannelLogoResolver.ResolveDisplayUrl(streamIcon, streamId, GetServerBaseUrl());
 
     /// <summary>
     /// Gets the M3U playlist for Live TV channels.
@@ -105,7 +118,7 @@ public class LiveTvService : IDisposable
 
             _logger.LogInformation("Generating M3U playlist");
             var channels = await GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
-            var m3u = GenerateM3U(channels, config, catchupOnly: false);
+            var m3u = GenerateM3U(channels, config, catchupOnly: false, GetServerBaseUrl());
 
             _cachedM3U = m3u;
             _m3uCacheTime = DateTime.UtcNow;
@@ -138,7 +151,7 @@ public class LiveTvService : IDisposable
 
             _logger.LogInformation("Generating Catchup M3U playlist");
             var channels = await GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
-            var m3u = GenerateM3U(channels, config, catchupOnly: true);
+            var m3u = GenerateM3U(channels, config, catchupOnly: true, GetServerBaseUrl());
 
             _cachedCatchupM3U = m3u;
             _catchupCacheTime = DateTime.UtcNow;
@@ -171,7 +184,7 @@ public class LiveTvService : IDisposable
 
             _logger.LogInformation("Generating XMLTV EPG");
             var channels = await GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
-            var epgXml = await GenerateXmltvAsync(channels, config, cancellationToken).ConfigureAwait(false);
+            var epgXml = await GenerateXmltvAsync(channels, config, GetServerBaseUrl(), cancellationToken).ConfigureAwait(false);
 
             _cachedEpgXml = epgXml;
             _epgCacheTime = DateTime.UtcNow;
@@ -233,6 +246,24 @@ public class LiveTvService : IDisposable
         finally
         {
             _snapshotLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Gets the server base URL used to build channel-logo proxy links. Channel images are
+    /// fetched server-side, so the loopback/LAN URL is sufficient and is stable across requests
+    /// (keeping the cached M3U/EPG coherent). Returns an empty string if it cannot be resolved.
+    /// </summary>
+    private string GetServerBaseUrl()
+    {
+        try
+        {
+            return _appHost.GetApiUrlForLocalAccess(System.Net.IPAddress.Loopback, false) ?? string.Empty;
+        }
+        catch (System.Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not resolve server base URL for channel logo proxy");
+            return string.Empty;
         }
     }
 
@@ -383,7 +414,7 @@ public class LiveTvService : IDisposable
         return channels.Where(c => !excluded.Contains(c.StreamId)).ToList();
     }
 
-    private static string GenerateM3U(List<LiveStreamInfo> channels, PluginConfiguration config, bool catchupOnly)
+    private static string GenerateM3U(List<LiveStreamInfo> channels, PluginConfiguration config, bool catchupOnly, string baseUrl)
     {
         var sb = new StringBuilder();
         sb.AppendLine("#EXTM3U");
@@ -407,9 +438,10 @@ public class LiveTvService : IDisposable
             extinf.Append(CultureInfo.InvariantCulture, $" tvg-name=\"{EscapeAttribute(cleanName)}\"");
             extinf.Append(CultureInfo.InvariantCulture, $" tvg-chno=\"{channel.Num}\"");
 
-            if (!string.IsNullOrEmpty(channel.StreamIcon))
+            var logoUrl = ChannelLogoResolver.ResolveDisplayUrl(channel.StreamIcon, channel.StreamId, baseUrl);
+            if (!string.IsNullOrEmpty(logoUrl))
             {
-                extinf.Append(CultureInfo.InvariantCulture, $" tvg-logo=\"{EscapeAttribute(channel.StreamIcon)}\"");
+                extinf.Append(CultureInfo.InvariantCulture, $" tvg-logo=\"{EscapeAttribute(logoUrl)}\"");
             }
 
             // Add catch-up attributes if enabled and channel supports it
@@ -468,7 +500,7 @@ public class LiveTvService : IDisposable
         return (config.BaseUrl, config.Username, config.Password);
     }
 
-    private async Task<string> GenerateXmltvAsync(List<LiveStreamInfo> channels, PluginConfiguration config, CancellationToken cancellationToken)
+    private async Task<string> GenerateXmltvAsync(List<LiveStreamInfo> channels, PluginConfiguration config, string baseUrl, CancellationToken cancellationToken)
     {
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
@@ -486,9 +518,10 @@ public class LiveTvService : IDisposable
 
             sb.Append(CultureInfo.InvariantCulture, $"  <channel id=\"{EscapeXml(channelId)}\">\n");
             sb.Append(CultureInfo.InvariantCulture, $"    <display-name>{EscapeXml(cleanName)}</display-name>\n");
-            if (!string.IsNullOrEmpty(channel.StreamIcon))
+            var iconUrl = ChannelLogoResolver.ResolveDisplayUrl(channel.StreamIcon, channel.StreamId, baseUrl);
+            if (!string.IsNullOrEmpty(iconUrl))
             {
-                sb.Append(CultureInfo.InvariantCulture, $"    <icon src=\"{EscapeXml(channel.StreamIcon)}\" />\n");
+                sb.Append(CultureInfo.InvariantCulture, $"    <icon src=\"{EscapeXml(iconUrl)}\" />\n");
             }
 
             sb.AppendLine("  </channel>");

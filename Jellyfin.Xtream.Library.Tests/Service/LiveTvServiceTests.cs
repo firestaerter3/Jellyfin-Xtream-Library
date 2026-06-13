@@ -19,14 +19,44 @@ using System.Collections.Generic;
 using System.Linq;
 using FluentAssertions;
 using Jellyfin.Xtream.Library;
+using Jellyfin.Xtream.Library.Client;
 using Jellyfin.Xtream.Library.Client.Models;
 using Jellyfin.Xtream.Library.Service;
+using MediaBrowser.Controller;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Xunit;
 
 namespace Jellyfin.Xtream.Library.Tests.Service;
 
 public class LiveTvServiceTests
 {
+    private readonly LiveTvService _service;
+
+    public LiveTvServiceTests()
+    {
+        var clientMock = new Mock<IXtreamClient>();
+        var appPathsMock = new Mock<IServerApplicationPaths>();
+        appPathsMock.Setup(p => p.DataPath).Returns("/tmp");
+        var appHostMock = new Mock<IServerApplicationHost>();
+        appHostMock.Setup(h => h.GetApiUrlForLocalAccess(It.IsAny<System.Net.IPAddress>(), It.IsAny<bool>()))
+            .Returns("http://127.0.0.1:8096");
+        _service = new LiveTvService(clientMock.Object, appPathsMock.Object, appHostMock.Object, NullLogger<LiveTvService>.Instance);
+    }
+
+    [Fact]
+    public void ResolveChannelLogoUrl_LocalPath_ReturnsProxyUrl()
+    {
+        _service.ResolveChannelLogoUrl("/share/logo.png", 7)
+            .Should().Be("http://127.0.0.1:8096/XtreamLibrary/ChannelLogo/7");
+    }
+
+    [Fact]
+    public void ResolveChannelLogoUrl_HttpUrl_Unchanged()
+    {
+        _service.ResolveChannelLogoUrl("http://x/y.png", 7).Should().Be("http://x/y.png");
+    }
+
     private static List<LiveStreamInfo> MakeChannels(params int[] streamIds) =>
         streamIds.Select(id => new LiveStreamInfo
         {
