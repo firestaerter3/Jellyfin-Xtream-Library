@@ -271,6 +271,67 @@ public class LiveTvController : ControllerBase
         return Ok(new { Success = true, Message = "Live TV cache invalidated." });
     }
 
+    /// <summary>
+    /// Serves the local logo file configured for a channel via Channel Overrides (issue #53).
+    /// Only paths that an administrator configured server-side are served; the request carries
+    /// only the stream ID, so there is no path-traversal surface.
+    /// </summary>
+    /// <param name="streamId">The channel stream ID.</param>
+    /// <returns>The image file, or 404 if there is no local-path override logo for the channel.</returns>
+    [HttpGet("ChannelLogo/{streamId:int}")]
+    [AllowAnonymous]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public IActionResult GetChannelLogo([FromRoute] int streamId)
+    {
+        var config = Plugin.Instance?.Configuration;
+        if (config == null)
+        {
+            return NotFound();
+        }
+
+        var overrides = ChannelOverrideParser.Parse(config.ChannelOverrides);
+        if (!overrides.TryGetValue(streamId, out var channelOverride)
+            || string.IsNullOrEmpty(channelOverride.LogoUrl)
+            || !ChannelLogoResolver.IsLocalPath(channelOverride.LogoUrl))
+        {
+            return NotFound();
+        }
+
+        var path = channelOverride.LogoUrl;
+
+        // file:// scheme support — convert to a filesystem path.
+        if (path.StartsWith("file://", System.StringComparison.OrdinalIgnoreCase)
+            && System.Uri.TryCreate(path, System.UriKind.Absolute, out var fileUri))
+        {
+            path = fileUri.LocalPath;
+        }
+
+        if (!System.IO.Path.IsPathRooted(path) || !System.IO.File.Exists(path))
+        {
+            _logger.LogWarning("Channel logo file not found for stream {StreamId}: {Path}", streamId, path);
+            return NotFound();
+        }
+
+        var contentType = GetImageContentType(path);
+        return PhysicalFile(path, contentType);
+    }
+
+    private static string GetImageContentType(string path)
+    {
+        var ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
+        return ext switch
+        {
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".gif" => "image/gif",
+            ".webp" => "image/webp",
+            ".bmp" => "image/bmp",
+            ".svg" => "image/svg+xml",
+            _ => "application/octet-stream",
+        };
+    }
+
     private static bool HasProviderCredentials(PluginConfiguration config)
     {
         var provider = config.Providers.FirstOrDefault();
