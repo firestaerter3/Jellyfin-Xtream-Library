@@ -122,6 +122,8 @@ git push
 | `/XtreamLibrary/Categories/Series` | GET | Fetch Series categories |
 | `/XtreamLibrary/Categories/Live` | GET | Fetch Live TV categories |
 | `/XtreamLibrary/Channels/Live` | GET | Fetch channels in a Live TV category (`?categoryId=`) |
+| `/XtreamLibrary/Streams/Vod` | GET | Fetch movies in a VOD category (`?categoryId=&providerIndex=`) |
+| `/XtreamLibrary/Series/List` | GET | Fetch series in a Series category (`?categoryId=&providerIndex=`) |
 | `/XtreamLibrary/RetryFailed` | POST | Retry failed items from last sync |
 | `/XtreamLibrary/CleanMovies` | POST | Delete all Movies library content |
 | `/XtreamLibrary/CleanSeries` | POST | Delete all Series library content |

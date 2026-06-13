@@ -320,4 +320,22 @@ public class SyncControllerTests
     }
 
     #endregion
+
+    #region Category Item Listing Tests
+
+    [Fact]
+    public async Task GetVodStreams_NoProviderConfigured_ReturnsBadRequest()
+    {
+        var result = await _controller.GetVodStreams(categoryId: 1);
+        result.Result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task GetSeriesList_NoProviderConfigured_ReturnsBadRequest()
+    {
+        var result = await _controller.GetSeriesList(categoryId: 1);
+        result.Result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    #endregion
 }
