@@ -113,6 +113,14 @@ public class PluginConfigurationTests
         provider.FallbackToYearlessLookup.Should().BeFalse();
     }
 
+    [Fact]
+    public void ProviderConfig_ExclusionArrays_DefaultToEmpty()
+    {
+        var provider = new ProviderConfig();
+        provider.ExcludedVodStreamIds.Should().BeEmpty();
+        provider.ExcludedSeriesIds.Should().BeEmpty();
+    }
+
     // =====================
     // PluginConfiguration validation (global fields)
     // =====================
