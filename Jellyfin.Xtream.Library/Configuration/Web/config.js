@@ -1471,10 +1471,14 @@ const XtreamLibraryConfig = {
         panel.querySelectorAll('.content-item-cb').forEach(function (cb) {
             cb.addEventListener('change', function () {
                 const itemId = parseInt(cb.getAttribute('data-item-id'));
+                self.updateContentExclusion(type, itemId, !cb.checked);
+                // Ticking an item under a deselected category implies the user wants the
+                // category included — auto-tick the parent and redraw the panel so the
+                // "category deselected" hint clears and sibling items reflect the new state.
                 if (cb.checked && categoryCb && !categoryCb.checked) {
                     categoryCb.checked = true;
+                    self.renderContentItems(type, categoryId);
                 }
-                self.updateContentExclusion(type, itemId, !cb.checked);
             });
         });
 
@@ -1538,6 +1542,10 @@ const XtreamLibraryConfig = {
             self.excludedLiveStreamIds = [];
             self.redrawExpandedLiveChannelPanels();
             self.updateLiveCategoryCounter();
+        } else if (type === 'vod' || type === 'series') {
+            // Same clean-slate logic as Live TV: clear per-item exclusions and redraw any
+            // expanded panels so the item checkboxes follow the now-selected categories.
+            self.clearContentExclusions(type);
         }
     },
 
@@ -1554,7 +1562,29 @@ const XtreamLibraryConfig = {
             self.excludedLiveStreamIds = [];
             self.redrawExpandedLiveChannelPanels();
             self.updateLiveCategoryCounter();
+        } else if (type === 'vod' || type === 'series') {
+            self.clearContentExclusions(type);
         }
+    },
+
+    clearContentExclusions: function (type) {
+        const self = this;
+        if (type === 'vod') {
+            self.excludedVodStreamIds = [];
+        } else {
+            self.excludedSeriesIds = [];
+        }
+        self.redrawExpandedContentItemPanels(type);
+    },
+
+    redrawExpandedContentItemPanels: function (type) {
+        const self = this;
+        const expanded = self.expandedContentCategories[type] || {};
+        Object.keys(expanded).forEach(function (categoryId) {
+            if (expanded[categoryId] && self.contentItemsByCategory[type][categoryId]) {
+                self.renderContentItems(type, parseInt(categoryId));
+            }
+        });
     },
 
     clearChannelExclusions: function () {
