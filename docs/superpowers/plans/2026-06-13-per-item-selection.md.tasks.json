@@ -37,7 +37,7 @@
     {
       "id": 6,
       "subject": "Task 6: Version bump, docs, changelog, full verification",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2, 5],
       "description": "Bump version to 1.37.0.0; document feature in README/ARCHITECTURE; full build+test; release is user-gated.\n\n```json:metadata\n{\"files\": [\"Jellyfin.Xtream.Library/Jellyfin.Xtream.Library.csproj\", \"README.md\", \"docs/ARCHITECTURE.md\", \"docs/REQUIREMENTS.md\"], \"verifyCommand\": \"dotnet build -c Release && dotnet test -c Release\", \"acceptanceCriteria\": [\"Build warning-clean\", \"Full test suite passes\", \"Version 1.37.0.0 in both fields\", \"README documents per-item selection\"]}\n```"
     }
