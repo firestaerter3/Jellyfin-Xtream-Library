@@ -20,6 +20,14 @@ const XtreamLibraryConfig = {
     // Track which Live TV categories are currently expanded in the UI
     expandedLiveCategories: {},
 
+    // Per-item VOD/Series exclusions (item IDs unchecked under their category) — per active provider
+    excludedVodStreamIds: [],
+    excludedSeriesIds: [],
+    // Session cache of items per category, keyed by type then category id (not persisted)
+    contentItemsByCategory: { vod: {}, series: {} },
+    // Track which VOD/Series categories are currently expanded in the UI, keyed by type
+    expandedContentCategories: { vod: {}, series: {} },
+
     // Folder definitions for multi-folder mode
     // Each entry: { name: 'FolderName', categoryIds: [1, 2, 3] }
     vodFolderDefinitions: [],
@@ -45,6 +53,8 @@ const XtreamLibraryConfig = {
             SyncSeries: true,
             SelectedVodCategoryIds: [],
             SelectedSeriesCategoryIds: [],
+            ExcludedVodStreamIds: [],
+            ExcludedSeriesIds: [],
             MovieFolderMode: 'Single',
             SeriesFolderMode: 'Single',
             MovieFolderMappings: '',
@@ -107,6 +117,10 @@ const XtreamLibraryConfig = {
 
         self.selectedVodCategoryIds = p.SelectedVodCategoryIds || [];
         self.selectedSeriesCategoryIds = p.SelectedSeriesCategoryIds || [];
+        self.excludedVodStreamIds = p.ExcludedVodStreamIds || [];
+        self.excludedSeriesIds = p.ExcludedSeriesIds || [];
+        self.contentItemsByCategory = { vod: {}, series: {} };
+        self.expandedContentCategories = { vod: {}, series: {} };
 
         document.getElementById('txtTmdbFolderIdOverrides').value = p.TmdbFolderIdOverrides || '';
         document.getElementById('txtTvdbFolderIdOverrides').value = p.TvdbFolderIdOverrides || '';
@@ -195,6 +209,10 @@ const XtreamLibraryConfig = {
             p.SelectedSeriesCategoryIds = this.getAllCategoryIdsFromFolders('series');
             p.SeriesFolderMappings = this.buildFolderMappings(this.seriesFolderDefinitions);
         }
+
+        // Persist per-item exclusions regardless of folder mode (empty = sync everything).
+        p.ExcludedVodStreamIds = this.excludedVodStreamIds.slice();
+        p.ExcludedSeriesIds = this.excludedSeriesIds.slice();
 
         p.TmdbFolderIdOverrides = document.getElementById('txtTmdbFolderIdOverrides').value;
         p.TvdbFolderIdOverrides = document.getElementById('txtTvdbFolderIdOverrides').value;
