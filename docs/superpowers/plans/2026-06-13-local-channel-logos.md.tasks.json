@@ -37,7 +37,7 @@
     {
       "id": 12,
       "subject": "Task 6 (#53): Version bump + full verification",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [8, 10, 11],
       "description": "Bump to 1.38.0.0; full build+test; release user-gated.\n\n```json:metadata\n{\"files\": [\"Jellyfin.Xtream.Library/Jellyfin.Xtream.Library.csproj\"], \"verifyCommand\": \"dotnet build -c Release && dotnet test -c Release\", \"acceptanceCriteria\": [\"build warning-clean\", \"full suite passes\", \"version 1.38.0.0 both fields\"]}\n```"
     }
