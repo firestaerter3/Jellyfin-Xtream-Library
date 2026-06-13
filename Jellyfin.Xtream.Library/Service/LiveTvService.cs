@@ -184,7 +184,7 @@ public class LiveTvService : IDisposable
 
             _logger.LogInformation("Generating XMLTV EPG");
             var channels = await GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
-            var epgXml = await GenerateXmltvAsync(channels, config, cancellationToken).ConfigureAwait(false);
+            var epgXml = await GenerateXmltvAsync(channels, config, GetServerBaseUrl(), cancellationToken).ConfigureAwait(false);
 
             _cachedEpgXml = epgXml;
             _epgCacheTime = DateTime.UtcNow;
@@ -500,7 +500,7 @@ public class LiveTvService : IDisposable
         return (config.BaseUrl, config.Username, config.Password);
     }
 
-    private async Task<string> GenerateXmltvAsync(List<LiveStreamInfo> channels, PluginConfiguration config, CancellationToken cancellationToken)
+    private async Task<string> GenerateXmltvAsync(List<LiveStreamInfo> channels, PluginConfiguration config, string baseUrl, CancellationToken cancellationToken)
     {
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
@@ -518,7 +518,7 @@ public class LiveTvService : IDisposable
 
             sb.Append(CultureInfo.InvariantCulture, $"  <channel id=\"{EscapeXml(channelId)}\">\n");
             sb.Append(CultureInfo.InvariantCulture, $"    <display-name>{EscapeXml(cleanName)}</display-name>\n");
-            var iconUrl = ChannelLogoResolver.ResolveDisplayUrl(channel.StreamIcon, channel.StreamId, GetServerBaseUrl());
+            var iconUrl = ChannelLogoResolver.ResolveDisplayUrl(channel.StreamIcon, channel.StreamId, baseUrl);
             if (!string.IsNullOrEmpty(iconUrl))
             {
                 sb.Append(CultureInfo.InvariantCulture, $"    <icon src=\"{EscapeXml(iconUrl)}\" />\n");
