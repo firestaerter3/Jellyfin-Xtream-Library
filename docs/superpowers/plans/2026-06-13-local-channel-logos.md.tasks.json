@@ -4,34 +4,34 @@
     {
       "id": 7,
       "subject": "Task 1 (#53): ChannelLogoResolver helper",
-      "status": "pending",
+      "status": "completed",
       "description": "Internal static ChannelLogoResolver (LogoRoute const, IsLocalPath, ResolveDisplayUrl) + tests.\n\n```json:metadata\n{\"files\": [\"Jellyfin.Xtream.Library/Service/ChannelLogoResolver.cs\", \"Jellyfin.Xtream.Library.Tests/Service/ChannelLogoResolverTests.cs\"], \"verifyCommand\": \"dotnet test -c Release --filter \\\"FullyQualifiedName~ChannelLogoResolverTests\\\"\", \"acceptanceCriteria\": [\"IsLocalPath classifies http/local/null/empty\", \"ResolveDisplayUrl proxies local, passes http, handles trailing slash/null/empty\"]}\n```"
     },
     {
       "id": 8,
       "subject": "Task 2 (#53): ChannelLogo proxy endpoint",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [7],
       "description": "GET ChannelLogo/{streamId} in LiveTvController serves local override logo file; 404 otherwise. + CLAUDE.md row + tests.\n\n```json:metadata\n{\"files\": [\"Jellyfin.Xtream.Library/Api/LiveTvController.cs\", \"Jellyfin.Xtream.Library.Tests/Api/LiveTvControllerTests.cs\", \"CLAUDE.md\"], \"verifyCommand\": \"dotnet build -c Release && dotnet test -c Release --filter \\\"FullyQualifiedName~LiveTvControllerTests\\\"\", \"acceptanceCriteria\": [\"no override → NotFound\", \"http logo → NotFound\", \"existing local path → file+content-type\", \"missing path → NotFound\", \"warning-clean\"]}\n```"
     },
     {
       "id": 9,
       "subject": "Task 3 (#53): Rewrite local logos in M3U + XMLTV",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [7],
       "description": "LiveTvService: inject IServerApplicationHost; rewrite tvg-logo/icon to proxy URL; expose ResolveChannelLogoUrl; update 3 test ctor sites; LiveTvServiceTests.\n\n```json:metadata\n{\"files\": [\"Jellyfin.Xtream.Library/Service/LiveTvService.cs\", \"Jellyfin.Xtream.Library.Tests/Api/SyncControllerTests.cs\", \"Jellyfin.Xtream.Library.Tests/Service/XtreamTunerHostTests.cs\", \"Jellyfin.Xtream.Library.Tests/Service/LiveTvServiceTests.cs\"], \"verifyCommand\": \"dotnet build -c Release && dotnet test -c Release --filter \\\"FullyQualifiedName~LiveTvServiceTests|FullyQualifiedName~SyncControllerTests|FullyQualifiedName~XtreamTunerHostTests\\\"\", \"acceptanceCriteria\": [\"ctor takes IServerApplicationHost\", \"M3U+XMLTV proxy local logos\", \"ResolveChannelLogoUrl works\", \"existing tests pass\"]}\n```"
     },
     {
       "id": 10,
       "subject": "Task 4 (#53): Rewrite native tuner ImageUrl",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [9],
       "description": "XtreamTunerHost ImageUrl uses _liveTvService.ResolveChannelLogoUrl; tuner tests.\n\n```json:metadata\n{\"files\": [\"Jellyfin.Xtream.Library/Service/XtreamTunerHost.cs\", \"Jellyfin.Xtream.Library.Tests/Service/XtreamTunerHostTests.cs\"], \"verifyCommand\": \"dotnet build -c Release && dotnet test -c Release --filter \\\"FullyQualifiedName~XtreamTunerHostTests\\\"\", \"acceptanceCriteria\": [\"local → proxy ImageUrl\", \"http unchanged\", \"empty → null\", \"existing tuner tests pass\"]}\n```"
     },
     {
       "id": 11,
       "subject": "Task 5 (#53): Config UI help text + docs",
-      "status": "pending",
+      "status": "completed",
       "description": "config.html Channel Overrides help text + placeholder; README + ARCHITECTURE notes.\n\n```json:metadata\n{\"files\": [\"Jellyfin.Xtream.Library/Configuration/Web/config.html\", \"README.md\", \"docs/ARCHITECTURE.md\"], \"verifyCommand\": \"manual: render config.html help text\", \"acceptanceCriteria\": [\"help text documents local path + server-readable caveat\", \"README mentions local logos\", \"no PII\"]}\n```"
     },
     {
