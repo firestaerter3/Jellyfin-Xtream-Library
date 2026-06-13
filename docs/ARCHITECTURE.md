@@ -150,8 +150,9 @@ REST API for manual operations:
 | `/XtreamLibrary/Categories/Series` | GET | Fetch Series categories from provider |
 | `/XtreamLibrary/Streams/Vod` | GET | Fetch movies in a VOD category (for per-item selection UI) |
 | `/XtreamLibrary/Series/List` | GET | Fetch series in a Series category (for per-item selection UI) |
+| `/XtreamLibrary/ChannelLogo/{streamId}` | GET | Serve a local-path channel override logo (anonymous) |
 
-All endpoints require admin authorization (`RequiresElevation` policy).
+Most endpoints require admin authorization (`RequiresElevation` policy). The Live TV playlist/EPG endpoints (`LiveTv.m3u`, `Epg.xml`, `Catchup.m3u`) and `ChannelLogo/{streamId}` are anonymous so external players and the server's own image fetcher can reach them. `ChannelLogo` resolves a local-path channel override logo (via `ChannelLogoResolver`) and serves the file; the request carries only a stream ID, so no filesystem path is taken from the caller.
 
 ### SyncLibraryTask
 Jellyfin scheduled task wrapper:
