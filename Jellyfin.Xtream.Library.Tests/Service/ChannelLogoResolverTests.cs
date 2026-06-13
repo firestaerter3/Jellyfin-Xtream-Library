@@ -62,6 +62,13 @@ public class ChannelLogoResolverTests
     }
 
     [Fact]
+    public void ResolveDisplayUrl_EmptyIcon_ReturnsNull()
+    {
+        // "no logo" normalizes to null so consumers (tuner ImageUrl) get null, not "".
+        ChannelLogoResolver.ResolveDisplayUrl(string.Empty, 5, "http://h").Should().BeNull();
+    }
+
+    [Fact]
     public void ResolveDisplayUrl_LocalPath_EmptyBaseUrl_ReturnsOriginal()
     {
         // Defensive: if the server URL can't be determined, don't emit a broken proxy URL.

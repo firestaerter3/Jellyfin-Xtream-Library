@@ -138,7 +138,7 @@ public class XtreamTunerHost : ITunerHost
                 Id = ChannelIdPrefix + channel.StreamId.ToString(CultureInfo.InvariantCulture),
                 Name = cleanName,
                 Number = channelNumber,
-                ImageUrl = string.IsNullOrEmpty(channel.StreamIcon) ? null : channel.StreamIcon,
+                ImageUrl = _liveTvService.ResolveChannelLogoUrl(channel.StreamIcon, channel.StreamId),
                 ChannelType = ChannelType.TV,
                 TunerHostId = Type,
             };

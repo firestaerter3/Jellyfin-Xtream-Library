@@ -55,12 +55,12 @@ internal static class ChannelLogoResolver
     /// <param name="icon">The configured logo value (may be null).</param>
     /// <param name="streamId">The channel stream ID.</param>
     /// <param name="baseUrl">The server base URL (no path), e.g. <c>http://127.0.0.1:8096</c>.</param>
-    /// <returns>The resolved logo URL, or null if <paramref name="icon"/> is null/empty.</returns>
+    /// <returns>The resolved logo URL, or null if <paramref name="icon"/> is null/empty/whitespace.</returns>
     public static string? ResolveDisplayUrl(string? icon, int streamId, string baseUrl)
     {
         if (string.IsNullOrWhiteSpace(icon))
         {
-            return icon;
+            return null;
         }
 
         if (!IsLocalPath(icon) || string.IsNullOrEmpty(baseUrl))

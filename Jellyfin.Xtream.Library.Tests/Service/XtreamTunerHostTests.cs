@@ -161,6 +161,13 @@ public class XtreamTunerHostTests : IDisposable
                 Num = 2,
                 StreamIcon = string.Empty,
             },
+            new LiveStreamInfo
+            {
+                StreamId = 300,
+                Name = "Fox",
+                Num = 3,
+                StreamIcon = "/share/logos/fox.png",
+            },
         };
 
         _mockClient
@@ -169,7 +176,7 @@ public class XtreamTunerHostTests : IDisposable
 
         var result = await _tunerHost.GetChannels(false, CancellationToken.None);
 
-        result.Should().HaveCount(2);
+        result.Should().HaveCount(3);
 
         result[0].Id.Should().Be("xtream_100");
         result[0].Name.Should().Be("BBC One");
@@ -180,6 +187,10 @@ public class XtreamTunerHostTests : IDisposable
         result[1].Name.Should().Be("CNN");
         result[1].Number.Should().Be("2");
         result[1].ImageUrl.Should().BeNull();
+
+        // Local-path logo is rewritten to the ChannelLogo proxy endpoint (issue #53).
+        result[2].Id.Should().Be("xtream_300");
+        result[2].ImageUrl.Should().Be("http://127.0.0.1:8096/XtreamLibrary/ChannelLogo/300");
     }
 
     #endregion
