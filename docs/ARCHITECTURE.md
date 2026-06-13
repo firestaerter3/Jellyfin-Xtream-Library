@@ -64,6 +64,7 @@ Jellyfin.Xtream.Library/
 - Persisted configuration model
 - Provider credentials (BaseUrl, Username, Password)
 - Sync options (LibraryPath, SyncMovies, SyncSeries)
+- Category selection (SelectedVodCategoryIds, SelectedSeriesCategoryIds) and per-item exclusions (ExcludedVodStreamIds, ExcludedSeriesIds) — per-provider on ProviderConfig
 - Behavior settings (SyncInterval, TriggerLibraryScan, CleanupOrphans)
 - Updates (UseBetaChannel — opt-in for pre-release versions)
 
@@ -147,6 +148,8 @@ REST API for manual operations:
 | `/XtreamLibrary/TestConnection` | POST | Verify provider connection |
 | `/XtreamLibrary/Categories/Vod` | GET | Fetch VOD categories from provider |
 | `/XtreamLibrary/Categories/Series` | GET | Fetch Series categories from provider |
+| `/XtreamLibrary/Streams/Vod` | GET | Fetch movies in a VOD category (for per-item selection UI) |
+| `/XtreamLibrary/Series/List` | GET | Fetch series in a Series category (for per-item selection UI) |
 
 All endpoints require admin authorization (`RequiresElevation` policy).
 
@@ -176,6 +179,7 @@ Jellyfin scheduled task wrapper:
          │      │
          │      └─▶ For each selected category:
          │           └─▶ XtreamClient.GetVodStreamsByCategoryAsync()
+         │                └─▶ Skip streams in ExcludedVodStreamIds (ContentExclusionFilter)
          │                └─▶ Create folder + Write STRM file
          │
          ├──▶ SyncSeriesAsync()
@@ -186,6 +190,7 @@ Jellyfin scheduled task wrapper:
          │      │
          │      └─▶ For each selected category:
          │           └─▶ XtreamClient.GetSeriesByCategoryAsync()
+         │                └─▶ Skip series in ExcludedSeriesIds (ContentExclusionFilter)
          │                └─▶ For each series:
          │                     └─▶ XtreamClient.GetSeriesStreamsBySeriesAsync()
          │                          └─▶ Create season folders + Write STRM files

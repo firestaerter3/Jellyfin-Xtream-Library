@@ -28,6 +28,7 @@ A Jellyfin plugin that syncs Xtream VOD, Series, and Live TV content to native J
 
 ### Sync Options
 - **Category Filtering**: Select specific VOD, Series, and Live TV categories to sync
+- **Per-Item Selection**: Expand any Movie or Series category (Single folder mode) to enable or disable individual titles, the same way Live TV lets you pick individual channels
 - **Shift+Click Selection**: Quickly select ranges of categories
 - **Incremental Sync**: Only fetches changed content after the first full sync (delta-based with checksums)
 - **Parallel Sync**: Configurable parallelism (1-20 concurrent requests)
@@ -130,6 +131,7 @@ Beta releases will then appear in **Dashboard → Plugins → Catalog** alongsid
 2. Click **Load Categories**
 3. Check the categories you want to sync (shift+click for ranges)
 4. Leave all unchecked to sync everything
+5. Optionally, expand any selected category with the ▸ toggle to enable or disable individual movies or series (all enabled by default). Unticked titles are skipped, and removed on the next sync if they already exist. Per-item selection is available in Single folder mode.
 
 ### Folder Organization (Optional)
 
@@ -220,6 +222,8 @@ Once enabled, go to **Dashboard → Live TV** in Jellyfin — the Xtream Library
 | `/XtreamLibrary/Categories/Series` | GET | Fetch Series categories |
 | `/XtreamLibrary/Categories/Live` | GET | Fetch Live TV categories |
 | `/XtreamLibrary/Channels/Live` | GET | Fetch channels in a Live TV category (`?categoryId=`) |
+| `/XtreamLibrary/Streams/Vod` | GET | Fetch movies in a VOD category (`?categoryId=&providerIndex=`) |
+| `/XtreamLibrary/Series/List` | GET | Fetch series in a Series category (`?categoryId=&providerIndex=`) |
 | `/XtreamLibrary/CleanMovies` | POST | Delete all Movies library content |
 | `/XtreamLibrary/CleanSeries` | POST | Delete all Series library content |
 | `/XtreamLibrary/ClearMetadataCache` | POST | Clear metadata lookup cache |

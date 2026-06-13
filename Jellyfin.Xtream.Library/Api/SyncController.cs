@@ -447,6 +447,102 @@ public class SyncController : ControllerBase
     }
 
     /// <summary>
+    /// Gets all VOD (movie) items within a category.
+    /// </summary>
+    /// <param name="categoryId">The VOD category ID.</param>
+    /// <param name="providerIndex">Zero-based provider index (default: 0).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>List of movies in the category.</returns>
+    [HttpGet("Streams/Vod")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<IEnumerable<ContentItemDto>>> GetVodStreams(
+        [FromQuery] int categoryId,
+        [FromQuery] int providerIndex = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var config = TryGetConfig();
+        if (config == null)
+        {
+            return BadRequest("Plugin not initialized.");
+        }
+
+        var provider = config.Providers.ElementAtOrDefault(providerIndex);
+        if (provider == null || string.IsNullOrEmpty(provider.BaseUrl) || string.IsNullOrEmpty(provider.Username))
+        {
+            return BadRequest("Provider credentials not configured.");
+        }
+
+        try
+        {
+            var connectionInfo = new Client.ConnectionInfo(provider.BaseUrl, provider.Username, provider.Password ?? string.Empty);
+            var streams = await _client.GetVodStreamsByCategoryAsync(connectionInfo, categoryId, cancellationToken).ConfigureAwait(false);
+
+            var result = streams.Select(s => new ContentItemDto
+            {
+                StreamId = s.StreamId,
+                Num = s.Num,
+                Name = s.Name,
+            }).OrderBy(s => s.Num).ThenBy(s => s.Name);
+
+            return Ok(result);
+        }
+        catch (System.Exception ex)
+        {
+            _logger.LogError(ex, "Failed to fetch VOD streams for category {CategoryId}", categoryId);
+            return BadRequest($"Failed to fetch movies: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Gets all series within a category.
+    /// </summary>
+    /// <param name="categoryId">The series category ID.</param>
+    /// <param name="providerIndex">Zero-based provider index (default: 0).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>List of series in the category.</returns>
+    [HttpGet("Series/List")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<IEnumerable<SeriesItemDto>>> GetSeriesList(
+        [FromQuery] int categoryId,
+        [FromQuery] int providerIndex = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var config = TryGetConfig();
+        if (config == null)
+        {
+            return BadRequest("Plugin not initialized.");
+        }
+
+        var provider = config.Providers.ElementAtOrDefault(providerIndex);
+        if (provider == null || string.IsNullOrEmpty(provider.BaseUrl) || string.IsNullOrEmpty(provider.Username))
+        {
+            return BadRequest("Provider credentials not configured.");
+        }
+
+        try
+        {
+            var connectionInfo = new Client.ConnectionInfo(provider.BaseUrl, provider.Username, provider.Password ?? string.Empty);
+            var seriesList = await _client.GetSeriesByCategoryAsync(connectionInfo, categoryId, cancellationToken).ConfigureAwait(false);
+
+            var result = seriesList.Select(s => new SeriesItemDto
+            {
+                SeriesId = s.SeriesId,
+                Num = s.Num,
+                Name = s.Name,
+            }).OrderBy(s => s.Num).ThenBy(s => s.Name);
+
+            return Ok(result);
+        }
+        catch (System.Exception ex)
+        {
+            _logger.LogError(ex, "Failed to fetch series for category {CategoryId}", categoryId);
+            return BadRequest($"Failed to fetch series: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// Clears the metadata lookup cache.
     /// </summary>
     /// <returns>Success status.</returns>
@@ -950,6 +1046,48 @@ public class CategoryDto
     /// Gets or sets the category name.
     /// </summary>
     public string CategoryName { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Data transfer object for a single VOD (movie) item within a category.
+/// </summary>
+public class ContentItemDto
+{
+    /// <summary>
+    /// Gets or sets the Xtream stream ID of the movie.
+    /// </summary>
+    public int StreamId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the provider-assigned ordinal number.
+    /// </summary>
+    public int Num { get; set; }
+
+    /// <summary>
+    /// Gets or sets the movie title.
+    /// </summary>
+    public string Name { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Data transfer object for a single series item within a category.
+/// </summary>
+public class SeriesItemDto
+{
+    /// <summary>
+    /// Gets or sets the Xtream series ID.
+    /// </summary>
+    public int SeriesId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the provider-assigned ordinal number.
+    /// </summary>
+    public int Num { get; set; }
+
+    /// <summary>
+    /// Gets or sets the series title.
+    /// </summary>
+    public string Name { get; set; } = string.Empty;
 }
 
 /// <summary>

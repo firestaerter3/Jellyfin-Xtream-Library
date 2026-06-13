@@ -1367,6 +1367,9 @@ public partial class StrmSyncService
             _logger.LogInformation("Found {Count} existing movie folders", totalFolders);
         }
 
+        // Build the per-provider VOD exclusion set once; read-only inside the parallel fetch.
+        var excludedVodSet = ContentExclusionFilter.BuildSet(provider.ExcludedVodStreamIds);
+
         // Process categories in batches to reduce memory usage
         for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
         {
@@ -1405,6 +1408,11 @@ public partial class StrmSyncService
                             .ConfigureAwait(false);
                         foreach (var stream in streams)
                         {
+                            if (ContentExclusionFilter.IsExcluded(excludedVodSet, stream.StreamId))
+                            {
+                                continue;
+                            }
+
                             streamBag.Add((stream, category.CategoryId));
                         }
                     }
@@ -2108,6 +2116,9 @@ public partial class StrmSyncService
 
         int preApiSkipped = 0;
 
+        // Build the per-provider Series exclusion set once; read-only inside the parallel fetch.
+        var excludedSeriesSet = ContentExclusionFilter.BuildSet(provider.ExcludedSeriesIds);
+
         // Process categories in batches to reduce memory usage
         for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
         {
@@ -2149,6 +2160,11 @@ public partial class StrmSyncService
                             .ConfigureAwait(false);
                         foreach (var series in seriesList)
                         {
+                            if (ContentExclusionFilter.IsExcluded(excludedSeriesSet, series.SeriesId))
+                            {
+                                continue;
+                            }
+
                             seriesBag.Add((series, category.CategoryId));
                         }
                     }

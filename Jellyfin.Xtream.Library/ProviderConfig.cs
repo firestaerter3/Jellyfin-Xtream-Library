@@ -92,6 +92,18 @@ public class ProviderConfig
     public int[] SelectedSeriesCategoryIds { get; set; } = Array.Empty<int>();
 
     /// <summary>
+    /// Gets or sets VOD stream IDs to exclude from sync, even if their category is selected.
+    /// Empty array means no per-movie exclusions (sync every movie in the selected categories).
+    /// </summary>
+    public int[] ExcludedVodStreamIds { get; set; } = Array.Empty<int>();
+
+    /// <summary>
+    /// Gets or sets series IDs to exclude from sync, even if their category is selected.
+    /// Empty array means no per-series exclusions (sync every series in the selected categories).
+    /// </summary>
+    public int[] ExcludedSeriesIds { get; set; } = Array.Empty<int>();
+
+    /// <summary>
     /// Gets or sets a value indicating whether to skip series that already have STRM files.
     /// </summary>
     public bool SmartSkipExisting { get; set; } = true;

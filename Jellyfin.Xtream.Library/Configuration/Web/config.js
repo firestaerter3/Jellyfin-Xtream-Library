@@ -20,6 +20,14 @@ const XtreamLibraryConfig = {
     // Track which Live TV categories are currently expanded in the UI
     expandedLiveCategories: {},
 
+    // Per-item VOD/Series exclusions (item IDs unchecked under their category) — per active provider
+    excludedVodStreamIds: [],
+    excludedSeriesIds: [],
+    // Session cache of items per category, keyed by type then category id (not persisted)
+    contentItemsByCategory: { vod: {}, series: {} },
+    // Track which VOD/Series categories are currently expanded in the UI, keyed by type
+    expandedContentCategories: { vod: {}, series: {} },
+
     // Folder definitions for multi-folder mode
     // Each entry: { name: 'FolderName', categoryIds: [1, 2, 3] }
     vodFolderDefinitions: [],
@@ -45,6 +53,8 @@ const XtreamLibraryConfig = {
             SyncSeries: true,
             SelectedVodCategoryIds: [],
             SelectedSeriesCategoryIds: [],
+            ExcludedVodStreamIds: [],
+            ExcludedSeriesIds: [],
             MovieFolderMode: 'Single',
             SeriesFolderMode: 'Single',
             MovieFolderMappings: '',
@@ -107,6 +117,10 @@ const XtreamLibraryConfig = {
 
         self.selectedVodCategoryIds = p.SelectedVodCategoryIds || [];
         self.selectedSeriesCategoryIds = p.SelectedSeriesCategoryIds || [];
+        self.excludedVodStreamIds = p.ExcludedVodStreamIds || [];
+        self.excludedSeriesIds = p.ExcludedSeriesIds || [];
+        self.contentItemsByCategory = { vod: {}, series: {} };
+        self.expandedContentCategories = { vod: {}, series: {} };
 
         document.getElementById('txtTmdbFolderIdOverrides').value = p.TmdbFolderIdOverrides || '';
         document.getElementById('txtTvdbFolderIdOverrides').value = p.TvdbFolderIdOverrides || '';
@@ -195,6 +209,10 @@ const XtreamLibraryConfig = {
             p.SelectedSeriesCategoryIds = this.getAllCategoryIdsFromFolders('series');
             p.SeriesFolderMappings = this.buildFolderMappings(this.seriesFolderDefinitions);
         }
+
+        // Persist per-item exclusions regardless of folder mode (empty = sync everything).
+        p.ExcludedVodStreamIds = this.excludedVodStreamIds.slice();
+        p.ExcludedSeriesIds = this.excludedSeriesIds.slice();
 
         p.TmdbFolderIdOverrides = document.getElementById('txtTmdbFolderIdOverrides').value;
         p.TvdbFolderIdOverrides = document.getElementById('txtTvdbFolderIdOverrides').value;
@@ -1068,13 +1086,24 @@ const XtreamLibraryConfig = {
                 html += 'style="margin-left: 36px; margin-top: 4px; ' + (isExpanded ? '' : 'display: none;') + '"></div>';
                 html += '</div>';
             } else {
-                html += '<div class="checkboxContainer">';
-                html += '<label class="emby-checkbox-label">';
+                // vod / series: expandable row with a per-item panel (issue #54)
+                const isExpanded = !!(self.expandedContentCategories[type] && self.expandedContentCategories[type][category.CategoryId]);
+                html += '<div class="content-cat-row" data-cat-id="' + category.CategoryId + '" data-content-type="' + type + '">';
+                html += '<div style="display: flex; align-items: center;">';
+                html += '<button type="button" class="content-cat-expand" data-cat-id="' + category.CategoryId + '" data-content-type="' + type + '" ';
+                html += 'aria-label="Toggle items" ';
+                html += 'style="margin-right: 8px; background: none; border: 1px solid rgba(255,255,255,0.2); color: inherit; cursor: pointer; font-size: 0.85em; padding: 2px 8px; min-width: 24px; border-radius: 3px;">';
+                html += isExpanded ? '▾' : '▸';
+                html += '</button>';
+                html += '<label class="emby-checkbox-label" style="flex: 1;">';
                 html += '<input is="emby-checkbox" type="checkbox" id="' + checkboxId + '" ';
                 html += 'data-category-id="' + category.CategoryId + '" data-category-type="' + type + '" ';
                 html += 'data-index="' + index + '" ' + isChecked + '/>';
                 html += '<span>' + self.escapeHtml(category.CategoryName) + ' <small style="opacity:0.5;">(ID: ' + category.CategoryId + ')</small></span>';
                 html += '</label>';
+                html += '</div>';
+                html += '<div class="content-item-list" data-cat-id="' + category.CategoryId + '" data-content-type="' + type + '" ';
+                html += 'style="margin-left: 36px; margin-top: 4px; ' + (isExpanded ? '' : 'display: none;') + '"></div>';
                 html += '</div>';
             }
         });
@@ -1140,6 +1169,37 @@ const XtreamLibraryConfig = {
             });
 
             self.updateLiveCategoryCounter();
+        }
+
+        if (type === 'vod' || type === 'series') {
+            container.querySelectorAll('.content-cat-expand').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    const catId = parseInt(btn.getAttribute('data-cat-id'));
+                    self.toggleContentCategory(type, catId, btn);
+                });
+            });
+
+            // When a category checkbox toggles, re-render any expanded panel so item
+            // checkboxes follow the category's selected state.
+            checkboxes.forEach(function (cb) {
+                cb.addEventListener('change', function () {
+                    const catId = parseInt(cb.getAttribute('data-category-id'));
+                    if (self.expandedContentCategories[type][catId] && self.contentItemsByCategory[type][catId]) {
+                        self.renderContentItems(type, catId);
+                    }
+                });
+            });
+
+            // Re-render panels that were expanded before this list was rebuilt.
+            Object.keys(self.expandedContentCategories[type]).forEach(function (catIdStr) {
+                if (!self.expandedContentCategories[type][catIdStr]) return;
+                const catId = parseInt(catIdStr);
+                if (self.contentItemsByCategory[type][catId]) {
+                    self.renderContentItems(type, catId);
+                } else {
+                    self.fetchContentItemsForCategory(type, catId);
+                }
+            });
         }
     },
 
@@ -1300,6 +1360,166 @@ const XtreamLibraryConfig = {
         }
     },
 
+    // ----- Per-item VOD/Series selection (issue #54), mirroring the Live TV per-channel UI -----
+
+    toggleContentCategory: function (type, categoryId, btn) {
+        const self = this;
+        const panel = document.querySelector('.content-item-list[data-content-type="' + type + '"][data-cat-id="' + categoryId + '"]');
+        if (!panel) return;
+
+        const isExpanded = !!self.expandedContentCategories[type][categoryId];
+        if (isExpanded) {
+            self.expandedContentCategories[type][categoryId] = false;
+            panel.style.display = 'none';
+            if (btn) btn.textContent = '▸';
+            return;
+        }
+
+        self.expandedContentCategories[type][categoryId] = true;
+        panel.style.display = '';
+        if (btn) btn.textContent = '▾';
+
+        if (self.contentItemsByCategory[type][categoryId]) {
+            self.renderContentItems(type, categoryId);
+        } else {
+            self.fetchContentItemsForCategory(type, categoryId);
+        }
+    },
+
+    fetchContentItemsForCategory: function (type, categoryId) {
+        const self = this;
+        const panel = document.querySelector('.content-item-list[data-content-type="' + type + '"][data-cat-id="' + categoryId + '"]');
+        if (!panel) return;
+
+        const endpoint = type === 'vod' ? 'XtreamLibrary/Streams/Vod' : 'XtreamLibrary/Series/List';
+        const label = type === 'vod' ? 'movies' : 'series';
+        panel.innerHTML = '<div class="fieldDescription" style="padding: 4px 0;">Loading ' + label + '...</div>';
+
+        fetch(ApiClient.getUrl(endpoint) + '?categoryId=' + encodeURIComponent(categoryId) + '&providerIndex=' + self.activeProviderIndex, {
+            headers: { 'X-Emby-Token': ApiClient.accessToken() }
+        })
+            .then(function (r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
+            .then(function (items) {
+                self.contentItemsByCategory[type][categoryId] = items || [];
+                self.renderContentItems(type, categoryId);
+            })
+            .catch(function (error) {
+                console.error('Failed to load ' + label + ' for category ' + categoryId + ':', error);
+                panel.innerHTML = '<div style="color: #d33; padding: 4px 0;">Failed to load ' + label + '. ' +
+                    '<button type="button" class="content-item-retry" data-cat-id="' + categoryId + '" data-content-type="' + type + '" ' +
+                    'style="background: none; border: 1px solid rgba(255,255,255,0.2); color: inherit; cursor: pointer; padding: 2px 8px; margin-left: 8px; border-radius: 3px;">Retry</button></div>';
+                const retry = panel.querySelector('.content-item-retry');
+                if (retry) {
+                    retry.addEventListener('click', function () {
+                        self.fetchContentItemsForCategory(type, categoryId);
+                    });
+                }
+            });
+    },
+
+    renderContentItems: function (type, categoryId) {
+        const self = this;
+        const panel = document.querySelector('.content-item-list[data-content-type="' + type + '"][data-cat-id="' + categoryId + '"]');
+        if (!panel) return;
+
+        const items = self.contentItemsByCategory[type][categoryId] || [];
+        const label = type === 'vod' ? 'movies' : 'series';
+        if (items.length === 0) {
+            panel.innerHTML = '<div class="fieldDescription" style="padding: 4px 0;">No ' + label + ' in this category.</div>';
+            return;
+        }
+
+        const idField = type === 'vod' ? 'StreamId' : 'SeriesId';
+        const exclusionList = type === 'vod' ? self.excludedVodStreamIds : self.excludedSeriesIds;
+        const excluded = {};
+        exclusionList.forEach(function (id) { excluded[id] = true; });
+
+        const categoryCb = document.querySelector('input[data-category-type="' + type + '"][data-category-id="' + categoryId + '"]');
+        const categorySelected = categoryCb ? categoryCb.checked : false;
+
+        let html = '';
+        html += '<div style="margin: 4px 0;">';
+        html += '<button type="button" class="content-item-select-all" data-cat-id="' + categoryId + '" data-content-type="' + type + '" ';
+        html += 'style="background: none; border: 1px solid rgba(255,255,255,0.2); color: inherit; cursor: pointer; padding: 2px 8px; border-radius: 3px; margin-right: 6px;">Select all</button>';
+        html += '<button type="button" class="content-item-deselect-all" data-cat-id="' + categoryId + '" data-content-type="' + type + '" ';
+        html += 'style="background: none; border: 1px solid rgba(255,255,255,0.2); color: inherit; cursor: pointer; padding: 2px 8px; border-radius: 3px;">Deselect all</button>';
+        html += '<small style="opacity: 0.6; margin-left: 10px;">' + items.length + ' ' + label + '</small>';
+        if (!categorySelected) {
+            html += '<small style="opacity: 0.6; margin-left: 10px; font-style: italic;">Category is deselected — tick an item or the category to include it.</small>';
+        }
+        html += '</div>';
+
+        items.forEach(function (item) {
+            const itemId = item[idField];
+            const isChecked = categorySelected && !excluded[itemId] ? 'checked' : '';
+            html += '<div class="checkboxContainer" style="margin: 2px 0;">';
+            html += '<label class="emby-checkbox-label">';
+            html += '<input is="emby-checkbox" type="checkbox" class="content-item-cb" ';
+            html += 'data-item-id="' + itemId + '" ' + isChecked + '/>';
+            html += '<span>' + self.escapeHtml(item.Name || '(unnamed)');
+            if (item.Num) {
+                html += ' <small style="opacity:0.5;">#' + item.Num + '</small>';
+            }
+            html += '</span></label></div>';
+        });
+
+        panel.innerHTML = html;
+
+        panel.querySelectorAll('.content-item-cb').forEach(function (cb) {
+            cb.addEventListener('change', function () {
+                const itemId = parseInt(cb.getAttribute('data-item-id'));
+                self.updateContentExclusion(type, itemId, !cb.checked);
+                // Ticking an item under a deselected category implies the user wants the
+                // category included — auto-tick the parent and redraw the panel so the
+                // "category deselected" hint clears and sibling items reflect the new state.
+                if (cb.checked && categoryCb && !categoryCb.checked) {
+                    categoryCb.checked = true;
+                    self.renderContentItems(type, categoryId);
+                }
+            });
+        });
+
+        const selectAll = panel.querySelector('.content-item-select-all');
+        if (selectAll) {
+            selectAll.addEventListener('click', function () {
+                if (categoryCb && !categoryCb.checked) {
+                    categoryCb.checked = true;
+                }
+                panel.querySelectorAll('.content-item-cb').forEach(function (cb) {
+                    if (!cb.checked) {
+                        cb.checked = true;
+                        self.updateContentExclusion(type, parseInt(cb.getAttribute('data-item-id')), false);
+                    }
+                });
+            });
+        }
+        const deselectAll = panel.querySelector('.content-item-deselect-all');
+        if (deselectAll) {
+            deselectAll.addEventListener('click', function () {
+                panel.querySelectorAll('.content-item-cb').forEach(function (cb) {
+                    if (cb.checked) {
+                        cb.checked = false;
+                        self.updateContentExclusion(type, parseInt(cb.getAttribute('data-item-id')), true);
+                    }
+                });
+            });
+        }
+    },
+
+    updateContentExclusion: function (type, itemId, shouldBeExcluded) {
+        const self = this;
+        const list = type === 'vod' ? self.excludedVodStreamIds : self.excludedSeriesIds;
+        const idx = list.indexOf(itemId);
+        if (shouldBeExcluded && idx === -1) {
+            list.push(itemId);
+        } else if (!shouldBeExcluded && idx !== -1) {
+            list.splice(idx, 1);
+        }
+    },
+
     getSelectedCategoryIds: function (type) {
         const checkboxes = document.querySelectorAll('input[data-category-type="' + type + '"]:checked');
         const ids = [];
@@ -1322,6 +1542,10 @@ const XtreamLibraryConfig = {
             self.excludedLiveStreamIds = [];
             self.redrawExpandedLiveChannelPanels();
             self.updateLiveCategoryCounter();
+        } else if (type === 'vod' || type === 'series') {
+            // Same clean-slate logic as Live TV: clear per-item exclusions and redraw any
+            // expanded panels so the item checkboxes follow the now-selected categories.
+            self.clearContentExclusions(type);
         }
     },
 
@@ -1338,7 +1562,29 @@ const XtreamLibraryConfig = {
             self.excludedLiveStreamIds = [];
             self.redrawExpandedLiveChannelPanels();
             self.updateLiveCategoryCounter();
+        } else if (type === 'vod' || type === 'series') {
+            self.clearContentExclusions(type);
         }
+    },
+
+    clearContentExclusions: function (type) {
+        const self = this;
+        if (type === 'vod') {
+            self.excludedVodStreamIds = [];
+        } else {
+            self.excludedSeriesIds = [];
+        }
+        self.redrawExpandedContentItemPanels(type);
+    },
+
+    redrawExpandedContentItemPanels: function (type) {
+        const self = this;
+        const expanded = self.expandedContentCategories[type] || {};
+        Object.keys(expanded).forEach(function (categoryId) {
+            if (expanded[categoryId] && self.contentItemsByCategory[type][categoryId]) {
+                self.renderContentItems(type, parseInt(categoryId));
+            }
+        });
     },
 
     clearChannelExclusions: function () {

@@ -104,6 +104,8 @@ public class SnapshotService : IDisposable
             provider.SeriesFolderMappings ?? string.Empty,
             string.Join(",", provider.SelectedVodCategoryIds?.OrderBy(id => id) ?? Enumerable.Empty<int>()),
             string.Join(",", provider.SelectedSeriesCategoryIds?.OrderBy(id => id) ?? Enumerable.Empty<int>()),
+            string.Join(",", provider.ExcludedVodStreamIds?.OrderBy(id => id) ?? Enumerable.Empty<int>()),
+            string.Join(",", provider.ExcludedSeriesIds?.OrderBy(id => id) ?? Enumerable.Empty<int>()),
             enableMetadataLookup.ToString(CultureInfo.InvariantCulture),
             provider.TmdbFolderIdOverrides ?? string.Empty,
             provider.TvdbFolderIdOverrides ?? string.Empty);

@@ -263,6 +263,28 @@ public class SnapshotServiceTests : IDisposable
         Assert.NotEqual(fp1, fp2);
     }
 
+    [Fact]
+    public void CalculateConfigFingerprint_DiffersWhenVodExclusionsChange()
+    {
+        var a = new ProviderConfig { ExcludedVodStreamIds = new[] { 1, 2 } };
+        var b = new ProviderConfig { ExcludedVodStreamIds = new[] { 1, 2, 3 } };
+
+        Assert.NotEqual(
+            SnapshotService.CalculateConfigFingerprint(a),
+            SnapshotService.CalculateConfigFingerprint(b));
+    }
+
+    [Fact]
+    public void CalculateConfigFingerprint_DiffersWhenSeriesExclusionsChange()
+    {
+        var a = new ProviderConfig { ExcludedSeriesIds = new[] { 10 } };
+        var b = new ProviderConfig { ExcludedSeriesIds = new[] { 11 } };
+
+        Assert.NotEqual(
+            SnapshotService.CalculateConfigFingerprint(a),
+            SnapshotService.CalculateConfigFingerprint(b));
+    }
+
     private static ContentSnapshot CreateTestSnapshot()
     {
         var snapshot = new ContentSnapshot
