@@ -154,6 +154,8 @@ REST API for manual operations:
 
 Most endpoints require admin authorization (`RequiresElevation` policy). The Live TV playlist/EPG endpoints (`LiveTv.m3u`, `Epg.xml`, `Catchup.m3u`) and `ChannelLogo/{streamId}` are anonymous so external players and the server's own image fetcher can reach them. `ChannelLogo` resolves a local-path channel override logo (via `ChannelLogoResolver`) and serves the file; the request carries only a stream ID, so no filesystem path is taken from the caller.
 
+`LiveTvService` generates the M3U playlist and XMLTV EPG and feeds the native tuner (`XtreamTunerHost`). It tags each channel with its Xtream category so Jellyfin can group channels: the M3U emits `group-title` and the native tuner sets `ChannelInfo.ChannelGroup`. The category id-to-name map comes from `GetCategoryNameMapAsync` (backed by `XtreamClient.GetLiveCategoryAsync`) and is best-effort — a failed category fetch leaves channels ungrouped rather than breaking playlist/tuner output.
+
 ### SyncLibraryTask
 Jellyfin scheduled task wrapper:
 - Implements `IScheduledTask` for dashboard visibility

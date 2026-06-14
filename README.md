@@ -24,6 +24,7 @@ A Jellyfin plugin that syncs Xtream VOD, Series, and Live TV content to native J
 - **Adult Channel Filtering**: Exclude adult channels from guide and playlist
 - **Category Selection**: Filter Live TV channels by category (empty = all)
 - **Per-Channel Selection**: Expand any selected category to enable or disable individual channels
+- **Category Grouping**: Channels are tagged with their Xtream category so the Live TV guide groups them instead of showing one flat list (native tuner `ChannelGroup` / M3U `group-title`)
 - **Dispatcharr Integration**: Enhanced stream stats and multi-variant stream support
 
 ### Sync Options
@@ -164,7 +165,7 @@ For automatic TMDb/TVDb ID lookup:
 6. Optionally enable **Catchup** for timeshift replay support
 7. Click **Save**
 
-Once enabled, go to **Dashboard → Live TV** in Jellyfin — the Xtream Library tuner and guide data will appear automatically.
+Once enabled, go to **Dashboard → Live TV** in Jellyfin — the Xtream Library tuner and guide data will appear automatically. Channels are grouped by their Xtream category in the guide. To trim a large channel list down, set the Live channel mode to **Custom** and select only the categories you want — by default every channel the provider exposes is included.
 
 ### First Sync
 
