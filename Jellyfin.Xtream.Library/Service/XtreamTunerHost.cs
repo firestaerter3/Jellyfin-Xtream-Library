@@ -103,6 +103,7 @@ public class XtreamTunerHost : ITunerHost
         _logger.LogInformation("Fetching channels from Xtream API for native tuner");
 
         var channels = await _liveTvService.GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
+        var categoryNames = await _liveTvService.GetCategoryNameMapAsync(cancellationToken).ConfigureAwait(false);
 
         var newMap = new Dictionary<string, int>(channels.Count);
         var newStats = new Dictionary<int, StreamStatsInfo>(channels.Count);
@@ -141,6 +142,9 @@ public class XtreamTunerHost : ITunerHost
                 ImageUrl = _liveTvService.ResolveChannelLogoUrl(channel.StreamIcon, channel.StreamId),
                 ChannelType = ChannelType.TV,
                 TunerHostId = Type,
+                ChannelGroup = channel.CategoryId is int catId && categoryNames.TryGetValue(catId, out var categoryName)
+                    ? categoryName
+                    : null,
             };
         }).ToList();
 

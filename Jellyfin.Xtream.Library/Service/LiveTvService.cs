@@ -118,7 +118,8 @@ public class LiveTvService : IDisposable
 
             _logger.LogInformation("Generating M3U playlist");
             var channels = await GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
-            var m3u = GenerateM3U(channels, config, catchupOnly: false, GetServerBaseUrl());
+            var categoryNames = await GetCategoryNameMapAsync(cancellationToken).ConfigureAwait(false);
+            var m3u = GenerateM3U(channels, config, catchupOnly: false, GetServerBaseUrl(), categoryNames);
 
             _cachedM3U = m3u;
             _m3uCacheTime = DateTime.UtcNow;
@@ -151,7 +152,8 @@ public class LiveTvService : IDisposable
 
             _logger.LogInformation("Generating Catchup M3U playlist");
             var channels = await GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
-            var m3u = GenerateM3U(channels, config, catchupOnly: true, GetServerBaseUrl());
+            var categoryNames = await GetCategoryNameMapAsync(cancellationToken).ConfigureAwait(false);
+            var m3u = GenerateM3U(channels, config, catchupOnly: true, GetServerBaseUrl(), categoryNames);
 
             _cachedCatchupM3U = m3u;
             _catchupCacheTime = DateTime.UtcNow;
@@ -305,6 +307,35 @@ public class LiveTvService : IDisposable
         File.Move(tempPath, path, overwrite: true);
     }
 
+    /// <summary>
+    /// Builds a map of Live TV category id to category name for channel grouping
+    /// (M3U <c>group-title</c> / native tuner <c>ChannelGroup</c>). Best-effort: any
+    /// failure returns an empty map so channel output is never blocked.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A dictionary mapping category id to category name (empty on failure).</returns>
+    internal async Task<Dictionary<int, string>> GetCategoryNameMapAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var connectionInfo = Plugin.Instance.GetCreds(0);
+            var categories = await _client.GetLiveCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
+            var map = new Dictionary<int, string>(categories.Count);
+            foreach (var category in categories)
+            {
+                // Last-wins on duplicate ids.
+                map[category.CategoryId] = category.CategoryName;
+            }
+
+            return map;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to fetch Live TV categories for channel grouping; channels will be ungrouped");
+            return new Dictionary<int, string>();
+        }
+    }
+
     internal async Task<List<LiveStreamInfo>> GetFilteredChannelsAsync(CancellationToken cancellationToken)
     {
         var config = Plugin.Instance.Configuration;
@@ -414,7 +445,7 @@ public class LiveTvService : IDisposable
         return channels.Where(c => !excluded.Contains(c.StreamId)).ToList();
     }
 
-    private static string GenerateM3U(List<LiveStreamInfo> channels, PluginConfiguration config, bool catchupOnly, string baseUrl)
+    internal static string GenerateM3U(List<LiveStreamInfo> channels, PluginConfiguration config, bool catchupOnly, string baseUrl, IReadOnlyDictionary<int, string> categoryNames)
     {
         var sb = new StringBuilder();
         sb.AppendLine("#EXTM3U");
@@ -442,6 +473,14 @@ public class LiveTvService : IDisposable
             if (!string.IsNullOrEmpty(logoUrl))
             {
                 extinf.Append(CultureInfo.InvariantCulture, $" tvg-logo=\"{EscapeAttribute(logoUrl)}\"");
+            }
+
+            // Group channels by their Xtream category so Jellyfin can show category groups.
+            if (channel.CategoryId is int catId
+                && categoryNames.TryGetValue(catId, out var categoryName)
+                && !string.IsNullOrEmpty(categoryName))
+            {
+                extinf.Append(CultureInfo.InvariantCulture, $" group-title=\"{EscapeAttribute(categoryName)}\"");
             }
 
             // Add catch-up attributes if enabled and channel supports it
