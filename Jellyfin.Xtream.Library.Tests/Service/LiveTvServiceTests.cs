@@ -238,4 +238,75 @@ public class LiveTvServiceTests
         url.Should().Be("http://multi.example.com:5656/live/multiuser/multipass/2420044.ts");
         url.Should().NotContain("///");
     }
+
+    // BUG-011: Live TV channels appeared as one flat list because GenerateM3U never
+    // emitted group-title. These pin the category grouping behaviour.
+
+    private static PluginConfiguration MakeM3UConfig()
+    {
+        var config = new PluginConfiguration { LiveTvOutputFormat = "ts" };
+        config.Providers.Add(new ProviderConfig
+        {
+            BaseUrl = "http://multi.example.com:5656",
+            Username = "multiuser",
+            Password = "multipass",
+        });
+        return config;
+    }
+
+    [Fact]
+    public void GenerateM3U_ChannelWithKnownCategory_EmitsGroupTitle()
+    {
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, Name = "Channel 1", Num = 1, CategoryId = 10 },
+        };
+        var categoryNames = new Dictionary<int, string> { [10] = "Sports" };
+
+        var m3u = LiveTvService.GenerateM3U(channels, MakeM3UConfig(), catchupOnly: false, "http://127.0.0.1:8096", categoryNames);
+
+        m3u.Should().Contain("group-title=\"Sports\"");
+    }
+
+    [Fact]
+    public void GenerateM3U_ChannelWithUnknownCategoryId_OmitsGroupTitle()
+    {
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, Name = "Channel 1", Num = 1, CategoryId = 99 },
+        };
+        var categoryNames = new Dictionary<int, string> { [10] = "Sports" };
+
+        var m3u = LiveTvService.GenerateM3U(channels, MakeM3UConfig(), catchupOnly: false, "http://127.0.0.1:8096", categoryNames);
+
+        m3u.Should().NotContain("group-title");
+    }
+
+    [Fact]
+    public void GenerateM3U_ChannelWithNullCategoryId_OmitsGroupTitle()
+    {
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, Name = "Channel 1", Num = 1, CategoryId = null },
+        };
+        var categoryNames = new Dictionary<int, string> { [10] = "Sports" };
+
+        var m3u = LiveTvService.GenerateM3U(channels, MakeM3UConfig(), catchupOnly: false, "http://127.0.0.1:8096", categoryNames);
+
+        m3u.Should().NotContain("group-title");
+    }
+
+    [Fact]
+    public void GenerateM3U_CategoryNameWithAmpersand_IsEscaped()
+    {
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, Name = "Channel 1", Num = 1, CategoryId = 10 },
+        };
+        var categoryNames = new Dictionary<int, string> { [10] = "Sports & News" };
+
+        var m3u = LiveTvService.GenerateM3U(channels, MakeM3UConfig(), catchupOnly: false, "http://127.0.0.1:8096", categoryNames);
+
+        m3u.Should().Contain("group-title=\"Sports &amp; News\"");
+    }
 }

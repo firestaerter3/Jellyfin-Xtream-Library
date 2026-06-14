@@ -193,6 +193,36 @@ public class XtreamTunerHostTests : IDisposable
         result[2].ImageUrl.Should().Be("http://127.0.0.1:8096/XtreamLibrary/ChannelLogo/300");
     }
 
+    // BUG-011: native tuner channels were ungrouped because ChannelGroup was never set.
+    [Fact]
+    public async Task GetChannels_SetsChannelGroup_FromCategoryName()
+    {
+        var config = Plugin.Instance.Configuration;
+        config.EnableLiveTv = true;
+        config.EnableNativeTuner = true;
+        config.EnableChannelNameCleaning = false;
+
+        var channels = new List<LiveStreamInfo>
+        {
+            new LiveStreamInfo { StreamId = 100, Name = "BBC One", Num = 1, CategoryId = 10 },
+            new LiveStreamInfo { StreamId = 200, Name = "CNN", Num = 2, CategoryId = 99 },
+            new LiveStreamInfo { StreamId = 300, Name = "Fox", Num = 3, CategoryId = null },
+        };
+
+        _mockClient
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(channels);
+        _mockClient
+            .Setup(c => c.GetLiveCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Category> { new() { CategoryId = 10, CategoryName = "Sports" } });
+
+        var result = await _tunerHost.GetChannels(false, CancellationToken.None);
+
+        result[0].ChannelGroup.Should().Be("Sports"); // known category
+        result[1].ChannelGroup.Should().BeNull();      // category id not in map
+        result[2].ChannelGroup.Should().BeNull();      // null category id
+    }
+
     #endregion
 
     #region GetChannelStreamMediaSources
