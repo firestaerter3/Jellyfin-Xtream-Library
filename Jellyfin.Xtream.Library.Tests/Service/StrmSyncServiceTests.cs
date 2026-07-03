@@ -1182,4 +1182,71 @@ public class StrmSyncServiceTests
     }
 
     #endregion
+
+    #region BuildSeriesFolderName / BuildMovieFolderName Tests
+
+    [Fact]
+    public void BuildSeriesFolderName_WithTvdbId_IncludesTvdbSuffix()
+    {
+        var overrides = new Dictionary<string, int>();
+        var result = StrmSyncService.BuildSeriesFolderName("Test Series", 2024, overrides, providerTmdbId: null, autoLookupTvdbId: 12345);
+
+        result.Should().Be("Test Series (2024) [tvdbid-12345]");
+    }
+
+    [Fact]
+    public void BuildSeriesFolderName_WithProviderTmdbId_IncludesTmdbSuffix()
+    {
+        var overrides = new Dictionary<string, int>();
+        var result = StrmSyncService.BuildSeriesFolderName("Test Series", 2024, overrides, providerTmdbId: 67890, autoLookupTvdbId: null);
+
+        result.Should().Be("Test Series (2024) [tmdbid-67890]");
+    }
+
+    [Fact]
+    public void BuildSeriesFolderName_NoIds_ReturnsBaseName()
+    {
+        var overrides = new Dictionary<string, int>();
+        var result = StrmSyncService.BuildSeriesFolderName("Test Series", 2024, overrides, providerTmdbId: null, autoLookupTvdbId: null);
+
+        result.Should().Be("Test Series (2024)");
+    }
+
+    [Fact]
+    public void BuildSeriesFolderName_OverrideTakesPriority()
+    {
+        var overrides = new Dictionary<string, int> { ["Test Series (2024)"] = 999 };
+        var result = StrmSyncService.BuildSeriesFolderName("Test Series", 2024, overrides, providerTmdbId: 111, autoLookupTvdbId: 222);
+
+        result.Should().Be("Test Series (2024) [tvdbid-999]");
+    }
+
+    [Fact]
+    public void BuildMovieFolderName_WithTmdbId_IncludesTmdbSuffix()
+    {
+        var overrides = new Dictionary<string, int>();
+        var result = StrmSyncService.BuildMovieFolderName("Test Movie", 2024, overrides, providerTmdbId: 12345, autoLookupTmdbId: null);
+
+        result.Should().Be("Test Movie (2024) [tmdbid-12345]");
+    }
+
+    [Fact]
+    public void BuildMovieFolderName_NoIds_ReturnsBaseName()
+    {
+        var overrides = new Dictionary<string, int>();
+        var result = StrmSyncService.BuildMovieFolderName("Test Movie", 2024, overrides, providerTmdbId: null, autoLookupTmdbId: null);
+
+        result.Should().Be("Test Movie (2024)");
+    }
+
+    [Fact]
+    public void BuildMovieFolderName_OverrideTakesPriority()
+    {
+        var overrides = new Dictionary<string, int> { ["Test Movie (2024)"] = 999 };
+        var result = StrmSyncService.BuildMovieFolderName("Test Movie", 2024, overrides, providerTmdbId: 111, autoLookupTmdbId: 222);
+
+        result.Should().Be("Test Movie (2024) [tmdbid-999]");
+    }
+
+    #endregion
 }
