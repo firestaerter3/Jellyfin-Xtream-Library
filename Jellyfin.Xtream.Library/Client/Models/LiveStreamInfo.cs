@@ -70,4 +70,11 @@ public class LiveStreamInfo
 
     [JsonProperty("stream_stats")]
     public StreamStatsInfo? StreamStats { get; set; }
+
+    /// <summary>
+    /// Gets or sets tags applied via channel overrides.
+    /// Not from the Xtream API — populated by the channel override system.
+    /// </summary>
+    [JsonIgnore]
+    public string[]? Tags { get; set; }
 }

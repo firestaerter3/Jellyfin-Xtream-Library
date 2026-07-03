@@ -145,6 +145,7 @@ public class XtreamTunerHost : ITunerHost
                 ChannelGroup = channel.CategoryId is int catId && categoryNames.TryGetValue(catId, out var categoryName)
                     ? categoryName
                     : null,
+                Tags = channel.Tags,
             };
         }).ToList();
 

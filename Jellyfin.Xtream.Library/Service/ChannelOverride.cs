@@ -39,4 +39,11 @@ public class ChannelOverride
     /// Gets or sets the override logo URL (null means keep original).
     /// </summary>
     public string? LogoUrl { get; set; }
+
+    /// <summary>
+    /// Gets or sets the tags to apply to the channel (null means keep original).
+    /// Each entry is a single tag string; empty array means clear existing tags.
+    /// Tags are parsed from the 4th pipe-delimited field: comma-separated values.
+    /// </summary>
+    public string[]? Tags { get; set; }
 }
