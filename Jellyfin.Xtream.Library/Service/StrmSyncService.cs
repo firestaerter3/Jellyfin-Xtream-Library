@@ -2577,7 +2577,18 @@ public partial class StrmSyncService
                             string seriesBasePath = string.IsNullOrEmpty(targetFolder)
                                 ? seriesPath
                                 : Path.Combine(seriesPath, targetFolder);
-                            string seriesFolderPath = Path.Combine(seriesBasePath, seriesFolderName);
+                            // Resolve actual folder via seriesFolderLookup to handle suffix mismatch
+                            // (e.g. existing folder has [tvdbid-X] but lookup failed this sync)
+                            string seriesFolderPath;
+                            var lookupKey = seriesBasePath + "|" + baseName;
+                            if (seriesFolderLookup.TryGetValue(lookupKey, out var existingMatch))
+                            {
+                                seriesFolderPath = existingMatch.Path;
+                            }
+                            else
+                            {
+                                seriesFolderPath = Path.Combine(seriesBasePath, seriesFolderName);
+                            }
 
                             if (!Directory.Exists(seriesFolderPath))
                             {
@@ -2619,7 +2630,17 @@ public partial class StrmSyncService
                                 string seriesBasePath = string.IsNullOrEmpty(targetFolder)
                                     ? seriesPath
                                     : Path.Combine(seriesPath, targetFolder);
-                                string seriesFolderPath = Path.Combine(seriesBasePath, seriesFolderName);
+                                // Resolve actual folder via seriesFolderLookup to handle suffix mismatch
+                                string seriesFolderPath;
+                                var lookupKey = seriesBasePath + "|" + baseName;
+                                if (seriesFolderLookup.TryGetValue(lookupKey, out var existingMatch))
+                                {
+                                    seriesFolderPath = existingMatch.Path;
+                                }
+                                else
+                                {
+                                    seriesFolderPath = Path.Combine(seriesBasePath, seriesFolderName);
+                                }
 
                                 var existingStrms = directoryCache.GetOrAdd(
                                     seriesFolderPath,
@@ -2646,7 +2667,19 @@ public partial class StrmSyncService
                         string seriesBasePath = string.IsNullOrEmpty(targetFolder)
                             ? seriesPath
                             : Path.Combine(seriesPath, targetFolder);
-                        string seriesFolderPath = Path.Combine(seriesBasePath, seriesFolderName);
+                        // Resolve actual folder via seriesFolderLookup to handle suffix mismatch
+                        // (e.g. existing folder has [tvdbid-X] but lookup failed this sync)
+                        string seriesFolderPath;
+                        var lookupKey = seriesBasePath + "|" + baseName;
+                        if (seriesFolderLookup.TryGetValue(lookupKey, out var existingMatch))
+                        {
+                            seriesFolderPath = existingMatch.Path;
+                        }
+                        else
+                        {
+                            seriesFolderPath = Path.Combine(seriesBasePath, seriesFolderName);
+                        }
+
                         bool isNewSeries = !Directory.Exists(seriesFolderPath);
 
                         foreach (var seasonEntry in seriesInfo.Episodes)
