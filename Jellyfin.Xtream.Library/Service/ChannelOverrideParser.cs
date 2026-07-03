@@ -16,6 +16,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using Jellyfin.Xtream.Library.Client.Models;
 
 namespace Jellyfin.Xtream.Library.Service;
@@ -30,12 +31,13 @@ public static class ChannelOverrideParser
 
     /// <summary>
     /// Parses channel overrides from a newline-separated string.
-    /// Format: StreamId=Name|Number|LogoUrl
+    /// Format: StreamId=Name|Number|LogoUrl|Tags
     /// Examples:
     ///   123=BBC One                     (just rename)
     ///   456=CNN|2                       (rename + channel number)
     ///   789=Sky News|5|http://logo.png  (all fields)
-    ///   101=|10|                        (just channel number, keep original name).
+    ///   101=|10|                        (just channel number, keep original name)
+    ///   987=|||sports,news,live         (just tags, comma-separated).
     /// </summary>
     /// <param name="overridesText">Newline-separated list of overrides.</param>
     /// <returns>Dictionary mapping StreamId to ChannelOverride.</returns>
@@ -96,6 +98,17 @@ public static class ChannelOverrideParser
                 channelOverride.LogoUrl = parts[2].Trim();
             }
 
+            // Parse tags (fourth part, comma-separated)
+            if (parts.Length > 3 && !string.IsNullOrWhiteSpace(parts[3]))
+            {
+                channelOverride.Tags = parts[3]
+                    .Trim()
+                    .Split(',')
+                    .Select(t => t.Trim())
+                    .Where(t => !string.IsNullOrWhiteSpace(t))
+                    .ToArray();
+            }
+
             result[streamId] = channelOverride;
         }
 
@@ -127,6 +140,12 @@ public static class ChannelOverrideParser
         if (!string.IsNullOrEmpty(channelOverride.LogoUrl))
         {
             channel.StreamIcon = channelOverride.LogoUrl;
+        }
+
+        // Tags: null in the override means leave unchanged; non-null replaces (empty = clear).
+        if (channelOverride.Tags != null)
+        {
+            channel.Tags = channelOverride.Tags;
         }
     }
 }

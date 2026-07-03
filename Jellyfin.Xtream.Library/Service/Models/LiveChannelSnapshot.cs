@@ -149,6 +149,11 @@ public class LiveChannelSnapshotEntry
     public int Num { get; set; }
 
     /// <summary>
+    /// Gets or sets the channel tags from overrides.
+    /// </summary>
+    public string[]? Tags { get; set; }
+
+    /// <summary>
     /// Gets or sets the MD5 checksum of the tracked fields (used for change detection).
     /// </summary>
     public string Checksum { get; set; } = string.Empty;
@@ -169,13 +174,14 @@ public class LiveChannelSnapshotEntry
             EpgChannelId = channel.EpgChannelId ?? string.Empty,
             StreamIcon = channel.StreamIcon ?? string.Empty,
             Num = channel.Num,
+            Tags = channel.Tags,
             Checksum = ComputeChecksum(channel),
         };
     }
 
     /// <summary>
     /// Computes the change-detection checksum for a channel. Covers user-visible fields
-    /// (name, EPG id, logo, channel number) - other fields are intentionally excluded.
+    /// (name, EPG id, logo, channel number, tags) - other fields are intentionally excluded.
     /// </summary>
     /// <param name="channel">The live stream.</param>
     /// <returns>The MD5 checksum as a hex string.</returns>
@@ -184,12 +190,14 @@ public class LiveChannelSnapshotEntry
     {
         ArgumentNullException.ThrowIfNull(channel);
 
+        var tagsStr = channel.Tags != null ? string.Join(",", channel.Tags) : string.Empty;
         var data = string.Join(
             "|",
             channel.Name ?? string.Empty,
             channel.EpgChannelId ?? string.Empty,
             channel.StreamIcon ?? string.Empty,
-            channel.Num.ToString(CultureInfo.InvariantCulture));
+            channel.Num.ToString(CultureInfo.InvariantCulture),
+            tagsStr);
 
         var bytes = MD5.HashData(Encoding.UTF8.GetBytes(data));
         var sb = new StringBuilder(bytes.Length * 2);

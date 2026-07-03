@@ -152,6 +152,57 @@ public class ChannelOverrideParserTests
         result.Should().HaveCount(2);
     }
 
+    [Fact]
+    public void Parse_ParsesTagsOnly()
+    {
+        var input = "987=|||sports,news,live";
+
+        var result = ChannelOverrideParser.Parse(input);
+
+        result.Should().ContainKey(987);
+        result[987].Name.Should().BeNull();
+        result[987].Number.Should().BeNull();
+        result[987].LogoUrl.Should().BeNull();
+        result[987].Tags.Should().BeEquivalentTo(new[] { "sports", "news", "live" });
+    }
+
+    [Fact]
+    public void Parse_ParsesAllFieldsWithTags()
+    {
+        var input = "555=ESPN|3|http://logo.com/e.png|sports,hd,live";
+
+        var result = ChannelOverrideParser.Parse(input);
+
+        result.Should().ContainKey(555);
+        result[555].Name.Should().Be("ESPN");
+        result[555].Number.Should().Be(3);
+        result[555].LogoUrl.Should().Be("http://logo.com/e.png");
+        result[555].Tags.Should().BeEquivalentTo(new[] { "sports", "hd", "live" });
+    }
+
+    [Fact]
+    public void Parse_TrimsTagWhitespace()
+    {
+        var input = "111=||| sports , hd , live ";
+
+        var result = ChannelOverrideParser.Parse(input);
+
+        result[111].Tags.Should().BeEquivalentTo(new[] { "sports", "hd", "live" });
+    }
+
+    [Fact]
+    public void Parse_HandlesEmptyTagField()
+    {
+        var input = "222=Name|1|logo.png|";
+
+        var result = ChannelOverrideParser.Parse(input);
+
+        result[222].Name.Should().Be("Name");
+        result[222].Number.Should().Be(1);
+        result[222].LogoUrl.Should().Be("logo.png");
+        result[222].Tags.Should().BeNull();
+    }
+
     #endregion
 
     #region ApplyOverride Tests
@@ -239,6 +290,40 @@ public class ChannelOverrideParserTests
         ChannelOverrideParser.ApplyOverride(channel, channelOverride);
 
         channel.Name.Should().Be("Original");
+    }
+
+    [Fact]
+    public void ApplyOverride_AppliesTagOverride()
+    {
+        var channel = new LiveStreamInfo { StreamId = 123, Name = "News", Num = 1 };
+        var channelOverride = new ChannelOverride { StreamId = 123, Tags = new[] { "news", "hd" } };
+
+        ChannelOverrideParser.ApplyOverride(channel, channelOverride);
+
+        channel.Tags.Should().BeEquivalentTo(new[] { "news", "hd" });
+    }
+
+    [Fact]
+    public void ApplyOverride_ClearsTagsWithEmptyArray()
+    {
+        var channel = new LiveStreamInfo { StreamId = 123, Name = "News", Tags = new[] { "old" } };
+        var channelOverride = new ChannelOverride { StreamId = 123, Tags = Array.Empty<string>() };
+
+        ChannelOverrideParser.ApplyOverride(channel, channelOverride);
+
+        channel.Tags.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ApplyOverride_LeavesTagsUnchangedWhenNull()
+    {
+        var channel = new LiveStreamInfo { StreamId = 123, Name = "News", Tags = new[] { "existing" } };
+        var channelOverride = new ChannelOverride { StreamId = 123, Name = "Renamed" };
+
+        ChannelOverrideParser.ApplyOverride(channel, channelOverride);
+
+        channel.Name.Should().Be("Renamed");
+        channel.Tags.Should().BeEquivalentTo(new[] { "existing" }); // Unchanged
     }
 
     #endregion
