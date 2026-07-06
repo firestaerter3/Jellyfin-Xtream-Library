@@ -316,9 +316,16 @@ public class LiveTvService : IDisposable
     /// <returns>A dictionary mapping category id to category name (empty on failure).</returns>
     internal async Task<Dictionary<int, string>> GetCategoryNameMapAsync(CancellationToken cancellationToken)
     {
+        var config = Plugin.Instance.Configuration;
+        var liveTvProviders = ResolveLiveTvProviders(config).ToList();
+        if (liveTvProviders.Count != 1)
+        {
+            return new Dictionary<int, string>();
+        }
+
         try
         {
-            var connectionInfo = Plugin.Instance.GetCreds(0);
+            var connectionInfo = Plugin.Instance.GetCreds(liveTvProviders[0].Index);
             var categories = await _client.GetLiveCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
             var map = new Dictionary<int, string>(categories.Count);
             foreach (var category in categories)
@@ -339,24 +346,42 @@ public class LiveTvService : IDisposable
     internal async Task<List<LiveStreamInfo>> GetFilteredChannelsAsync(CancellationToken cancellationToken)
     {
         var config = Plugin.Instance.Configuration;
-        var connectionInfo = Plugin.Instance.GetCreds(0);
+        var liveTvProviders = ResolveLiveTvProviders(config).ToList();
+        var allChannels = new List<LiveStreamInfo>();
 
-        List<LiveStreamInfo> allChannels;
+        foreach (var provider in liveTvProviders)
+        {
+            var connectionInfo = Plugin.Instance.GetCreds(provider.Index);
+            var providerChannels = await GetFilteredChannelsForProviderAsync(config, connectionInfo, provider.Index, cancellationToken).ConfigureAwait(false);
+            allChannels.AddRange(providerChannels);
+        }
+
+        _logger.LogInformation("Fetched {Count} Live TV channels from {ProviderCount} provider(s)", allChannels.Count, liveTvProviders.Count);
+        return allChannels;
+    }
+
+    private async Task<List<LiveStreamInfo>> GetFilteredChannelsForProviderAsync(
+        PluginConfiguration config,
+        ConnectionInfo connectionInfo,
+        int providerIndex,
+        CancellationToken cancellationToken)
+    {
+        List<LiveStreamInfo> providerChannels;
 
         var strategy = ChooseCategoryFetchStrategy(config.LiveChannelMode, config.SelectedLiveCategoryIds.Length);
         if (strategy == CategoryFetchStrategy.AllFromProvider)
         {
-            allChannels = await _client.GetAllLiveStreamsAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
+            providerChannels = await _client.GetAllLiveStreamsAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
         }
         else if (strategy == CategoryFetchStrategy.None)
         {
             // Custom mode + nothing selected = sync nothing. Headline fix vs pre-v1.35,
             // where this branch returned every channel from the provider.
-            allChannels = new List<LiveStreamInfo>();
+            providerChannels = new List<LiveStreamInfo>();
         }
         else
         {
-            allChannels = new List<LiveStreamInfo>();
+            providerChannels = new List<LiveStreamInfo>();
             using var semaphore = new SemaphoreSlim(config.EpgParallelism);
             var tasks = config.SelectedLiveCategoryIds.Select(async categoryId =>
             {
@@ -375,37 +400,37 @@ public class LiveTvService : IDisposable
             var results = await Task.WhenAll(tasks).ConfigureAwait(false);
             foreach (var result in results)
             {
-                allChannels.AddRange(result);
+                providerChannels.AddRange(result);
             }
 
-            // Remove duplicates by StreamId
-            allChannels = allChannels.GroupBy(c => c.StreamId).Select(g => g.First()).ToList();
+            // Remove duplicates by StreamId within each provider while allowing the same id across providers.
+            providerChannels = providerChannels.GroupBy(c => c.StreamId).Select(g => g.First()).ToList();
         }
 
         // Filter adult channels
         if (!config.IncludeAdultChannels)
         {
-            allChannels = allChannels.Where(c => !c.IsAdult).ToList();
+            providerChannels = providerChannels.Where(c => !c.IsAdult).ToList();
         }
 
         // Apply per-channel exclusions only in Custom mode (IncludeAll deliberately ignores them).
         if (config.LiveChannelMode == LiveChannelSelectionMode.Custom)
         {
-            allChannels = FilterExcludedChannels(allChannels, config.ExcludedLiveStreamIds);
+            providerChannels = FilterExcludedChannels(providerChannels, config.ExcludedLiveStreamIds);
         }
 
         // Apply channel overrides
         var overrides = ChannelOverrideParser.Parse(config.ChannelOverrides);
-        foreach (var channel in allChannels)
+        foreach (var channel in providerChannels)
         {
+            channel.ProviderIndex = providerIndex;
             if (overrides.TryGetValue(channel.StreamId, out var channelOverride))
             {
                 ChannelOverrideParser.ApplyOverride(channel, channelOverride);
             }
         }
 
-        _logger.LogInformation("Fetched {Count} Live TV channels", allChannels.Count);
-        return allChannels;
+        return providerChannels;
     }
 
     /// <summary>
@@ -509,7 +534,7 @@ public class LiveTvService : IDisposable
 
     internal static string BuildStreamUrl(PluginConfiguration config, LiveStreamInfo channel)
     {
-        var (baseUrl, username, password) = ResolveLiveTvProvider(config);
+        var (baseUrl, username, password) = ResolveLiveTvProvider(config, channel.ProviderIndex);
         var extension = string.Equals(config.LiveTvOutputFormat, "ts", StringComparison.OrdinalIgnoreCase) ? "ts" : "m3u8";
         return string.Create(CultureInfo.InvariantCulture, $"{baseUrl}/live/{username}/{password}/{channel.StreamId}.{extension}");
     }
@@ -521,22 +546,36 @@ public class LiveTvService : IDisposable
         // {start} = program start timestamp
         // {end} = program end timestamp
         // {duration} = duration in seconds
-        var (baseUrl, username, password) = ResolveLiveTvProvider(config);
+        var (baseUrl, username, password) = ResolveLiveTvProvider(config, channel.ProviderIndex);
         return string.Create(CultureInfo.InvariantCulture, $"{baseUrl}/timeshift/{username}/{password}/{{duration}}/{{start}}/{channel.StreamId}.ts");
     }
 
     // Resolves credentials for the Live TV provider. Reads Providers[0] when populated
     // (the multi-provider data model since v1.32), falling back to the legacy single-provider
     // fields for any pre-migration config still in flight. See BUG-008 in BUGS.md.
-    internal static (string BaseUrl, string Username, string Password) ResolveLiveTvProvider(PluginConfiguration config)
+    internal static (string BaseUrl, string Username, string Password) ResolveLiveTvProvider(PluginConfiguration config, int providerIndex = 0)
     {
-        var p = config.Providers.FirstOrDefault();
+        var p = config.Providers.ElementAtOrDefault(providerIndex) ?? config.Providers.FirstOrDefault();
         if (p != null && !string.IsNullOrEmpty(p.BaseUrl))
         {
             return (p.BaseUrl, p.Username, p.Password);
         }
 
         return (config.BaseUrl, config.Username, config.Password);
+    }
+
+    internal static IEnumerable<(int Index, ProviderConfig Provider)> ResolveLiveTvProviders(PluginConfiguration config)
+    {
+        for (var i = 0; i < config.Providers.Count; i++)
+        {
+            var provider = config.Providers[i];
+            if (provider.IsEnabled
+                && !string.IsNullOrEmpty(provider.BaseUrl)
+                && !string.IsNullOrEmpty(provider.Username))
+            {
+                yield return (i, provider);
+            }
+        }
     }
 
     private async Task<string> GenerateXmltvAsync(List<LiveStreamInfo> channels, PluginConfiguration config, string baseUrl, CancellationToken cancellationToken)
@@ -553,7 +592,7 @@ public class LiveTvService : IDisposable
                 config.ChannelRemoveTerms,
                 config.EnableChannelNameCleaning);
 
-            var channelId = XtreamTunerHost.ChannelIdPrefix + channel.StreamId.ToString(CultureInfo.InvariantCulture);
+            var channelId = XtreamTunerHost.BuildChannelId(channel.ProviderIndex, channel.StreamId);
 
             sb.Append(CultureInfo.InvariantCulture, $"  <channel id=\"{EscapeXml(channelId)}\">\n");
             sb.Append(CultureInfo.InvariantCulture, $"    <display-name>{EscapeXml(cleanName)}</display-name>\n");
@@ -569,15 +608,13 @@ public class LiveTvService : IDisposable
         // Fetch EPG data if enabled
         if (config.EnableEpg)
         {
-            var connectionInfo = Plugin.Instance.GetCreds(0);
-
-            // Build map: upstream epg_channel_id -> our xtream_{streamId} id
+            // Build map: upstream epg_channel_id -> our xtream_ id
             var idMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var ch in channels)
             {
                 if (!string.IsNullOrEmpty(ch.EpgChannelId))
                 {
-                    idMap[ch.EpgChannelId] = XtreamTunerHost.ChannelIdPrefix + ch.StreamId.ToString(CultureInfo.InvariantCulture);
+                    idMap[ch.EpgChannelId] = XtreamTunerHost.BuildChannelId(ch.ProviderIndex, ch.StreamId);
                 }
             }
 
@@ -586,7 +623,7 @@ public class LiveTvService : IDisposable
             var passthroughCount = 0;
             if (idMap.Count > 0)
             {
-                var upstreamXml = await _client.GetXmltvAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
+                var upstreamXml = await GetMergedXmltvAsync(channels, cancellationToken).ConfigureAwait(false);
                 if (!string.IsNullOrEmpty(upstreamXml))
                 {
                     passthroughCount = AppendUpstreamProgrammes(sb, upstreamXml, idMap, config, cancellationToken);
@@ -597,7 +634,7 @@ public class LiveTvService : IDisposable
             if (passthroughCount == 0)
             {
                 _logger.LogInformation("Upstream XMLTV unavailable or empty; falling back to per-channel JSON EPG");
-                var epgData = await FetchEpgDataAsync(channels, connectionInfo, config, cancellationToken).ConfigureAwait(false);
+                var epgData = await FetchEpgDataAsync(channels, config, cancellationToken).ConfigureAwait(false);
 
                 foreach (var program in epgData.OrderBy(p => p.StartTimestamp))
                 {
@@ -755,9 +792,24 @@ public class LiveTvService : IDisposable
         return true;
     }
 
+    private async Task<string?> GetMergedXmltvAsync(List<LiveStreamInfo> channels, CancellationToken cancellationToken)
+    {
+        var fragments = new List<string>();
+        foreach (var providerIndex in channels.Select(c => c.ProviderIndex).Distinct())
+        {
+            var connectionInfo = Plugin.Instance.GetCreds(providerIndex);
+            var xml = await _client.GetXmltvAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrEmpty(xml))
+            {
+                fragments.Add(xml);
+            }
+        }
+
+        return fragments.Count == 0 ? null : string.Join('\n', fragments);
+    }
+
     private async Task<List<EpgProgram>> FetchEpgDataAsync(
         List<LiveStreamInfo> channels,
-        ConnectionInfo connectionInfo,
         PluginConfiguration config,
         CancellationToken cancellationToken)
     {
@@ -776,6 +828,7 @@ public class LiveTvService : IDisposable
             try
             {
                 // Use get_simple_data_table which returns more EPG data
+                var connectionInfo = Plugin.Instance.GetCreds(channel.ProviderIndex);
                 var epgListings = await _client.GetSimpleDataTableAsync(connectionInfo, channel.StreamId, cancellationToken).ConfigureAwait(false);
 
                 if (epgListings?.Listings == null)
@@ -784,7 +837,7 @@ public class LiveTvService : IDisposable
                 }
 
                 // Map channel ID to match the native tuner's xtream_ prefix
-                var channelId = XtreamTunerHost.ChannelIdPrefix + channel.StreamId.ToString(CultureInfo.InvariantCulture);
+                var channelId = XtreamTunerHost.BuildChannelId(channel.ProviderIndex, channel.StreamId);
 
                 foreach (var program in epgListings.Listings)
                 {

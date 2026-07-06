@@ -239,6 +239,41 @@ public class LiveTvServiceTests
         url.Should().NotContain("///");
     }
 
+    [Fact]
+    public void BuildStreamUrl_MultipleLiveTvProviders_UsesChannelProviderCredentials()
+    {
+        var config = new PluginConfiguration { LiveTvOutputFormat = "ts" };
+        config.Providers.Add(new ProviderConfig
+        {
+            BaseUrl = "http://provider-a.example.com",
+            Username = "user-a",
+            Password = "pass-a",
+        });
+        config.Providers.Add(new ProviderConfig
+        {
+            BaseUrl = "http://provider-b.example.com",
+            Username = "user-b",
+            Password = "pass-b",
+        });
+
+        var channel = new LiveStreamInfo { ProviderIndex = 1, StreamId = 2420044, Name = "X", Num = 1 };
+        var url = LiveTvService.BuildStreamUrl(config, channel);
+
+        url.Should().Be("http://provider-b.example.com/live/user-b/pass-b/2420044.ts");
+    }
+
+    [Fact]
+    public void BuildChannelId_ProviderZero_KeepsLegacyShape()
+    {
+        XtreamTunerHost.BuildChannelId(providerIndex: 0, streamId: 100).Should().Be("xtream_100");
+    }
+
+    [Fact]
+    public void BuildChannelId_AdditionalProvider_IncludesProviderIndex()
+    {
+        XtreamTunerHost.BuildChannelId(providerIndex: 1, streamId: 100).Should().Be("xtream_1_100");
+    }
+
     // BUG-011: Live TV channels appeared as one flat list because GenerateM3U never
     // emitted group-title. These pin the category grouping behaviour.
 

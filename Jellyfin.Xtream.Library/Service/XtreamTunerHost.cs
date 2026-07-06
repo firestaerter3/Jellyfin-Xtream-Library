@@ -53,8 +53,8 @@ public class XtreamTunerHost : ITunerHost
     private readonly LiveTvService _liveTvService;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<XtreamTunerHost> _logger;
-    private volatile Dictionary<string, int> _channelNumberToStreamId = new();
-    private volatile Dictionary<int, StreamStatsInfo> _streamStats = new();
+    private volatile Dictionary<string, string> _channelNumberToChannelId = new();
+    private volatile Dictionary<string, StreamStatsInfo> _streamStats = new();
     private List<ChannelInfo>? _cachedChannels;
     private DateTime _cacheTime = DateTime.MinValue;
 
@@ -105,27 +105,28 @@ public class XtreamTunerHost : ITunerHost
         var channels = await _liveTvService.GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
         var categoryNames = await _liveTvService.GetCategoryNameMapAsync(cancellationToken).ConfigureAwait(false);
 
-        var newMap = new Dictionary<string, int>(channels.Count);
-        var newStats = new Dictionary<int, StreamStatsInfo>(channels.Count);
+        var newMap = new Dictionary<string, string>(channels.Count);
+        var newStats = new Dictionary<string, StreamStatsInfo>(channels.Count);
         int statsCount = 0;
 
         var result = channels.Select(channel =>
         {
             var channelNumber = channel.Num.ToString(CultureInfo.InvariantCulture);
+            var channelId = BuildChannelId(channel.ProviderIndex, channel.StreamId);
 
-            if (!newMap.TryAdd(channelNumber, channel.StreamId))
+            if (!newMap.TryAdd(channelNumber, channelId))
             {
                 _logger.LogWarning(
-                    "Duplicate channel number {Num} — stream {OldStreamId} overwritten by {NewStreamId}",
+                    "Duplicate channel number {Num} - channel {OldChannelId} overwritten by {NewChannelId}",
                     channelNumber,
                     newMap[channelNumber],
-                    channel.StreamId);
-                newMap[channelNumber] = channel.StreamId;
+                    channelId);
+                newMap[channelNumber] = channelId;
             }
 
             if (channel.StreamStats != null)
             {
-                newStats[channel.StreamId] = channel.StreamStats;
+                newStats[channelId] = channel.StreamStats;
                 statsCount++;
             }
 
@@ -136,7 +137,7 @@ public class XtreamTunerHost : ITunerHost
 
             return new ChannelInfo
             {
-                Id = ChannelIdPrefix + channel.StreamId.ToString(CultureInfo.InvariantCulture),
+                Id = channelId,
                 Name = cleanName,
                 Number = channelNumber,
                 ImageUrl = _liveTvService.ResolveChannelLogoUrl(channel.StreamIcon, channel.StreamId),
@@ -149,7 +150,7 @@ public class XtreamTunerHost : ITunerHost
             };
         }).ToList();
 
-        _channelNumberToStreamId = newMap;
+        _channelNumberToChannelId = newMap;
         _streamStats = newStats;
         _cachedChannels = result;
         _cacheTime = DateTime.UtcNow;
@@ -163,17 +164,18 @@ public class XtreamTunerHost : ITunerHost
     {
         await EnsureChannelsLoadedAsync(cancellationToken).ConfigureAwait(false);
 
-        if (!TryParseStreamId(channelId, out var streamId))
+        if (!TryParseChannelId(channelId, out var providerIndex, out var streamId))
         {
             return new List<MediaSourceInfo>();
         }
 
         var config = Plugin.Instance.Configuration;
-        var streamUrl = BuildStreamUrl(config, streamId);
-        _streamStats.TryGetValue(streamId, out var stats);
+        var streamUrl = BuildStreamUrl(config, providerIndex, streamId);
+        var canonicalChannelId = BuildChannelId(providerIndex, streamId);
+        _streamStats.TryGetValue(canonicalChannelId, out var stats);
         var isHls = !string.Equals(config.LiveTvOutputFormat, "ts", StringComparison.OrdinalIgnoreCase);
 
-        var mediaSource = CreateMediaSourceInfo(streamId, streamUrl, stats, isHls, _logger);
+        var mediaSource = CreateMediaSourceInfo(canonicalChannelId, streamUrl, stats, isHls, _logger);
 
         return new List<MediaSourceInfo> { mediaSource };
     }
@@ -183,17 +185,18 @@ public class XtreamTunerHost : ITunerHost
     {
         await EnsureChannelsLoadedAsync(cancellationToken).ConfigureAwait(false);
 
-        if (!TryParseStreamId(channelId, out var parsedStreamId))
+        if (!TryParseChannelId(channelId, out var providerIndex, out var parsedStreamId))
         {
             throw new System.IO.FileNotFoundException($"Channel {channelId} not found in Xtream tuner");
         }
 
         var config = Plugin.Instance.Configuration;
-        var streamUrl = BuildStreamUrl(config, parsedStreamId);
-        _streamStats.TryGetValue(parsedStreamId, out var stats);
+        var streamUrl = BuildStreamUrl(config, providerIndex, parsedStreamId);
+        var canonicalChannelId = BuildChannelId(providerIndex, parsedStreamId);
+        _streamStats.TryGetValue(canonicalChannelId, out var stats);
         var isHls = !string.Equals(config.LiveTvOutputFormat, "ts", StringComparison.OrdinalIgnoreCase);
 
-        var mediaSource = CreateMediaSourceInfo(parsedStreamId, streamUrl, stats, isHls, _logger);
+        var mediaSource = CreateMediaSourceInfo(canonicalChannelId, streamUrl, stats, isHls, _logger);
 
         var httpClient = _httpClientFactory.CreateClient();
         ILiveStream liveStream = new XtreamLiveStream(mediaSource, httpClient, _logger);
@@ -218,25 +221,35 @@ public class XtreamTunerHost : ITunerHost
         }
     }
 
-    private bool TryParseStreamId(string channelId, out int streamId)
+    private bool TryParseChannelId(string channelId, out int providerIndex, out int streamId)
     {
+        providerIndex = 0;
         streamId = 0;
 
-        // Our own prefix: xtream_<streamId>
+        // Our own prefixes: xtream_<streamId> for provider 0, xtream_<providerIndex>_<streamId> for others.
         if (channelId.StartsWith(ChannelIdPrefix, StringComparison.Ordinal))
         {
-            return int.TryParse(channelId.AsSpan(ChannelIdPrefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out streamId);
+            var idPart = channelId.AsSpan(ChannelIdPrefix.Length);
+            var separator = idPart.IndexOf('_');
+            if (separator < 0)
+            {
+                return int.TryParse(idPart, NumberStyles.None, CultureInfo.InvariantCulture, out streamId);
+            }
+
+            return int.TryParse(idPart[..separator], NumberStyles.None, CultureInfo.InvariantCulture, out providerIndex)
+                && int.TryParse(idPart[(separator + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out streamId);
         }
 
         // Jellyfin remaps tuner channel IDs to hdhr_<channelNumber>
         if (channelId.StartsWith(JellyfinTunerPrefix, StringComparison.Ordinal))
         {
             var channelNumber = channelId.Substring(JellyfinTunerPrefix.Length);
-            var currentMap = _channelNumberToStreamId;
+            var currentMap = _channelNumberToChannelId;
 
-            if (currentMap.TryGetValue(channelNumber, out streamId))
+            if (currentMap.TryGetValue(channelNumber, out var mappedChannelId)
+                && TryParseChannelId(mappedChannelId, out providerIndex, out streamId))
             {
-                _logger.LogDebug("Resolved {ChannelId} via hdhr_ prefix to stream {StreamId}", channelId, streamId);
+                _logger.LogDebug("Resolved {ChannelId} via hdhr_ prefix to {MappedChannelId}", channelId, mappedChannelId);
                 return true;
             }
 
@@ -261,16 +274,23 @@ public class XtreamTunerHost : ITunerHost
         return false;
     }
 
-    private static string BuildStreamUrl(PluginConfiguration config, int streamId)
+    private static string BuildStreamUrl(PluginConfiguration config, int providerIndex, int streamId)
     {
-        var (baseUrl, username, password) = LiveTvService.ResolveLiveTvProvider(config);
+        var (baseUrl, username, password) = LiveTvService.ResolveLiveTvProvider(config, providerIndex);
         var extension = string.Equals(config.LiveTvOutputFormat, "ts", StringComparison.OrdinalIgnoreCase) ? "ts" : "m3u8";
         return string.Create(CultureInfo.InvariantCulture, $"{baseUrl}/live/{username}/{password}/{streamId}.{extension}");
     }
 
-    private static MediaSourceInfo CreateMediaSourceInfo(int streamId, string streamUrl, StreamStatsInfo? stats, bool isHls, ILogger logger)
+    internal static string BuildChannelId(int providerIndex, int streamId)
     {
-        var sourceId = "xtream_live_" + streamId.ToString(CultureInfo.InvariantCulture);
+        return providerIndex == 0
+            ? ChannelIdPrefix + streamId.ToString(CultureInfo.InvariantCulture)
+            : string.Create(CultureInfo.InvariantCulture, $"{ChannelIdPrefix}{providerIndex}_{streamId}");
+    }
+
+    private static MediaSourceInfo CreateMediaSourceInfo(string channelId, string streamUrl, StreamStatsInfo? stats, bool isHls, ILogger logger)
+    {
+        var sourceId = "xtream_live_" + channelId;
         bool hasStats = stats?.VideoCodec != null;
 
         var mediaSource = new MediaSourceInfo
@@ -335,8 +355,8 @@ public class XtreamTunerHost : ITunerHost
             mediaSource.MediaStreams = mediaStreams;
 
             logger.LogDebug(
-                "Stream {StreamId}: using stats — {VideoCodec} {Width}x{Height} @{Fps}fps, audio {AudioCodec}",
-                streamId,
+                "Channel {ChannelId}: using stats - {VideoCodec} {Width}x{Height} @{Fps}fps, audio {AudioCodec}",
+                channelId,
                 videoCodec,
                 width,
                 height,
@@ -363,7 +383,7 @@ public class XtreamTunerHost : ITunerHost
                     Index = 1,
                 },
             };
-            logger.LogDebug("Stream {StreamId}: no stats available, will probe", streamId);
+            logger.LogDebug("Channel {ChannelId}: no stats available, will probe", channelId);
         }
 
         return mediaSource;
