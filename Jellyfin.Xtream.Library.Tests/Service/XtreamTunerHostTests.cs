@@ -382,6 +382,88 @@ public class XtreamTunerHostTests : IDisposable
     }
 
     [Fact]
+    public async Task GetChannelStreamMediaSources_AdditionalProviderChannel_UsesProviderCredentials()
+    {
+        var config = Plugin.Instance.Configuration;
+        config.BaseUrl = string.Empty;
+        config.Username = string.Empty;
+        config.Password = string.Empty;
+        config.LiveTvOutputFormat = "ts";
+        config.Providers.Clear();
+        config.Providers.Add(new ProviderConfig
+        {
+            BaseUrl = "http://provider-a.example.com",
+            Username = "user-a",
+            Password = "pass-a",
+            IsEnabled = true,
+        });
+        config.Providers.Add(new ProviderConfig
+        {
+            BaseUrl = "http://provider-b.example.com",
+            Username = "user-b",
+            Password = "pass-b",
+            IsEnabled = true,
+        });
+
+        var result = await _tunerHost.GetChannelStreamMediaSources("xtream_1_100", CancellationToken.None);
+
+        result.Should().HaveCount(1);
+        result[0].Path.Should().Be("http://provider-b.example.com/live/user-b/pass-b/100.ts");
+    }
+
+    [Fact]
+    public async Task GetChannels_DuplicateStreamIdsAcrossProviders_ReturnsUniqueChannelIds()
+    {
+        var config = Plugin.Instance.Configuration;
+        config.EnableLiveTv = true;
+        config.EnableNativeTuner = true;
+        config.EnableChannelNameCleaning = false;
+        config.Providers.Clear();
+        config.Providers.Add(new ProviderConfig { BaseUrl = "http://provider-a.example.com", Username = "user-a", Password = "pass-a", IsEnabled = true });
+        config.Providers.Add(new ProviderConfig { BaseUrl = "http://provider-b.example.com", Username = "user-b", Password = "pass-b", IsEnabled = true });
+
+        _mockClient
+            .SetupSequence(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiveStreamInfo> { new() { StreamId = 100, Name = "Provider A", Num = 1 } })
+            .ReturnsAsync(new List<LiveStreamInfo> { new() { StreamId = 100, Name = "Provider B", Num = 2 } });
+
+        var result = await _tunerHost.GetChannels(false, CancellationToken.None);
+
+        result.Select(c => c.Id).Should().Equal("xtream_100", "xtream_1_100");
+    }
+
+    [Fact]
+    public async Task GetChannelStream_WithHdhrPrefix_UsesMappedProviderCredentials()
+    {
+        var config = Plugin.Instance.Configuration;
+        config.EnableLiveTv = true;
+        config.EnableNativeTuner = true;
+        config.EnableChannelNameCleaning = false;
+        config.LiveTvOutputFormat = "m3u8";
+        config.Providers.Clear();
+        config.Providers.Add(new ProviderConfig { BaseUrl = "http://provider-a.example.com", Username = "user-a", Password = "pass-a", IsEnabled = true });
+        config.Providers.Add(new ProviderConfig { BaseUrl = "http://provider-b.example.com", Username = "user-b", Password = "pass-b", IsEnabled = true });
+
+        _mockClient
+            .SetupSequence(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiveStreamInfo> { new() { StreamId = 100, Name = "Provider A", Num = 1 } })
+            .ReturnsAsync(new List<LiveStreamInfo> { new() { StreamId = 200, Name = "Provider B", Num = 2 } });
+
+        await _tunerHost.GetChannels(false, CancellationToken.None);
+        _mockHttpClientFactory
+            .Setup(f => f.CreateClient(It.IsAny<string>()))
+            .Returns(new HttpClient());
+
+        var result = await _tunerHost.GetChannelStream(
+            "hdhr_2",
+            string.Empty,
+            new List<MediaBrowser.Controller.Library.ILiveStream>(),
+            CancellationToken.None);
+
+        result.MediaSource.Path.Should().Be("http://provider-b.example.com/live/user-b/pass-b/200.m3u8");
+    }
+
+    [Fact]
     public async Task GetChannelStreamMediaSources_ReturnsEmpty_ForNonXtreamChannelId()
     {
         var result = await _tunerHost.GetChannelStreamMediaSources("m3u_016d53793ce443da", CancellationToken.None);

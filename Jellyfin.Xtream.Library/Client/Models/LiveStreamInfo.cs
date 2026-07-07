@@ -77,4 +77,11 @@ public class LiveStreamInfo
     /// </summary>
     [JsonIgnore]
     public string[]? Tags { get; set; }
+
+    /// <summary>
+    /// Gets or sets the zero-based provider index this channel came from.
+    /// Not from the Xtream API - populated when Live TV merges multiple providers.
+    /// </summary>
+    [JsonIgnore]
+    public int ProviderIndex { get; set; }
 }
