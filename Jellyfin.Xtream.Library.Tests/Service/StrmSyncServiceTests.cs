@@ -1086,6 +1086,75 @@ public class StrmSyncServiceTests
 
     #endregion
 
+    #region HasCompleteExistingSeriesFolders Tests
+
+    [Fact]
+    public void HasCompleteExistingSeriesFolders_SuffixFolderWithEnoughStrms_ReturnsTrue()
+    {
+        var seriesPath = Path.Combine(Path.GetTempPath(), "Series");
+        var folderLookup = new Dictionary<string, (string Path, int Count)>(StringComparer.OrdinalIgnoreCase)
+        {
+            [seriesPath + "|Zoey 101"] = (Path.Combine(seriesPath, "Zoey 101 [tmdbid-1778]"), 4),
+        };
+
+        var result = StrmSyncService.HasCompleteExistingSeriesFolders(
+            seriesPath,
+            "Zoey 101",
+            new[] { 1 },
+            new Dictionary<int, List<string>>(),
+            folderLookup,
+            expectedEpisodeCount: 4);
+
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public void HasCompleteExistingSeriesFolders_SuffixFolderWithNoStrms_ReturnsFalse()
+    {
+        var seriesPath = Path.Combine(Path.GetTempPath(), "Series");
+        var folderLookup = new Dictionary<string, (string Path, int Count)>(StringComparer.OrdinalIgnoreCase)
+        {
+            [seriesPath + "|Zoey 101"] = (Path.Combine(seriesPath, "Zoey 101 [tmdbid-1778]"), 0),
+        };
+
+        var result = StrmSyncService.HasCompleteExistingSeriesFolders(
+            seriesPath,
+            "Zoey 101",
+            new[] { 1 },
+            new Dictionary<int, List<string>>(),
+            folderLookup,
+            expectedEpisodeCount: 1);
+
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public void HasCompleteExistingSeriesFolders_MappedFolderMissingStrms_ReturnsFalse()
+    {
+        var seriesPath = Path.Combine(Path.GetTempPath(), "Series");
+        var kidsPath = Path.Combine(seriesPath, "Kids");
+        var folderMappings = new Dictionary<int, List<string>>
+        {
+            [5] = new List<string> { "Kids" },
+        };
+        var folderLookup = new Dictionary<string, (string Path, int Count)>(StringComparer.OrdinalIgnoreCase)
+        {
+            [kidsPath + "|Zoey 101"] = (Path.Combine(kidsPath, "Zoey 101 [tmdbid-1778]"), 0),
+        };
+
+        var result = StrmSyncService.HasCompleteExistingSeriesFolders(
+            seriesPath,
+            "Zoey 101",
+            new[] { 5 },
+            folderMappings,
+            folderLookup,
+            expectedEpisodeCount: 3);
+
+        result.Should().BeFalse();
+    }
+
+    #endregion
+
     #region SanitizeFileName Empty Brackets Tests
 
     [Fact]
