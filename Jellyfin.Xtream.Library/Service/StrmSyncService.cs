@@ -2218,8 +2218,21 @@ public partial class StrmSyncService
                         var checksum = SnapshotService.CalculateChecksum(s.Series, prev.EpisodeCount);
                         if (prev.Checksum == checksum)
                         {
-                            unchangedSeries.Add(s);
-                            return false; // Unchanged
+                            string seriesName = SanitizeFileName(s.Series.Name, provider.CustomTitleRemoveTerms);
+                            int? year = ExtractYear(s.Series.Name);
+                            string baseName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
+
+                            if (HasCompleteExistingSeriesFolders(seriesPath, baseName, s.CategoryIds, folderMappings, seriesFolderLookup, prev.EpisodeCount))
+                            {
+                                unchangedSeries.Add(s);
+                                return false; // Unchanged and locally complete
+                            }
+
+                            _logger.LogInformation(
+                                "Incremental sync: repairing series {SeriesName} ({SeriesId}) because local STRM files are missing (expected at least {ExpectedCount})",
+                                s.Series.Name,
+                                s.Series.SeriesId,
+                                prev.EpisodeCount);
                         }
                     }
 
@@ -2233,22 +2246,7 @@ public partial class StrmSyncService
                     int? year = ExtractYear(s.Series.Name);
                     string baseName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
 
-                    var targetFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    foreach (var categoryId in s.CategoryIds)
-                    {
-                        if (folderMappings.TryGetValue(categoryId, out var mappedFolders))
-                        {
-                            foreach (var folder in mappedFolders)
-                            {
-                                targetFolders.Add(folder);
-                            }
-                        }
-                    }
-
-                    if (targetFolders.Count == 0)
-                    {
-                        targetFolders.Add(string.Empty);
-                    }
+                    var targetFolders = BuildSeriesTargetFolders(s.CategoryIds, folderMappings);
 
                     foreach (var targetFolder in targetFolders)
                     {
@@ -2925,6 +2923,59 @@ public partial class StrmSyncService
         }
 
         return TruncateFileNameToFsLimit(ApplyFileNameRegexPatterns(fileName, regexRemovalPatterns));
+    }
+
+    internal static bool HasCompleteExistingSeriesFolders(
+        string seriesPath,
+        string baseName,
+        IEnumerable<int> categoryIds,
+        Dictionary<int, List<string>> folderMappings,
+        Dictionary<string, (string Path, int Count)> seriesFolderLookup,
+        int expectedEpisodeCount)
+    {
+        if (expectedEpisodeCount <= 0)
+        {
+            return true;
+        }
+
+        foreach (var targetFolder in BuildSeriesTargetFolders(categoryIds, folderMappings))
+        {
+            string seriesBasePath = string.IsNullOrEmpty(targetFolder)
+                ? seriesPath
+                : Path.Combine(seriesPath, targetFolder);
+            var lookupKey = seriesBasePath + "|" + baseName;
+            if (!seriesFolderLookup.TryGetValue(lookupKey, out var match) ||
+                match.Count < expectedEpisodeCount)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static HashSet<string> BuildSeriesTargetFolders(
+        IEnumerable<int> categoryIds,
+        Dictionary<int, List<string>> folderMappings)
+    {
+        var targetFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var categoryId in categoryIds)
+        {
+            if (folderMappings.TryGetValue(categoryId, out var mappedFolders))
+            {
+                foreach (var folder in mappedFolders)
+                {
+                    targetFolders.Add(folder);
+                }
+            }
+        }
+
+        if (targetFolders.Count == 0)
+        {
+            targetFolders.Add(string.Empty);
+        }
+
+        return targetFolders;
     }
 
     internal static string SanitizeFileName(string? name, string? customRemoveTerms = null)
