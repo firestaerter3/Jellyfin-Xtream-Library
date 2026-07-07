@@ -109,7 +109,8 @@ public class XtreamTunerHost : ITunerHost
         var newStats = new Dictionary<string, StreamStatsInfo>(channels.Count);
         int statsCount = 0;
 
-        var result = channels.Select(channel =>
+        var result = new List<ChannelInfo>(channels.Count);
+        foreach (var channel in channels)
         {
             var channelNumber = channel.Num.ToString(CultureInfo.InvariantCulture);
             var channelId = BuildChannelId(channel.ProviderIndex, channel.StreamId);
@@ -135,7 +136,7 @@ public class XtreamTunerHost : ITunerHost
                 config.ChannelRemoveTerms,
                 config.EnableChannelNameCleaning);
 
-            return new ChannelInfo
+            result.Add(new ChannelInfo
             {
                 Id = channelId,
                 Name = cleanName,
@@ -147,8 +148,8 @@ public class XtreamTunerHost : ITunerHost
                     ? categoryName
                     : null,
                 Tags = channel.Tags,
-            };
-        }).ToList();
+            });
+        }
 
         _channelNumberToChannelId = newMap;
         _streamStats = newStats;
