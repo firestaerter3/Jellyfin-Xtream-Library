@@ -1,0 +1,92 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      existing_tag:
+        description: 'Rebuild and upload assets for an existing release tag (e.g. v1.42.0.0)'
+        required: false
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.existing_tag }}" ]; then
+            echo "version=${{ github.event.inputs.existing_tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.version }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build -c Release --no-restore
+
+      - name: Publish
+        run: |
+          VERSION=${{ steps.tag.outputs.version }}
+          mkdir -p output
+          dotnet publish Jellyfin.Xtream.Library/Jellyfin.Xtream.Library.csproj \
+            -c Release \
+            --no-build \
+            -o output/plugin
+
+      - name: Package
+        run: |
+          VERSION=${{ steps.tag.outputs.version }}
+          cd output/plugin
+          zip -r "../jellyfin-xtream-library_${VERSION}.zip" .
+          cd ../..
+          ls -la output/
+
+      - name: Upload Release Asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${{ steps.tag.outputs.version }}
+          ZIP="output/jellyfin-xtream-library_${VERSION}.zip"
+          
+          # Find the release ID
+          RELEASE_ID=$(curl -s \
+            -H "Authorization: token ${GITHUB_TOKEN}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${VERSION}" \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))")
+          
+          if [ -z "$RELEASE_ID" ]; then
+            echo "Release $VERSION not found. Creating..."
+            RELEASE_JSON=$(curl -s -X POST \
+              -H "Authorization: token ${GITHUB_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"tag_name\":\"${VERSION}\",\"name\":\"${VERSION}\",\"draft\":false,\"prerelease\":false}" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases")
+            RELEASE_ID=$(echo "$RELEASE_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))")
+          fi
+          
+          echo "Release ID: $RELEASE_ID"
+          
+          # Upload asset
+          curl -s -X POST \
+            -H "Authorization: token ${GITHUB_TOKEN}" \
+            -H "Content-Type: application/zip" \
+            --data-binary @"${ZIP}" \
+            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=jellyfin-xtream-library_${VERSION}.zip"
