@@ -54,10 +54,12 @@ jobs:
       - name: Package
         run: |
           VERSION=${{ steps.tag.outputs.version }}
+          # Only publish plugin DLL, not framework deps (Jellyfin ships those)
           cd output/plugin
-          zip -r "../jellyfin-xtream-library_${VERSION}.zip" .
+          zip -j "../jellyfin-xtream-library_${VERSION}.zip" Jellyfin.Xtream.Library.dll
           cd ../..
-          ls -la output/
+          echo "Package size:"
+          ls -lh output/*.zip
 
       - name: Upload Release Asset
         env:
