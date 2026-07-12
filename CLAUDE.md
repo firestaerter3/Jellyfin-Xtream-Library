@@ -65,7 +65,7 @@ git push origin main --tags
 dotnet publish Jellyfin.Xtream.Library -c Release -o /tmp/claude/xtream-library-release
 cd /tmp/claude/xtream-library-release
 zip -j /tmp/claude/jellyfin-xtream-library_X.Y.Z.0.zip Jellyfin.Xtream.Library.dll
-md5 -q /tmp/claude/jellyfin-xtream-library_X.Y.Z.0.zip  # Get checksum
+openssl md5 /tmp/claude/jellyfin-xtream-library_X.Y.Z.0.zip | awk '{print $NF}'  # Get checksum (portable: macOS + Linux)
 ```
 
 ### 4. Create GitHub Release
