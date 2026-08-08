@@ -730,8 +730,17 @@
 
                         <div class="verticalSection">
                             <h3 class="sectionTitle">Movie Categories</h3>
-                            <div class="fieldDescription" id="vodCategoryDescription">
-                                Select specific categories to sync. Leave all unchecked to sync all categories.
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="selMovieCategoriesMode">Categories Mode</label>
+                                <select is="emby-select" id="selMovieCategoriesMode" name="MovieCategoriesMode">
+                                    <option value="Include">Include</option>
+                                    <option value="Exclude">Exclude</option>
+                                </select>
+                                <div class="fieldDescription">
+                                    Include: Select specific categories to sync.<br/>
+                                    Exclude: Select categories to exclude from syncing.<br/>
+                                    Leave all unchecked to sync all categories.
+                                </div>
                             </div>
                             <div>
                                 <button is="emby-button" type="button" id="btnLoadVodCategories" class="raised button-submit">
@@ -813,8 +822,17 @@
 
                         <div class="verticalSection">
                             <h3 class="sectionTitle">Series Categories</h3>
-                            <div class="fieldDescription" id="seriesCategoryDescription">
-                                Select specific categories to sync. Leave all unchecked to sync all categories.
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="selSeriesCategoriesMode">Categories Mode</label>
+                                <select is="emby-select" id="selSeriesCategoriesMode" name="SeriesCategoriesMode">
+                                    <option value="Include">Include</option>
+                                    <option value="Exclude">Exclude</option>
+                                </select>
+                                <div class="fieldDescription">
+                                    Include: Select specific categories to sync.<br/>
+                                    Exclude: Select categories to exclude from syncing.<br/>
+                                    Leave all unchecked to sync all categories.
+                                </div>
                             </div>
                             <div>
                                 <button is="emby-button" type="button" id="btnLoadSeriesCategories" class="raised button-submit">

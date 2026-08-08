@@ -57,6 +57,8 @@ const XtreamLibraryConfig = {
             ExcludedSeriesIds: [],
             MovieFolderMode: 'Single',
             SeriesFolderMode: 'Single',
+            MovieCategoriesMode: 'Include',
+            SeriesCategoriesMode: 'Include',
             MovieFolderMappings: '',
             SeriesFolderMappings: '',
             TmdbFolderIdOverrides: '',
@@ -128,6 +130,9 @@ const XtreamLibraryConfig = {
 
         document.getElementById('selMovieFolderMode').value = p.MovieFolderMode || 'Single';
         document.getElementById('selSeriesFolderMode').value = p.SeriesFolderMode || 'Single';
+        
+        document.getElementById('selMovieCategoriesMode').value = p.MovieCategoriesMode || 'Include';
+        document.getElementById('selSeriesCategoriesMode').value = p.SeriesCategoriesMode || 'Include';
 
         self.vodFolderDefinitions = self.parseFolderMappings(p.MovieFolderMappings);
         self.seriesFolderDefinitions = self.parseFolderMappings(p.SeriesFolderMappings);
@@ -188,6 +193,9 @@ const XtreamLibraryConfig = {
         p.SyncMovies = document.getElementById('chkSyncMovies').checked;
         p.SyncSeries = document.getElementById('chkSyncSeries').checked;
         p.CleanupOrphans = document.getElementById('chkCleanupOrphans').checked;
+
+        p.MovieCategoriesMode = document.getElementById('selMovieCategoriesMode').value;
+        p.SeriesCategoriesMode = document.getElementById('selSeriesCategoriesMode').value;
 
         var movieMode = document.getElementById('selMovieFolderMode').value;
         var seriesMode = document.getElementById('selSeriesFolderMode').value;

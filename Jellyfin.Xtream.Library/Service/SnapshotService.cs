@@ -102,6 +102,8 @@ public class SnapshotService : IDisposable
             provider.SeriesFolderMode,
             provider.MovieFolderMappings ?? string.Empty,
             provider.SeriesFolderMappings ?? string.Empty,
+            provider.MovieCategoriesMode,
+            provider.SeriesCategoriesMode,
             string.Join(",", provider.SelectedVodCategoryIds?.OrderBy(id => id) ?? Enumerable.Empty<int>()),
             string.Join(",", provider.SelectedSeriesCategoryIds?.OrderBy(id => id) ?? Enumerable.Empty<int>()),
             string.Join(",", provider.ExcludedVodStreamIds?.OrderBy(id => id) ?? Enumerable.Empty<int>()),

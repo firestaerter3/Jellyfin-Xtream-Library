@@ -1249,7 +1249,8 @@ public partial class StrmSyncService
         if (selectedIds.Length > 0)
         {
             var selectedIdSet = selectedIds.ToHashSet();
-            var filteredCategories = categories.Where(c => selectedIdSet.Contains(c.CategoryId)).ToList();
+            bool exclude = string.Equals(provider.MovieCategoriesMode, "Exclude", StringComparison.OrdinalIgnoreCase);
+            var filteredCategories = categories.Where(c => exclude ? !selectedIdSet.Contains(c.CategoryId) : selectedIdSet.Contains(c.CategoryId)).ToList();
             var skippedCount = categories.Count - filteredCategories.Count;
             if (skippedCount > 0)
             {
@@ -1995,7 +1996,8 @@ public partial class StrmSyncService
         if (selectedIds.Length > 0)
         {
             var selectedIdSet = selectedIds.ToHashSet();
-            var filteredCategories = categories.Where(c => selectedIdSet.Contains(c.CategoryId)).ToList();
+            bool exclude = string.Equals(provider.SeriesCategoriesMode, "Exclude", StringComparison.OrdinalIgnoreCase);
+            var filteredCategories = categories.Where(c => exclude ? !selectedIdSet.Contains(c.CategoryId) : selectedIdSet.Contains(c.CategoryId)).ToList();
             var skippedCount = categories.Count - filteredCategories.Count;
             if (skippedCount > 0)
             {
@@ -3018,6 +3020,9 @@ public partial class StrmSyncService
         // Remove source tags like "BluRay", "WEBRip", "HDTV", etc.
         cleanName = SourceTagPattern().Replace(cleanName, string.Empty);
 
+        // Remove generic version tags like "V1", "V2", "V3", etc.
+        cleanName = VersionTagPattern().Replace(cleanName, string.Empty);
+
         // Remove empty brackets left after tag stripping (e.g., "Movie [4K]" → "Movie []" → "Movie")
         cleanName = EmptyBracketsPattern().Replace(cleanName, string.Empty);
 
@@ -3071,6 +3076,11 @@ public partial class StrmSyncService
         }
 
         foreach (Match match in SourceTagPattern().Matches(cleanName))
+        {
+            labels.Add(match.Value);
+        }
+
+        foreach (Match match in VersionTagPattern().Matches(cleanName))
         {
             labels.Add(match.Value);
         }
@@ -3569,6 +3579,10 @@ public partial class StrmSyncService
     // Matches source tags like "BluRay", "BRRip", "WEBRip", "WEB-DL", "HDTV", "DVDRip", "REMUX", etc.
     [GeneratedRegex(@"\b(?:Blu-?Ray|BRRip|BDRip|WEB-?(?:Rip|DL)?|HDTV|DVDRip|DVD|REMUX|CAM|TS|HC|PROPER|REPACK)\b", RegexOptions.IgnoreCase)]
     private static partial Regex SourceTagPattern();
+
+    // Matches generic numbered version tags like "V1", "V2", "V3", to mark duplicate/alternate streams.
+    [GeneratedRegex(@"\bV[0-9]+\b", RegexOptions.IgnoreCase)]
+    private static partial Regex VersionTagPattern();
 
     // Fixes malformed quotes like "'\'" "\''" "'\''" "Bob'\''s" to just "'"
     [GeneratedRegex(@"'\\''|'\\'|\\''|''+")]

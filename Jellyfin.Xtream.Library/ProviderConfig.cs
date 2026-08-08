@@ -80,6 +80,20 @@ public class ProviderConfig
     public bool SyncSeries { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets the movie categories sync mode.
+    /// "Include" = Select specific categories to sync.
+    /// "Exclude" = Select categories to exclude from syncing.
+    /// </summary>
+    public string MovieCategoriesMode { get; set; } = "Include";
+
+    /// <summary>
+    /// Gets or sets the series categories sync mode.
+    /// "Include" = Select specific categories to sync.
+    /// "Exclude" = Select categories to exclude from syncing.
+    /// </summary>
+    public string SeriesCategoriesMode { get; set; } = "Include";
+
+    /// <summary>
     /// Gets or sets the array of selected VOD category IDs to sync.
     /// Empty array means sync all categories.
     /// </summary>
