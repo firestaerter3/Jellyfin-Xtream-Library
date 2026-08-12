@@ -1319,6 +1319,11 @@ public partial class StrmSyncService
         int moviesSkipped = 0;
         int nameCollisions = 0;
         int errors = 0;
+
+        // Paths claimed by a write in this run. Deliberately separate from syncedFiles, which
+        // also collects existing files purely so orphan cleanup leaves them alone; a path in
+        // there means "exists, do not delete", not "another stream wrote this".
+        var claimedStrmPaths = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         int unmatchedCount = 0;
         var failedItems = new ConcurrentBag<FailedItem>();
         var unmatchedMovies = new ConcurrentBag<string>();
@@ -1826,14 +1831,16 @@ public partial class StrmSyncService
                         {
                         string strmPath = Path.Combine(movieFolder, strmFileName);
 
-                        // TryAdd fails when another stream in this run already claimed this exact
+                        syncedFiles.TryAdd(strmPath, 0);
+
+                        // TryAdd fails when another stream in this run already wrote this exact
                         // path. The name is built from the folder name and the version label only,
                         // so two streams sharing a title and a quality tag produce the same one.
                         // Writing anyway would silently replace the other stream's file: the
                         // File.Exists branch below compares content against a URL that embeds the
                         // stream id, so it can never match across two streams and always falls
                         // through to the overwrite. Refuse instead, and count it.
-                        if (!syncedFiles.TryAdd(strmPath, 0))
+                        if (!claimedStrmPaths.TryAdd(strmPath, 0))
                         {
                             Interlocked.Increment(ref nameCollisions);
                             _logger.LogWarning(
@@ -2094,6 +2101,12 @@ public partial class StrmSyncService
         int episodesUpdated = 0;
         int episodesSkipped = 0;
         int episodeNameCollisions = 0;
+
+        // See the note in SyncMoviesAsync: syncedFiles doubles as the orphan-protection set, and
+        // the smart-skip path above adds a fully-populated target folder's existing episodes to it
+        // before a second target folder can force the sync to run. Reusing it as the collision
+        // detector would then refuse legitimate writes, including URL refreshes.
+        var claimedStrmPaths = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         int errors = 0;
         int smartSkipped = 0;
         int unmatchedCount = 0;
@@ -2743,13 +2756,15 @@ public partial class StrmSyncService
                                 string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode, provider.CustomTitleRemoveTerms, provider.RegexRemovalPatterns);
                                 string strmPath = Path.Combine(seasonFolder, episodeFileName);
 
+                                syncedFiles.TryAdd(strmPath, 0);
+
                                 // Same guard as the movie path: TryAdd fails when another episode
-                                // in this run already claimed this path, which happens when two
+                                // in this run already wrote this path, which happens when two
                                 // episodes share a series name and a season/episode number. The
                                 // File.Exists branch below cannot tell them apart, because it
                                 // compares against a URL carrying the episode id, so it would
                                 // silently overwrite. Refuse and count instead.
-                                if (!syncedFiles.TryAdd(strmPath, 0))
+                                if (!claimedStrmPaths.TryAdd(strmPath, 0))
                                 {
                                     Interlocked.Increment(ref episodeNameCollisions);
                                     _logger.LogWarning(

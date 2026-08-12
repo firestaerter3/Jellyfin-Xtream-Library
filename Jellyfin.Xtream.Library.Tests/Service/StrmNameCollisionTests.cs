@@ -137,7 +137,123 @@ public class StrmNameCollisionTests : IDisposable
             .Should().HaveCount(1);
     }
 
-    private async Task<SyncResult> RunMovieSyncAsync(params StreamInfo[] streams)
+    // syncedFiles doubles as the orphan-protection set: the incremental and smart-skip paths bulk-add
+    // existing .strm files to it so cleanup leaves them alone. Both default to on, and the first
+    // version of this guard reused that dictionary as its collision detector, which would have made
+    // "this file exists" indistinguishable from "another stream wrote this". A stale URL would then
+    // never be refreshed. These runs use the shipped defaults, unlike the tests above.
+    [Fact]
+    public async Task DefaultConfigWithIncrementalAndSmartSkip_ReportsNoCollisionsForDistinctMovies()
+    {
+        StreamInfo[] Streams() =>
+        [
+            new StreamInfo { StreamId = 100, Name = "Alpha Movie (2024)", ContainerExtension = "mp4" },
+            new StreamInfo { StreamId = 200, Name = "Beta Movie (2024)", ContainerExtension = "mp4" },
+        ];
+
+        var first = await RunMovieSyncAsync(Streams(), useShippedDefaults: true).ConfigureAwait(true);
+        first.MovieNameCollisions.Should().Be(0);
+        first.MoviesCreated.Should().Be(2);
+
+        // Second run over the same catalogue: the files now exist, so the skip and orphan-protection
+        // paths are the ones doing the work. Nothing here is a collision.
+        var second = await RunMovieSyncAsync(Streams(), useShippedDefaults: true).ConfigureAwait(true);
+        second.MovieNameCollisions.Should().Be(0, "an existing file is not another stream's claim");
+        second.MoviesCreated.Should().Be(0);
+
+        Directory.GetFiles(Path.Combine(_libraryPath, "Movies"), "*.strm", SearchOption.AllDirectories)
+            .Should().HaveCount(2);
+    }
+
+    // The guard sits in the write loop, immediately before the branch that rewrites a STRM whose
+    // URL no longer matches. If it treated "this file exists" as a collision, that rewrite would
+    // never happen and a provider URL change would leave the library pointing at a dead host.
+    [Fact]
+    public async Task DefaultConfig_ChangedProviderUrlIsStillRewritten()
+    {
+        var first = await RunMovieSyncAsync(
+            [new StreamInfo { StreamId = 100, Name = "Refresh Movie (2024)", ContainerExtension = "mp4" }],
+            useShippedDefaults: true).ConfigureAwait(true);
+        first.MoviesCreated.Should().Be(1);
+
+        var strm = Directory.GetFiles(Path.Combine(_libraryPath, "Movies"), "*.strm", SearchOption.AllDirectories).Single();
+        (await File.ReadAllTextAsync(strm).ConfigureAwait(true)).Should().EndWith("/100.mp4");
+
+        // Same movie, same name, different container. The URL changes, so the stream counts as
+        // modified and reaches the write loop, where the file already exists.
+        var second = await RunMovieSyncAsync(
+            [new StreamInfo { StreamId = 100, Name = "Refresh Movie (2024)", ContainerExtension = "mkv" }],
+            useShippedDefaults: true).ConfigureAwait(true);
+
+        second.MovieNameCollisions.Should().Be(0, "an existing file is not another stream's claim");
+        second.MoviesUpdated.Should().Be(1, "a changed provider URL still has to be rewritten");
+        (await File.ReadAllTextAsync(strm).ConfigureAwait(true)).Should().EndWith("/100.mkv");
+    }
+
+    // Episodes collide on series name plus season and episode number. The wiring is the same two
+    // hops as the movie counter (local -> provider result -> global result), and the movie one was
+    // missing its second hop while the guard itself worked, so this path needs its own run.
+    [Fact]
+    public async Task TwoEpisodesSharingSeasonAndEpisodeNumber_WriteOneFileAndCountTheCollision()
+    {
+        // The episode title is part of the file name, so a collision needs that to match too.
+        // Providers routinely send no title at all, which collapses both to "<series> - S01E01.strm".
+        var result = await RunSeriesSyncAsync(
+            new Episode { EpisodeId = 11, EpisodeNum = 1, Season = 1, Title = string.Empty, ContainerExtension = "mkv" },
+            new Episode { EpisodeId = 22, EpisodeNum = 1, Season = 1, Title = string.Empty, ContainerExtension = "mkv" })
+            .ConfigureAwait(true);
+
+        result.EpisodeNameCollisions.Should().Be(1);
+        result.Errors.Should().Be(0);
+        Directory.GetFiles(Path.Combine(_libraryPath, "Series"), "*.strm", SearchOption.AllDirectories)
+            .Should().HaveCount(1);
+        _log.Should().Contain(l => l.StartsWith("[Warning] STRM name collision for series", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task EpisodesWithDistinctNumbers_BothWriteAndNothingCollides()
+    {
+        var result = await RunSeriesSyncAsync(
+            new Episode { EpisodeId = 11, EpisodeNum = 1, Season = 1, Title = "First", ContainerExtension = "mkv" },
+            new Episode { EpisodeId = 22, EpisodeNum = 2, Season = 1, Title = "Second", ContainerExtension = "mkv" })
+            .ConfigureAwait(true);
+
+        result.EpisodeNameCollisions.Should().Be(0);
+        result.EpisodesCreated.Should().Be(2);
+        Directory.GetFiles(Path.Combine(_libraryPath, "Series"), "*.strm", SearchOption.AllDirectories)
+            .Should().HaveCount(2);
+    }
+
+    private async Task<SyncResult> RunSeriesSyncAsync(params Episode[] episodes)
+    {
+        _client.Setup(c => c.GetSeriesCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Category> { new() { CategoryId = 1, CategoryName = "Shows" } });
+        _client.Setup(c => c.GetSeriesByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Series> { new() { SeriesId = 7, Name = "Collide Show (2024)" } });
+        _client.Setup(c => c.GetSeriesStreamsBySeriesAsync(It.IsAny<ConnectionInfo>(), 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SeriesStreamInfo
+            {
+                Seasons = new List<Season> { new() { SeasonNumber = 1 } },
+                Episodes = new Dictionary<int, ICollection<Episode>> { [1] = new List<Episode>(episodes) },
+            });
+
+        return await RunSyncAsync(syncMovies: false, syncSeries: true, useShippedDefaults: false).ConfigureAwait(true);
+    }
+
+    private Task<SyncResult> RunMovieSyncAsync(params StreamInfo[] streams)
+        => RunMovieSyncAsync(streams, useShippedDefaults: false);
+
+    private async Task<SyncResult> RunMovieSyncAsync(StreamInfo[] streams, bool useShippedDefaults)
+    {
+        _client.Setup(c => c.GetVodCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Category> { new() { CategoryId = 1, CategoryName = "Movies" } });
+        _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<StreamInfo>(streams));
+
+        return await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults).ConfigureAwait(true);
+    }
+
+    private async Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults)
     {
         var appPaths = new Mock<IServerApplicationPaths>();
         appPaths.Setup(p => p.PluginConfigurationsPath).Returns(_libraryPath);
@@ -158,22 +274,17 @@ public class StrmNameCollisionTests : IDisposable
                 Username = "u",
                 Password = "p",
                 LibraryPath = _libraryPath,
-                SyncMovies = true,
-                SyncSeries = false,
+                SyncMovies = syncMovies,
+                SyncSeries = syncSeries,
                 CleanupOrphans = false,
-                EnableIncrementalSync = false,
-                SmartSkipExisting = false,
+                EnableIncrementalSync = useShippedDefaults,
+                SmartSkipExisting = useShippedDefaults,
                 DownloadArtworkForUnmatched = false,
                 SyncParallelism = 1,
             },
         ];
         plugin.Configuration.EnableLiveTv = false;
         plugin.Configuration.EnableMetadataLookup = false;
-
-        _client.Setup(c => c.GetVodCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<Category> { new() { CategoryId = 1, CategoryName = "Movies" } });
-        _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<StreamInfo>(streams));
 
         var service = new StrmSyncService(
             _client.Object,
