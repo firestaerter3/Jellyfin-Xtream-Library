@@ -1145,6 +1145,7 @@ public partial class StrmSyncService
         globalResult.MoviesSkipped += providerResult.MoviesSkipped;
         globalResult.MoviesDeleted += providerResult.MoviesDeleted;
         globalResult.MoviesUnmatched += providerResult.MoviesUnmatched;
+        globalResult.MovieNameCollisions += providerResult.MovieNameCollisions;
         globalResult.SeriesCreated += providerResult.SeriesCreated;
         globalResult.SeriesSkipped += providerResult.SeriesSkipped;
         globalResult.SeriesDeleted += providerResult.SeriesDeleted;
@@ -1155,6 +1156,7 @@ public partial class StrmSyncService
         globalResult.EpisodesUpdated += providerResult.EpisodesUpdated;
         globalResult.EpisodesSkipped += providerResult.EpisodesSkipped;
         globalResult.EpisodesDeleted += providerResult.EpisodesDeleted;
+        globalResult.EpisodeNameCollisions += providerResult.EpisodeNameCollisions;
         globalResult.FilesDeleted += providerResult.FilesDeleted;
         globalResult.SeriesUnmatched += providerResult.SeriesUnmatched;
         globalResult.Errors += providerResult.Errors;
@@ -1315,6 +1317,7 @@ public partial class StrmSyncService
         int moviesCreated = 0;
         int moviesUpdated = 0;
         int moviesSkipped = 0;
+        int nameCollisions = 0;
         int errors = 0;
         int unmatchedCount = 0;
         var failedItems = new ConcurrentBag<FailedItem>();
@@ -1823,7 +1826,23 @@ public partial class StrmSyncService
                         {
                         string strmPath = Path.Combine(movieFolder, strmFileName);
 
-                        syncedFiles.TryAdd(strmPath, 0);
+                        // TryAdd fails when another stream in this run already claimed this exact
+                        // path. The name is built from the folder name and the version label only,
+                        // so two streams sharing a title and a quality tag produce the same one.
+                        // Writing anyway would silently replace the other stream's file: the
+                        // File.Exists branch below compares content against a URL that embeds the
+                        // stream id, so it can never match across two streams and always falls
+                        // through to the overwrite. Refuse instead, and count it.
+                        if (!syncedFiles.TryAdd(strmPath, 0))
+                        {
+                            Interlocked.Increment(ref nameCollisions);
+                            _logger.LogWarning(
+                                "STRM name collision for movie {MovieName}: {Path} was already claimed by another stream in this run; refusing to overwrite it with stream {StreamId}",
+                                baseName,
+                                strmPath,
+                                stream.StreamId);
+                            continue;
+                        }
 
                         if (File.Exists(strmPath))
                         {
@@ -1976,9 +1995,17 @@ public partial class StrmSyncService
         result.MoviesCreated += moviesCreated;
         result.MoviesUpdated += moviesUpdated;
         result.MoviesSkipped += moviesSkipped;
+        result.MovieNameCollisions += nameCollisions;
         result.AddErrors(errors);
         result.AddFailedItems(failedItems);
         result.MoviesUnmatched = unmatchedCount;
+
+        if (nameCollisions > 0)
+        {
+            _logger.LogWarning(
+                "{Count} movie STRM files were not written because a different provider stream had already claimed the same name. The provider is offering duplicate streams that share a title and a quality tag.",
+                nameCollisions);
+        }
 
         // Log unmatched movies
         if (unmatchedCount > 0)
@@ -2066,6 +2093,7 @@ public partial class StrmSyncService
         int episodesCreated = 0;
         int episodesUpdated = 0;
         int episodesSkipped = 0;
+        int episodeNameCollisions = 0;
         int errors = 0;
         int smartSkipped = 0;
         int unmatchedCount = 0;
@@ -2715,7 +2743,22 @@ public partial class StrmSyncService
                                 string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode, provider.CustomTitleRemoveTerms, provider.RegexRemovalPatterns);
                                 string strmPath = Path.Combine(seasonFolder, episodeFileName);
 
-                                syncedFiles.TryAdd(strmPath, 0);
+                                // Same guard as the movie path: TryAdd fails when another episode
+                                // in this run already claimed this path, which happens when two
+                                // episodes share a series name and a season/episode number. The
+                                // File.Exists branch below cannot tell them apart, because it
+                                // compares against a URL carrying the episode id, so it would
+                                // silently overwrite. Refuse and count instead.
+                                if (!syncedFiles.TryAdd(strmPath, 0))
+                                {
+                                    Interlocked.Increment(ref episodeNameCollisions);
+                                    _logger.LogWarning(
+                                        "STRM name collision for series {SeriesName}: {Path} was already claimed by another episode in this run; refusing to overwrite it with episode {EpisodeId}",
+                                        baseName,
+                                        strmPath,
+                                        episode.EpisodeId);
+                                    continue;
+                                }
 
                                 // Build stream URL
                                 string extension = string.IsNullOrEmpty(episode.ContainerExtension) ? "mkv" : episode.ContainerExtension;
@@ -2893,6 +2936,15 @@ public partial class StrmSyncService
         result.EpisodesCreated += episodesCreated;
         result.EpisodesUpdated += episodesUpdated;
         result.EpisodesSkipped += episodesSkipped;
+        result.EpisodeNameCollisions += episodeNameCollisions;
+
+        if (episodeNameCollisions > 0)
+        {
+            _logger.LogWarning(
+                "{Count} episode STRM files were not written because a different episode had already claimed the same name. The provider is offering episodes that share a series name and a season/episode number.",
+                episodeNameCollisions);
+        }
+
         result.AddErrors(errors);
         result.AddFailedItems(failedItems);
         result.SeriesUnmatched = unmatchedCount;
@@ -3985,6 +4037,15 @@ public class SyncResult
     public int MoviesDeleted { get; set; }
 
     /// <summary>
+    /// Gets or sets the number of movie STRM files that were not written because another
+    /// provider stream in the same run had already claimed the identical path. Two streams
+    /// collapse to one path when they share a title and a recognised quality tag, since the
+    /// file name is built from those two alone. Non-zero means the provider is offering
+    /// duplicate streams the plugin cannot tell apart by name.
+    /// </summary>
+    public int MovieNameCollisions { get; set; }
+
+    /// <summary>
     /// Gets the total number of movies (created + skipped + updated).
     /// </summary>
     public int TotalMovies => MoviesCreated + MoviesSkipped + MoviesUpdated;
@@ -4048,6 +4109,14 @@ public class SyncResult
     /// Gets or sets the number of episodes deleted (orphans).
     /// </summary>
     public int EpisodesDeleted { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of episode STRM files that were not written because another
+    /// episode in the same run had already claimed the identical path. See
+    /// <see cref="MovieNameCollisions"/>; episode names are built from the series name plus
+    /// the season and episode numbers, so two episodes sharing those collide the same way.
+    /// </summary>
+    public int EpisodeNameCollisions { get; set; }
 
     /// <summary>
     /// Gets the total number of episodes (created + skipped + updated).
