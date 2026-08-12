@@ -589,6 +589,15 @@ public partial class StrmSyncService
         config.Validate();
         var globalResult = new SyncResult { StartTime = DateTime.UtcNow };
 
+        // STRM paths written during this run, shared across every provider. Providers are allowed
+        // to share a LibraryPath (PluginConfiguration only records HasDuplicateLibraryPaths, it
+        // does not refuse the config), so a per-provider set would let the second provider
+        // overwrite the first one's file with nothing counted. Ordinal on purpose: syncedFiles is
+        // OrdinalIgnoreCase because that errs towards protecting files from orphan cleanup, but
+        // the same comparer here would err towards refusing writes, and on a case-sensitive
+        // filesystem two titles differing only in case are two legitimately distinct paths.
+        var claimedStrmPaths = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
+
         // Check if sync is suppressed (e.g., after CleanLibraries)
         if (_syncSuppressed)
         {
@@ -661,7 +670,7 @@ public partial class StrmSyncService
                     CurrentProgress.Phase = $"Provider {i + 1}/{enabledProviders.Count}: {provider.Name}";
                 }
 
-                var providerResult = await SyncProviderAsync(providerIndex, provider, linkedToken).ConfigureAwait(false);
+                var providerResult = await SyncProviderAsync(providerIndex, provider, claimedStrmPaths, linkedToken).ConfigureAwait(false);
                 MergeResult(globalResult, providerResult);
             }
 
@@ -819,12 +828,14 @@ public partial class StrmSyncService
     /// </summary>
     /// <param name="providerIndex">Zero-based index of this provider in the Providers list.</param>
     /// <param name="provider">The provider configuration.</param>
+    /// <param name="claimedStrmPaths">STRM paths already written during this sync run, shared across providers.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The sync result for this provider.</returns>
 #pragma warning disable CA5351
     private async Task<SyncResult> SyncProviderAsync(
         int providerIndex,
         ProviderConfig provider,
+        ConcurrentDictionary<string, byte> claimedStrmPaths,
         CancellationToken cancellationToken)
     {
         var result = new SyncResult { StartTime = DateTime.UtcNow };
@@ -943,6 +954,7 @@ public partial class StrmSyncService
                             provider,
                             moviesPath,
                             syncedFiles,
+                            claimedStrmPaths,
                             result,
                             previousSnapshot,
                             allCollectedMovies,
@@ -960,6 +972,7 @@ public partial class StrmSyncService
                         await SyncSeriesAsync(
                             provider,
                             seriesPath,
+                            claimedStrmPaths,
                             syncedFiles,
                             result,
                             previousSnapshot,
@@ -983,6 +996,7 @@ public partial class StrmSyncService
                     provider,
                     moviesPath,
                     syncedFiles,
+                    claimedStrmPaths,
                     result,
                     previousSnapshot,
                     allCollectedMovies,
@@ -995,6 +1009,7 @@ public partial class StrmSyncService
                 await SyncSeriesAsync(
                     provider,
                     seriesPath,
+                    claimedStrmPaths,
                     syncedFiles,
                     result,
                     previousSnapshot,
@@ -1254,6 +1269,7 @@ public partial class StrmSyncService
         ProviderConfig provider,
         string moviesPath,
         ConcurrentDictionary<string, byte> syncedFiles,
+        ConcurrentDictionary<string, byte> claimedStrmPaths,
         SyncResult result,
         ContentSnapshot? previousSnapshot,
         ConcurrentBag<StreamInfo> allCollectedMovies,
@@ -1319,11 +1335,6 @@ public partial class StrmSyncService
         int moviesSkipped = 0;
         int nameCollisions = 0;
         int errors = 0;
-
-        // Paths claimed by a write in this run. Deliberately separate from syncedFiles, which
-        // also collects existing files purely so orphan cleanup leaves them alone; a path in
-        // there means "exists, do not delete", not "another stream wrote this".
-        var claimedStrmPaths = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         int unmatchedCount = 0;
         var failedItems = new ConcurrentBag<FailedItem>();
         var unmatchedMovies = new ConcurrentBag<string>();
@@ -2030,6 +2041,7 @@ public partial class StrmSyncService
     private async Task SyncSeriesAsync(
         ProviderConfig provider,
         string seriesPath,
+        ConcurrentDictionary<string, byte> claimedStrmPaths,
         ConcurrentDictionary<string, byte> syncedFiles,
         SyncResult result,
         ContentSnapshot? previousSnapshot,
@@ -2101,12 +2113,6 @@ public partial class StrmSyncService
         int episodesUpdated = 0;
         int episodesSkipped = 0;
         int episodeNameCollisions = 0;
-
-        // See the note in SyncMoviesAsync: syncedFiles doubles as the orphan-protection set, and
-        // the smart-skip path above adds a fully-populated target folder's existing episodes to it
-        // before a second target folder can force the sync to run. Reusing it as the collision
-        // detector would then refuse legitimate writes, including URL refreshes.
-        var claimedStrmPaths = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         int errors = 0;
         int smartSkipped = 0;
         int unmatchedCount = 0;
@@ -2767,6 +2773,11 @@ public partial class StrmSyncService
                                 if (!claimedStrmPaths.TryAdd(strmPath, 0))
                                 {
                                     Interlocked.Increment(ref episodeNameCollisions);
+
+                                    // Counts as skipped, matching the movie path where a refused
+                                    // write leaves allSkipped true. The collision counter says why;
+                                    // without this an episode would land in no total at all.
+                                    Interlocked.Increment(ref episodesSkipped);
                                     _logger.LogWarning(
                                         "STRM name collision for series {SeriesName}: {Path} was already claimed by another episode in this run; refusing to overwrite it with episode {EpisodeId}",
                                         baseName,

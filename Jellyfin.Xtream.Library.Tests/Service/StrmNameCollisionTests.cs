@@ -8,6 +8,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -240,6 +241,45 @@ public class StrmNameCollisionTests : IDisposable
         return await RunSyncAsync(syncMovies: false, syncSeries: true, useShippedDefaults: false).ConfigureAwait(true);
     }
 
+    // The claim set deliberately compares Ordinal. syncedFiles uses OrdinalIgnoreCase because
+    // erring towards "already known" protects files from orphan cleanup, but the same comparer
+    // here errs towards refusing a write, and on a case-sensitive filesystem two titles differing
+    // only in case are two legitimately distinct paths. Asserting on the collision count rather
+    // than the file count keeps this meaningful on case-insensitive filesystems too.
+    [Fact]
+    public async Task TitlesDifferingOnlyInCase_AreNotTreatedAsACollision()
+    {
+        var result = await RunMovieSyncAsync(
+            new StreamInfo { StreamId = 100, Name = "Case Movie (2024)", ContainerExtension = "mp4" },
+            new StreamInfo { StreamId = 200, Name = "CASE MOVIE (2024)", ContainerExtension = "mp4" })
+            .ConfigureAwait(true);
+
+        result.MovieNameCollisions.Should().Be(0, "case differences are distinct paths, not a collision");
+        result.Errors.Should().Be(0);
+    }
+
+    // Providers are allowed to share a LibraryPath: PluginConfiguration records
+    // HasDuplicateLibraryPaths but nothing refuses the config. A per-provider claim set would let
+    // the second provider overwrite the first one's file with nothing counted.
+    [Fact]
+    public async Task TwoProvidersSharingALibraryPath_StillDetectTheCollision()
+    {
+        _client.Setup(c => c.GetVodCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Category> { new() { CategoryId = 1, CategoryName = "Movies" } });
+        _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<StreamInfo>
+            {
+                new() { StreamId = 100, Name = "Shared Movie (2024)", ContainerExtension = "mp4" },
+            });
+
+        var result = await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: false, providerCount: 2)
+            .ConfigureAwait(true);
+
+        result.MovieNameCollisions.Should().Be(1, "the second provider must not silently overwrite the first");
+        Directory.GetFiles(Path.Combine(_libraryPath, "Movies"), "*.strm", SearchOption.AllDirectories)
+            .Should().HaveCount(1);
+    }
+
     private Task<SyncResult> RunMovieSyncAsync(params StreamInfo[] streams)
         => RunMovieSyncAsync(streams, useShippedDefaults: false);
 
@@ -253,7 +293,10 @@ public class StrmNameCollisionTests : IDisposable
         return await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults).ConfigureAwait(true);
     }
 
-    private async Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults)
+    private Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults)
+        => RunSyncAsync(syncMovies, syncSeries, useShippedDefaults, providerCount: 1);
+
+    private async Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults, int providerCount)
     {
         var appPaths = new Mock<IServerApplicationPaths>();
         appPaths.Setup(p => p.PluginConfigurationsPath).Returns(_libraryPath);
@@ -265,24 +308,21 @@ public class StrmNameCollisionTests : IDisposable
 
         // Constructing the plugin publishes Plugin.Instance, which SyncAsync reads.
         var plugin = new Plugin(appPaths.Object, new RealXmlSerializer());
-        plugin.Configuration.Providers =
-        [
-            new ProviderConfig
-            {
-                Name = "test",
-                BaseUrl = "http://provider.test",
-                Username = "u",
-                Password = "p",
-                LibraryPath = _libraryPath,
-                SyncMovies = syncMovies,
-                SyncSeries = syncSeries,
-                CleanupOrphans = false,
-                EnableIncrementalSync = useShippedDefaults,
-                SmartSkipExisting = useShippedDefaults,
-                DownloadArtworkForUnmatched = false,
-                SyncParallelism = 1,
-            },
-        ];
+        plugin.Configuration.Providers = Enumerable.Range(0, providerCount).Select(i => new ProviderConfig
+        {
+            Name = $"test{i}",
+            BaseUrl = $"http://provider{i}.test",
+            Username = "u",
+            Password = "p",
+            LibraryPath = _libraryPath,
+            SyncMovies = syncMovies,
+            SyncSeries = syncSeries,
+            CleanupOrphans = false,
+            EnableIncrementalSync = useShippedDefaults,
+            SmartSkipExisting = useShippedDefaults,
+            DownloadArtworkForUnmatched = false,
+            SyncParallelism = 1,
+        }).ToList();
         plugin.Configuration.EnableLiveTv = false;
         plugin.Configuration.EnableMetadataLookup = false;
 
