@@ -112,6 +112,15 @@ public partial class StrmSyncService
     }
 
     /// <summary>
+    /// Gets the comparer for STRM paths claimed during a sync run. Linux filesystems are case-sensitive,
+    /// Windows and macOS default to case-insensitive, and the collision guard is only correct when
+    /// it agrees with the filesystem underneath it. Exposed to the tests so they can assert the
+    /// behaviour their host actually produces rather than hard-coding one platform's answer.
+    /// </summary>
+    internal static StringComparer PathClaimComparer =>
+        OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
+
+    /// <summary>
     /// Gets the result of the last sync operation.
     /// </summary>
     public SyncResult? LastSyncResult { get; private set; }
@@ -592,11 +601,14 @@ public partial class StrmSyncService
         // STRM paths written during this run, shared across every provider. Providers are allowed
         // to share a LibraryPath (PluginConfiguration only records HasDuplicateLibraryPaths, it
         // does not refuse the config), so a per-provider set would let the second provider
-        // overwrite the first one's file with nothing counted. Ordinal on purpose: syncedFiles is
-        // OrdinalIgnoreCase because that errs towards protecting files from orphan cleanup, but
-        // the same comparer here would err towards refusing writes, and on a case-sensitive
-        // filesystem two titles differing only in case are two legitimately distinct paths.
-        var claimedStrmPaths = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
+        // overwrite the first one's file with nothing counted.
+        //
+        // The comparer has to follow the filesystem, because neither choice is safe on both.
+        // Case-sensitively, "The Matrix" and "THE MATRIX" are two real paths and folding them
+        // would refuse a legitimate write. Case-insensitively they are one file, and not folding
+        // them would hand out two claims and let the second silently overwrite the first, which
+        // is the exact bug this guard exists to stop.
+        var claimedStrmPaths = new ConcurrentDictionary<string, byte>(PathClaimComparer);
 
         // Check if sync is suppressed (e.g., after CleanLibraries)
         if (_syncSuppressed)
@@ -1892,6 +1904,15 @@ public partial class StrmSyncService
                             // File was created by another thread/process, skip
                             continue;
                         }
+                        catch
+                        {
+                            // The claim is only worth holding if this stream actually produced the
+                            // file. Keeping it after a failed create would refuse a later duplicate
+                            // that might have succeeded, and the name would end up with no STRM at
+                            // all. Hand it back and let the original handler count the error.
+                            claimedStrmPaths.TryRemove(strmPath, out _);
+                            throw;
+                        }
 
                         _logger.LogDebug("Created movie STRM: {StrmPath}", strmPath);
                         } // end strmEntries foreach
@@ -2819,6 +2840,14 @@ public partial class StrmSyncService
                                 {
                                     // File was created by another thread/process, skip
                                     continue;
+                                }
+                                catch
+                                {
+                                    // See the movie path: a claim is only worth holding once the
+                                    // file exists, otherwise a later duplicate that could have
+                                    // succeeded is refused and the name gets no STRM at all.
+                                    claimedStrmPaths.TryRemove(strmPath, out _);
+                                    throw;
                                 }
 
                                 // Write episode NFO with media info if enabled (only for first target folder)

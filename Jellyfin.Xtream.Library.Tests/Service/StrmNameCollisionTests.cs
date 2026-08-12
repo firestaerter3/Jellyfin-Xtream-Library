@@ -241,21 +241,48 @@ public class StrmNameCollisionTests : IDisposable
         return await RunSyncAsync(syncMovies: false, syncSeries: true, useShippedDefaults: false).ConfigureAwait(true);
     }
 
-    // The claim set deliberately compares Ordinal. syncedFiles uses OrdinalIgnoreCase because
-    // erring towards "already known" protects files from orphan cleanup, but the same comparer
-    // here errs towards refusing a write, and on a case-sensitive filesystem two titles differing
-    // only in case are two legitimately distinct paths. Asserting on the collision count rather
-    // than the file count keeps this meaningful on case-insensitive filesystems too.
+    // Neither comparer is safe on both platforms: case-sensitively "The Matrix" and "THE MATRIX"
+    // are two real paths and folding them refuses a legitimate write, case-insensitively they are
+    // one file and not folding them lets the second silently overwrite the first. The guard follows
+    // the filesystem, so this test asserts what the host actually does rather than one platform's
+    // answer, and fails if the two ever disagree.
     [Fact]
-    public async Task TitlesDifferingOnlyInCase_AreNotTreatedAsACollision()
+    public async Task TitlesDifferingOnlyInCase_FollowTheFilesystem()
     {
+        bool caseSensitive = IsCaseSensitive(_libraryPath);
+
         var result = await RunMovieSyncAsync(
             new StreamInfo { StreamId = 100, Name = "Case Movie (2024)", ContainerExtension = "mp4" },
             new StreamInfo { StreamId = 200, Name = "CASE MOVIE (2024)", ContainerExtension = "mp4" })
             .ConfigureAwait(true);
 
-        result.MovieNameCollisions.Should().Be(0, "case differences are distinct paths, not a collision");
+        var written = Directory.GetFiles(Path.Combine(_libraryPath, "Movies"), "*.strm", SearchOption.AllDirectories);
         result.Errors.Should().Be(0);
+
+        if (caseSensitive)
+        {
+            result.MovieNameCollisions.Should().Be(0, "these are two distinct paths here");
+            written.Should().HaveCount(2);
+        }
+        else
+        {
+            result.MovieNameCollisions.Should().Be(1, "these are one file here, so the second must be refused");
+            written.Should().HaveCount(1);
+        }
+    }
+
+    private static bool IsCaseSensitive(string dir)
+    {
+        var probe = Path.Combine(dir, "CaseProbe.tmp");
+        File.WriteAllText(probe, string.Empty);
+        try
+        {
+            return !File.Exists(Path.Combine(dir, "caseprobe.tmp"));
+        }
+        finally
+        {
+            File.Delete(probe);
+        }
     }
 
     // Providers are allowed to share a LibraryPath: PluginConfiguration records
