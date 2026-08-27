@@ -153,7 +153,7 @@ public static class NfoWriter
         string? backdropUrl = null)
     {
         bool hasExtendedMetadata = HasUsableExtendedMetadata(plot, genre, director, cast, null, null, null, null, null) ||
-            rating.HasValue || !string.IsNullOrWhiteSpace(posterUrl) || !string.IsNullOrWhiteSpace(backdropUrl);
+            IsUsableRating(rating) || !string.IsNullOrWhiteSpace(posterUrl) || !string.IsNullOrWhiteSpace(backdropUrl);
 
         if (!tmdbId.HasValue && !tvdbId.HasValue && !hasExtendedMetadata)
         {
@@ -220,7 +220,7 @@ public static class NfoWriter
         string? thumbUrl = null)
     {
         bool hasExtendedMetadata = HasUsableExtendedMetadata(plot, null, null, null, null, null, premiered, null, dateAdded) ||
-            rating.HasValue || !string.IsNullOrWhiteSpace(thumbUrl);
+            IsUsableRating(rating) || !string.IsNullOrWhiteSpace(thumbUrl);
 
         if (!HasUsableData(video, audio) && !hasExtendedMetadata)
         {
@@ -392,8 +392,7 @@ public static class NfoWriter
 
     private static void AppendPremiered(StringBuilder sb, string? premiered)
     {
-        if (!string.IsNullOrWhiteSpace(premiered) &&
-            DateTime.TryParseExact(premiered, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+        if (IsUsablePremiered(premiered))
         {
             sb.Append("  <premiered>").Append(premiered).AppendLine("</premiered>");
         }
@@ -409,10 +408,26 @@ public static class NfoWriter
 
     private static void AppendRating(StringBuilder sb, decimal? rating)
     {
-        if (rating.HasValue && rating.Value > 0)
+        if (IsUsableRating(rating))
         {
-            sb.Append("  <rating>").Append(rating.Value.ToString("0.0", CultureInfo.InvariantCulture)).AppendLine("</rating>");
+            sb.Append("  <rating>").Append(rating!.Value.ToString("0.0", CultureInfo.InvariantCulture)).AppendLine("</rating>");
         }
+    }
+
+    private static bool IsUsablePremiered(string? premiered)
+    {
+        return !string.IsNullOrWhiteSpace(premiered) &&
+            DateTime.TryParseExact(premiered, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _);
+    }
+
+    private static bool IsUsableRating(string? rating)
+    {
+        return decimal.TryParse(rating, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed) && parsed > 0;
+    }
+
+    private static bool IsUsableRating(decimal? rating)
+    {
+        return rating.HasValue && rating.Value > 0;
     }
 
     private static IEnumerable<string> SplitCsv(string? csv)
@@ -448,8 +463,8 @@ public static class NfoWriter
             !string.IsNullOrWhiteSpace(director) ||
             !string.IsNullOrWhiteSpace(cast) ||
             !string.IsNullOrWhiteSpace(country) ||
-            !string.IsNullOrWhiteSpace(rating) ||
-            !string.IsNullOrWhiteSpace(premiered) ||
+            IsUsableRating(rating) ||
+            IsUsablePremiered(premiered) ||
             !string.IsNullOrWhiteSpace(youtubeTrailerId) ||
             dateAdded.HasValue;
     }
