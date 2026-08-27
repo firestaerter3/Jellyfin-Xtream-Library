@@ -260,3 +260,121 @@ test('switching from Multiple to Single folder mode repaints the flat category l
         assert.deepStrictEqual(runSwitch('Multiple'), []);
     });
 });
+
+// GitHub #81. In Multiple folder mode the user's category choices live in the folder
+// assignments, not in the flat list, and a config last saved before the #78 fix carries an
+// empty SelectedVodCategoryIds. Seeding the repaint from that field alone paints every box
+// unticked over a real selection, and saving then means "sync everything".
+//
+// The issue blamed emby-checkbox for stripping the checked attribute during upgrade. It does
+// not: measured against the real component on Jellyfin 10.11, checked survives insertion on
+// every path, including from inside a change dispatch. The bug is the source field.
+test('switching to Single falls back to the folder assignments when the flat selection is empty', async (t) => {
+    const runSwitch = (options) => {
+        const config = loadConfig();
+        config.vodCategories = [
+            { CategoryId: 10, CategoryName: 'Kids' },
+            { CategoryId: 15, CategoryName: 'Documentary' },
+        ];
+        config.selectedVodCategoryIds = options.selected;
+        config.vodFolderDefinitions = options.folders;
+
+        const rendered = [];
+        config.renderCategoryList = (type, categories, selectedIds) =>
+            rendered.push({ type, categories, selectedIds });
+        config.renderFolderList = () => {};
+
+        // No vodFolderList entry: updateFolderDefinitionsFromUI returns early on a null
+        // container, so the union comes straight from vodFolderDefinitions.
+        const restore = withDocument({
+            selMovieFolderMode: element({ value: 'Single' }),
+            movieCategoriesModeContainer: element({}),
+            vodSingleFolderSection: element({}),
+            vodMultiFolderSection: element({}),
+        });
+        try {
+            config.updateFolderModeVisibility('vod', options.fromModeSwitch);
+        } finally {
+            restore();
+        }
+
+        return { rendered, config };
+    };
+
+    await t.test('an empty selection is seeded from the folders the user assigned', () => {
+        const { rendered } = runSwitch({
+            selected: [],
+            folders: [{ name: 'Kids', categoryIds: [10, 15] }],
+            fromModeSwitch: true,
+        });
+
+        assert.deepStrictEqual(rendered[0].selectedIds, [10, 15],
+            'the folder assignments are the selection the user can actually see on screen');
+    });
+
+    await t.test('the seeded ids are written back so a later repaint agrees', () => {
+        // loadVodCategories repaints from selectedVodCategoryIds when its fetch resolves.
+        const { config } = runSwitch({
+            selected: [],
+            folders: [{ name: 'Kids', categoryIds: [10] }],
+            fromModeSwitch: true,
+        });
+
+        assert.deepStrictEqual(config.selectedVodCategoryIds, [10]);
+    });
+
+    await t.test('a real selection is never overridden by the folder assignments', () => {
+        const { rendered } = runSwitch({
+            selected: [15],
+            folders: [{ name: 'Kids', categoryIds: [10] }],
+            fromModeSwitch: true,
+        });
+
+        assert.deepStrictEqual(rendered[0].selectedIds, [15]);
+    });
+
+    await t.test('nothing selected and no folders still means sync everything', () => {
+        const { rendered } = runSwitch({ selected: [], folders: [], fromModeSwitch: true });
+
+        assert.deepStrictEqual(rendered[0].selectedIds, []);
+    });
+
+    await t.test('the page-load path does not seed, since its render is discarded anyway', () => {
+        // loadProviderIntoUI calls this before the folder UI exists, then blanks the container.
+        const { rendered, config } = runSwitch({
+            selected: [],
+            folders: [{ name: 'Kids', categoryIds: [10] }],
+            fromModeSwitch: undefined,
+        });
+
+        assert.deepStrictEqual(rendered[0].selectedIds, []);
+        assert.deepStrictEqual(config.selectedVodCategoryIds, []);
+    });
+
+    await t.test('the series side behaves the same', () => {
+        const config = loadConfig();
+        config.seriesCategories = [{ CategoryId: 20, CategoryName: 'Drama' }];
+        config.selectedSeriesCategoryIds = [];
+        config.seriesFolderDefinitions = [{ name: 'Drama', categoryIds: [20] }];
+
+        const rendered = [];
+        config.renderCategoryList = (type, categories, selectedIds) =>
+            rendered.push({ type, categories, selectedIds });
+        config.renderFolderList = () => {};
+
+        const restore = withDocument({
+            selSeriesFolderMode: element({ value: 'Single' }),
+            seriesCategoriesModeContainer: element({}),
+            seriesSingleFolderSection: element({}),
+            seriesMultiFolderSection: element({}),
+        });
+        try {
+            config.updateFolderModeVisibility('series', true);
+        } finally {
+            restore();
+        }
+
+        assert.deepStrictEqual(rendered[0].selectedIds, [20]);
+        assert.deepStrictEqual(config.selectedSeriesCategoryIds, [20]);
+    });
+});

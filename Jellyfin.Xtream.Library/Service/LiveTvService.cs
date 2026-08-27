@@ -335,8 +335,17 @@ public class LiveTvService : IDisposable
             result = result.Where(c => !c.IsAdult).ToList();
         }
 
+        // Category filtering is normally decided at fetch time by choosing which categories to
+        // request, so a snapshot cannot hold the wrong ones. ExcludeSelected breaks that: it fetches
+        // everything and narrows afterwards, so a snapshot taken before a category was excluded
+        // still contains it. Re-apply here for the same reason the adult filter is re-applied.
+        if (config.LiveChannelMode == LiveChannelSelectionMode.ExcludeSelected)
+        {
+            result = FilterExcludedCategories(result, config.SelectedLiveCategoryIds);
+        }
+
         // IncludeAll deliberately ignores per-channel exclusions, matching the fetch path.
-        if (config.LiveChannelMode == LiveChannelSelectionMode.Custom)
+        if (config.LiveChannelMode != LiveChannelSelectionMode.IncludeAll)
         {
             result = FilterExcludedChannels(result, config.ExcludedLiveStreamIds);
         }
@@ -701,8 +710,16 @@ public class LiveTvService : IDisposable
             providerChannels = providerChannels.Where(c => !c.IsAdult).ToList();
         }
 
-        // Apply per-channel exclusions only in Custom mode (IncludeAll deliberately ignores them).
-        if (config.LiveChannelMode == LiveChannelSelectionMode.Custom)
+        // ExcludeSelected fetched the whole catalogue above, so the category filter happens here
+        // rather than by choosing what to request. No-op in the other two modes.
+        if (config.LiveChannelMode == LiveChannelSelectionMode.ExcludeSelected)
+        {
+            providerChannels = FilterExcludedCategories(providerChannels, config.SelectedLiveCategoryIds);
+        }
+
+        // Apply per-channel exclusions in both selective modes (IncludeAll deliberately ignores
+        // them: it is the "everything, no exceptions" mode).
+        if (config.LiveChannelMode != LiveChannelSelectionMode.IncludeAll)
         {
             providerChannels = FilterExcludedChannels(providerChannels, config.ExcludedLiveStreamIds);
         }
@@ -735,9 +752,69 @@ public class LiveTvService : IDisposable
             return CategoryFetchStrategy.AllFromProvider;
         }
 
+        // ExcludeSelected fetches the whole catalogue and drops the excluded categories afterwards,
+        // so that categories the provider adds later are picked up on their own. It must not fall
+        // through to the count check below: that branch fetches *by* SelectedLiveCategoryIds, which
+        // in this mode would return exactly the categories the user asked to be rid of.
+        if (mode == LiveChannelSelectionMode.ExcludeSelected)
+        {
+            return CategoryFetchStrategy.AllFromProvider;
+        }
+
         return selectedCategoryCount == 0
             ? CategoryFetchStrategy.None
             : CategoryFetchStrategy.BySelectedCategories;
+    }
+
+    /// <summary>
+    /// Removes channels belonging to any of <paramref name="excludedCategoryIds"/>. Used only in
+    /// <see cref="LiveChannelSelectionMode.ExcludeSelected"/> mode, where the whole catalogue is
+    /// fetched and narrowed here instead of by asking the provider for specific categories.
+    /// </summary>
+    /// <param name="channels">Source list of channels.</param>
+    /// <param name="excludedCategoryIds">Category IDs to exclude. Null or empty returns the list unchanged,
+    /// because excluding nothing excludes nothing (GitHub #76 semantics).</param>
+    /// <returns>Filtered list of channels.</returns>
+    internal static List<LiveStreamInfo> FilterExcludedCategories(List<LiveStreamInfo> channels, int[]? excludedCategoryIds)
+    {
+        if (excludedCategoryIds == null || excludedCategoryIds.Length == 0)
+        {
+            return channels;
+        }
+
+        var excluded = new HashSet<int>(excludedCategoryIds);
+        return channels.Where(c => !IsInExcludedCategory(c, excluded)).ToList();
+    }
+
+    /// <summary>
+    /// True when any category the channel belongs to is excluded.
+    /// <para>
+    /// Membership is the union of the scalar primary category and the <c>category_ids</c> array,
+    /// because Include mode fetches per category and so pulls in a channel reachable through *any*
+    /// of its categories. Matching that union keeps Exclude the exact complement of Include on
+    /// providers that put one channel in several categories. A channel the provider gives no
+    /// category at all is kept: it is not in the exclusion list.
+    /// </para>
+    /// </summary>
+    private static bool IsInExcludedCategory(LiveStreamInfo channel, HashSet<int> excluded)
+    {
+        if (channel.CategoryId.HasValue && excluded.Contains(channel.CategoryId.Value))
+        {
+            return true;
+        }
+
+        if (channel.CategoryIds != null)
+        {
+            foreach (var categoryId in channel.CategoryIds)
+            {
+                if (excluded.Contains(categoryId))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

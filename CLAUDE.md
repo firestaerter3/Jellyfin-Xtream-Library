@@ -37,9 +37,30 @@ dotnet build -c Release
 # Run tests
 dotnet test -c Release
 
+# Config page tests (dependency-free, no jsdom). CI runs both of these.
+node --check Jellyfin.Xtream.Library/Configuration/Web/config.js
+node --test "tests/js/**/*.test.js"
+
 # Publish for release
 dotnet publish Jellyfin.Xtream.Library -c Release -o /tmp/claude/xtream-library-release
 ```
+
+### What the config page tests can and cannot catch
+
+`tests/js` loads `config.js` into Node against a hand-rolled `document` stub, and the folder-mode
+tests work by stubbing `renderCategoryList` and asserting the arguments it receives. That proves the
+*decision* logic. It proves nothing about what the browser then renders, because there is no DOM and
+no custom elements in the harness.
+
+So a green suite does not clear a bug reported as "the UI shows the wrong thing". Reproduce those
+against a real page. `emby-checkbox` is registered through `document.registerElement`, the
+webcomponents v0 polyfill, on any Jellyfin 10.11 page including the login screen, so the component
+can be exercised without reaching the plugin config page at all.
+
+One result worth not re-deriving, from #81: **`emby-checkbox` does not clear `checked` during
+upgrade, and being inside a `change` dispatch changes nothing.** Measured with the real component,
+the attribute and the property both survive insertion on every path. If checkboxes come back
+unticked, look at the data being passed to the render, not at the component.
 
 ## Release Process
 
@@ -122,6 +143,36 @@ git add manifest.json
 git commit -m "Stable: Xtream Library vX.Y.Z.0: Description"
 git push
 ```
+
+A beta build is normally left to soak about **a week** before promotion. Check what is overdue by
+diffing the two manifests rather than going by memory: anything in `manifest-dev.json` that is not
+in `manifest.json` and is older than that is a candidate. Promote by copying the entry **verbatim**
+from the beta manifest, so version, changelog, `targetAbi`, `sourceUrl` and `checksum` cannot drift
+between channels. Verify the asset still matches its recorded checksum before promoting.
+
+Soak time is not the only gate. A release that migrates or renames anything on disk needs longer and
+needs its warning leading the changelog, because the migration is what users cannot undo. v1.44.0.0
+is the standing example: it renames movie folders carrying version tags, and the old folders become
+orphans that the next sync deletes when cleanup is on, taking watched status and artwork with them.
+
+### Editing the manifests
+
+Four traps, all of which produce a diff that hides the one line you meant to change, or a change
+landing somewhere it should not:
+
+- **The two files are formatted differently.** `manifest.json` is **2-space** indented, has **no
+  trailing newline**, and stores non-ASCII **escaped** (`—`). `manifest-dev.json` is
+  **4-space**, ends with a newline, and stores literal UTF-8. Writing either with the other's
+  convention rewrites all ~1900 lines. In Python: `indent=2, ensure_ascii=True` and no trailing
+  write for stable, `indent=4, ensure_ascii=False` plus `f.write('\n')` for beta.
+- **`manifest.json` contains two plugins named "Xtream Library".** Match on the GUID, not the name.
+  The live one is `63ba5fcd-c8ce-421a-83e8-ba0b11030d53`; `a1b2c3d4-e5f6-7890-abcd-ef1234567890` is
+  the abandoned pre-#43 entry, frozen at 1.33.2.0, and must stay frozen.
+- **The PII pre-commit hook reads version numbers as IP addresses.** A changelog mentioning
+  `1.44.0.0` trips `WARNING (ip)`. That is a false positive and `--no-verify` is the right call for
+  manifest commits; read the hook output first to confirm it is only version strings.
+- **Always check `git diff --stat` before committing a manifest.** The expected result is roughly 8
+  insertions and 0 deletions. Anything larger means the formatting drifted.
 
 ## Related Repositories
 

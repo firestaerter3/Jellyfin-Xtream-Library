@@ -159,6 +159,7 @@ public class LiveChannelSnapshot
                 Num = entry.Num,
                 Tags = entry.Tags,
                 CategoryId = entry.CategoryId,
+                CategoryIds = entry.CategoryIds,
                 TvArchive = entry.TvArchive,
                 TvArchiveDuration = entry.TvArchiveDuration,
                 ProviderIndex = entry.ProviderIndex,
@@ -289,6 +290,15 @@ public class LiveChannelSnapshotEntry
     public int? CategoryId { get; set; }
 
     /// <summary>
+    /// Gets or sets the channel's full category membership, on providers that report more than the
+    /// primary one. Persisted so the exclude-categories filter re-applied when rendering from a
+    /// snapshot sees the same membership the fetch-time filter did; without it a channel excluded
+    /// through a secondary category would survive until the next refresh. Older snapshots simply
+    /// have no value here, which reads as "primary category only". See GitHub #79.
+    /// </summary>
+    public int[]? CategoryIds { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether the channel supports catch-up.
     /// </summary>
     public bool TvArchive { get; set; }
@@ -330,6 +340,7 @@ public class LiveChannelSnapshotEntry
             Tags = channel.Tags,
             Checksum = ComputeChecksum(channel),
             CategoryId = channel.CategoryId,
+            CategoryIds = channel.CategoryIds,
             TvArchive = channel.TvArchive,
             TvArchiveDuration = channel.TvArchiveDuration,
             ProviderIndex = channel.ProviderIndex,

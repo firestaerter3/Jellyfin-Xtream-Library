@@ -36,6 +36,18 @@ public enum LiveChannelSelectionMode
     /// Empty <see cref="PluginConfiguration.SelectedLiveCategoryIds"/> means zero channels (not "all").
     /// </summary>
     Custom,
+
+    /// <summary>
+    /// Sync every channel except those in the selected categories, minus per-channel exclusions.
+    /// <see cref="PluginConfiguration.SelectedLiveCategoryIds"/> is read as an exclusion list here.
+    /// Empty means every channel (excluding nothing excludes nothing) — the opposite of
+    /// <see cref="Custom"/>, and the same rule Movies and Series already follow (GitHub #76).
+    /// <para>
+    /// Deliberately appended last. Inserting a member above <see cref="Custom"/> would renumber it,
+    /// and any config not round-tripped by name would silently reinterpret Custom as this mode.
+    /// </para>
+    /// </summary>
+    ExcludeSelected,
 }
 
 /// <summary>
@@ -132,21 +144,27 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Gets or sets how Live TV channel selection is interpreted.
     /// In <see cref="LiveChannelSelectionMode.IncludeAll"/> mode the selection arrays are ignored.
     /// In <see cref="LiveChannelSelectionMode.Custom"/> mode an empty <see cref="SelectedLiveCategoryIds"/>
-    /// means zero channels (not "all"). Defaults to <see cref="LiveChannelSelectionMode.IncludeAll"/>;
+    /// means zero channels (not "all"); in <see cref="LiveChannelSelectionMode.ExcludeSelected"/> mode
+    /// an empty one means every channel. Defaults to <see cref="LiveChannelSelectionMode.IncludeAll"/>;
     /// existing configs with populated selection state are migrated to <see cref="LiveChannelSelectionMode.Custom"/>
     /// on startup (see <c>Plugin.MigrateConfigurationIfNeeded</c>).
     /// </summary>
     public LiveChannelSelectionMode LiveChannelMode { get; set; } = LiveChannelSelectionMode.IncludeAll;
 
     /// <summary>
-    /// Gets or sets the array of selected Live TV category IDs.
-    /// Only honoured when <see cref="LiveChannelMode"/> is <see cref="LiveChannelSelectionMode.Custom"/>.
+    /// Gets or sets the array of Live TV category IDs the selection applies to.
+    /// Read as an inclusion list in <see cref="LiveChannelSelectionMode.Custom"/> mode and as an
+    /// exclusion list in <see cref="LiveChannelSelectionMode.ExcludeSelected"/> mode.
+    /// Ignored in <see cref="LiveChannelSelectionMode.IncludeAll"/> mode.
     /// </summary>
     public int[] SelectedLiveCategoryIds { get; set; } = Array.Empty<int>();
 
     /// <summary>
-    /// Gets or sets stream IDs to exclude from Live TV sync, even if their category is selected.
-    /// Only honoured when <see cref="LiveChannelMode"/> is <see cref="LiveChannelSelectionMode.Custom"/>.
+    /// Gets or sets stream IDs to exclude from Live TV sync, even if their category is in scope.
+    /// Honoured in <see cref="LiveChannelSelectionMode.Custom"/> and
+    /// <see cref="LiveChannelSelectionMode.ExcludeSelected"/> mode; ignored in
+    /// <see cref="LiveChannelSelectionMode.IncludeAll"/>, which is the "sync everything, no
+    /// exceptions" mode.
     /// </summary>
     public int[] ExcludedLiveStreamIds { get; set; } = Array.Empty<int>();
 

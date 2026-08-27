@@ -348,6 +348,47 @@ public class PluginConfigurationTests
     }
 
     [Fact]
+    public void LiveChannelMode_ExcludeSelectedRoundTripsThroughXmlSerialization()
+    {
+        var original = new PluginConfiguration
+        {
+            LiveChannelMode = LiveChannelSelectionMode.ExcludeSelected,
+            SelectedLiveCategoryIds = new[] { 10, 20 },
+        };
+        var serializer = new XmlSerializer(typeof(PluginConfiguration));
+
+        using var writer = new StringWriter();
+        serializer.Serialize(writer, original);
+        using var reader = new StringReader(writer.ToString());
+        var roundtripped = (PluginConfiguration)serializer.Deserialize(reader)!;
+
+        roundtripped.LiveChannelMode.Should().Be(LiveChannelSelectionMode.ExcludeSelected);
+        roundtripped.SelectedLiveCategoryIds.Should().BeEquivalentTo(new[] { 10, 20 });
+    }
+
+    [Fact]
+    public void LiveChannelSelectionMode_NumericValuesAreStable()
+    {
+        // GitHub #79 appended ExcludeSelected rather than slotting it next to Custom. Inserting a
+        // member above Custom would renumber it, and a config not round-tripped by name would then
+        // read every existing Custom setup as ExcludeSelected - inverting the user's channel list
+        // rather than failing. Pin the numbering so that stays a deliberate choice.
+        ((int)LiveChannelSelectionMode.IncludeAll).Should().Be(0);
+        ((int)LiveChannelSelectionMode.Custom).Should().Be(1);
+        ((int)LiveChannelSelectionMode.ExcludeSelected).Should().Be(2);
+    }
+
+    [Fact]
+    public void ShouldMigrateToCustomMode_ExcludeSelectedMode_DoesNotMigrate()
+    {
+        // The upgrade migration only promotes IncludeAll configs that predate the mode flag.
+        // A user who deliberately chose ExcludeSelected must never be flipped to Custom, which
+        // would turn their exclusion list into an inclusion list.
+        PluginConfiguration.ShouldMigrateToCustomMode(LiveChannelSelectionMode.ExcludeSelected, 5, 0).Should().BeFalse();
+        PluginConfiguration.ShouldMigrateToCustomMode(LiveChannelSelectionMode.ExcludeSelected, 0, 3).Should().BeFalse();
+    }
+
+    [Fact]
     public void UseBetaChannel_DefaultsToFalse()
     {
         var config = new PluginConfiguration();

@@ -995,11 +995,17 @@
                                     <input type="radio" is="emby-radio" name="LiveChannelMode" value="IncludeAll" />
                                     <span>Sync ALL channels from provider</span>
                                 </label>
-                                <label class="emby-radio-label" style="display: block;">
+                                <label class="emby-radio-label" style="display: block; margin-bottom: 4px;">
                                     <input type="radio" is="emby-radio" name="LiveChannelMode" value="Custom" />
                                     <span>Pick specific channels (custom selection)</span>
                                 </label>
+                                <label class="emby-radio-label" style="display: block;">
+                                    <input type="radio" is="emby-radio" name="LiveChannelMode" value="ExcludeSelected" />
+                                    <span>Sync all channels EXCEPT the categories you tick</span>
+                                </label>
                             </div>
+
+                            <div class="fieldDescription" id="liveChannelModeHint" style="margin-bottom: 10px;"></div>
 
                             <div id="liveCustomSection" style="display: none;">
                                 <div>
@@ -1014,10 +1020,10 @@
                                         <div id="liveCategoryCounter" style="margin-bottom: 8px; font-weight: 500;">0 of 0 categories selected</div>
                                         <div class="category-actions" style="margin-bottom: 8px;">
                                             <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.selectAllCategories('live')">
-                                                <span>Select all</span>
+                                                <span id="btnLiveSelectAllLabel">Select all</span>
                                             </button>
                                             <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.deselectAllCategories('live')">
-                                                <span>Deselect all</span>
+                                                <span id="btnLiveDeselectAllLabel">Deselect all</span>
                                             </button>
                                             <button is="emby-button" type="button" class="raised" onclick="XtreamLibraryConfig.clearChannelExclusions()">
                                                 <span>Clear channel exclusions</span>

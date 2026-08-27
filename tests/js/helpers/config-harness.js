@@ -60,13 +60,20 @@ function folderItem(name, categoryIds) {
     });
 }
 
-/** Installs a document stub backed by the given id -> element map, and returns a restore function. */
-function withDocument(elementsById) {
+/**
+ * Installs a document stub backed by the given id -> element map, and returns a restore function.
+ *
+ * `selectors` optionally maps a CSS selector string to what the document-level query should
+ * return, for the functions that reach for checkboxes by attribute rather than by id. A selector
+ * with no entry resolves to nothing, which is the "not rendered yet" state.
+ */
+function withDocument(elementsById, selectors = {}) {
     const previous = global.document;
     global.document = {
         readyState: 'complete',
         getElementById: (id) => elementsById[id] || null,
-        querySelectorAll: () => [],
+        querySelectorAll: (selector) => selectors[selector] || [],
+        querySelector: (selector) => (selectors[selector] || [])[0] || null,
         addEventListener: () => {},
     };
     return () => {

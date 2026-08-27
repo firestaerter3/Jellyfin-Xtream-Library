@@ -327,8 +327,8 @@ const XtreamLibraryConfig = {
             self.selectedLiveCategoryIds = config.SelectedLiveCategoryIds || [];
             self.excludedLiveStreamIds = config.ExcludedLiveStreamIds || [];
 
-            // Live channel selection mode (IncludeAll | Custom). Backend defaults to IncludeAll on
-            // fresh installs; existing configs with state are migrated to Custom on startup.
+            // Live channel selection mode (IncludeAll | Custom | ExcludeSelected). Backend defaults to
+            // IncludeAll on fresh installs; existing configs with state are migrated to Custom on startup.
             var liveMode = config.LiveChannelMode || 'IncludeAll';
             var modeRadios = document.getElementsByName('LiveChannelMode');
             for (var i = 0; i < modeRadios.length; i++) {
@@ -352,9 +352,11 @@ const XtreamLibraryConfig = {
 
             Dashboard.hideLoadingMsg();
 
-            // Live categories auto-load (uses provider 0 credentials). Only meaningful in Custom mode.
+            // Live categories auto-load (uses provider 0 credentials). Meaningful in both modes that
+            // read the category list - and required in them, because saveConfig reads the selection
+            // back off these checkboxes. See getLiveCategoryIdsForSave.
             var p0 = self.providers[0];
-            if (p0 && p0.BaseUrl && p0.Username && liveMode === 'Custom') {
+            if (p0 && p0.BaseUrl && p0.Username && (liveMode === 'Custom' || liveMode === 'ExcludeSelected')) {
                 self.loadLiveCategories();
             }
         });
@@ -412,7 +414,7 @@ const XtreamLibraryConfig = {
             config.EpgCacheMinutes = parseInt(document.getElementById('txtEpgCacheMinutes').value) || 30;
             config.EpgDaysToFetch = parseInt(document.getElementById('txtEpgDaysToFetch').value) || 2;
             config.EpgParallelism = parseInt(document.getElementById('txtEpgParallelism').value) || 5;
-            config.SelectedLiveCategoryIds = self.getSelectedCategoryIds('live');
+            config.SelectedLiveCategoryIds = self.getLiveCategoryIdsForSave();
             config.ExcludedLiveStreamIds = self.excludedLiveStreamIds.slice();
 
             var checkedMode = document.querySelector('input[name="LiveChannelMode"]:checked');
@@ -564,8 +566,11 @@ const XtreamLibraryConfig = {
         });
     },
 
-    // Update visibility based on folder mode
-    updateFolderModeVisibility: function (type) {
+    // Update visibility based on folder mode.
+    //
+    // fromModeSwitch marks the two folder-mode dropdowns as the caller. Only then may the flat
+    // category list be seeded from the folder assignments - see the Single branch below.
+    updateFolderModeVisibility: function (type, fromModeSwitch) {
         var modeSelect = document.getElementById(type === 'vod' ? 'selMovieFolderMode' : 'selSeriesFolderMode');
         var categoriesModeSection = document.getElementById(type === 'vod' ? 'movieCategoriesModeContainer' : 'seriesCategoriesModeContainer');
         var singleSection = document.getElementById(type === 'vod' ? 'vodSingleFolderSection' : 'seriesSingleFolderSection');
@@ -587,10 +592,38 @@ const XtreamLibraryConfig = {
             // empty container. Saving an empty container writes "no categories selected", which
             // means sync everything - the same failure as GitHub #78, hit while the user is
             // narrowing their config. Mirror what the Multiple branch above does.
+            var selected = type === 'vod' ? this.selectedVodCategoryIds : this.selectedSeriesCategoryIds;
+
+            // In Multiple folder mode the user's category choices live in the folder assignments,
+            // not in this flat list, and any config last saved before the #78 fix carries an empty
+            // SelectedVodCategoryIds. Seeding the repaint from that field alone paints every box
+            // unticked over a real selection, and the save that follows means "sync everything"
+            // (GitHub #81).
+            //
+            // Gated on an actual mode switch: loadProviderIntoUI also calls this, before the folder
+            // UI has been drawn and with the render discarded a few lines later, so seeding there
+            // would only mutate state nobody asked to change.
+            //
+            // Not an emby-checkbox problem, whatever the issue says. Measured against the real
+            // component on 10.11, the checked attribute and property both survive insertion on
+            // every path, including from inside a change dispatch.
+            if (fromModeSwitch && (!selected || selected.length === 0)) {
+                this.updateFolderDefinitionsFromUI(type);
+                var fromFolders = this.getAllCategoryIdsFromFolders(type);
+                if (fromFolders.length > 0) {
+                    selected = fromFolders;
+                    if (type === 'vod') {
+                        this.selectedVodCategoryIds = fromFolders;
+                    } else {
+                        this.selectedSeriesCategoryIds = fromFolders;
+                    }
+                }
+            }
+
             this.renderCategoryList(
                 type,
                 type === 'vod' ? this.vodCategories : this.seriesCategories,
-                type === 'vod' ? this.selectedVodCategoryIds : this.selectedSeriesCategoryIds);
+                selected);
         }
     },
 
@@ -1665,6 +1698,20 @@ const XtreamLibraryConfig = {
         }
     },
 
+    getLiveCategoryIdsForSave: function () {
+        const self = this;
+        // The category checkboxes only exist once the list has been loaded from the provider.
+        // Reading them before that returns an empty array, which would quietly rewrite a saved
+        // selection to "nothing ticked" - syncing no channels in Custom mode, or every channel
+        // in ExcludeSelected mode. Fall back to what was loaded from the config instead.
+        const rendered = document.querySelectorAll('input[data-category-type="live"]');
+        if (rendered.length === 0) {
+            return self.selectedLiveCategoryIds.slice();
+        }
+
+        return self.getSelectedCategoryIds('live');
+    },
+
     getSelectedCategoryIds: function (type) {
         const checkboxes = document.querySelectorAll('input[data-category-type="' + type + '"]:checked');
         const ids = [];
@@ -1684,7 +1731,11 @@ const XtreamLibraryConfig = {
             // Master "Select all" implies a clean slate: drop any per-channel exclusions so
             // the user gets every channel from every category. Existing expanded panels
             // need redrawing so the channel checkboxes follow the new state.
-            self.excludedLiveStreamIds = [];
+            //
+            // That reasoning is inverted in ExcludeSelected mode, where ticking everything means
+            // excluding every category. Per-channel exclusions there are not stale leftovers of a
+            // superseded selection, so wiping them would just destroy the user's list.
+            self.clearLiveChannelExclusionsIfMeaningless();
             self.redrawExpandedLiveChannelPanels();
             self.updateLiveCategoryCounter();
         } else if (type === 'vod' || type === 'series') {
@@ -1704,7 +1755,11 @@ const XtreamLibraryConfig = {
             // Same clean-slate logic as Select all — the per-channel exclusion list is
             // meaningless when no category is selected, and leaving stale state behind was
             // the root of the "Deselect All seems broken" report.
-            self.excludedLiveStreamIds = [];
+            //
+            // Also inverted in ExcludeSelected mode: unticking everything there means excluding no
+            // category, i.e. syncing the lot, and per-channel exclusions are the only filter the
+            // user has left. Clearing them would silently undo that.
+            self.clearLiveChannelExclusionsIfMeaningless();
             self.redrawExpandedLiveChannelPanels();
             self.updateLiveCategoryCounter();
         } else if (type === 'vod' || type === 'series') {
@@ -1748,21 +1803,67 @@ const XtreamLibraryConfig = {
         });
     },
 
+    getLiveChannelMode: function () {
+        const checked = document.querySelector('input[name="LiveChannelMode"]:checked');
+        return checked ? checked.value : 'IncludeAll';
+    },
+
+    /**
+     * Drops the per-channel exclusion list, but only where a bulk category toggle has genuinely
+     * made it meaningless - which is Custom mode, where the exclusions only ever qualified a
+     * category selection that has just been replaced wholesale. In ExcludeSelected mode they are
+     * an independent filter and must survive.
+     */
+    clearLiveChannelExclusionsIfMeaningless: function () {
+        const self = this;
+        if (self.getLiveChannelMode() !== 'ExcludeSelected') {
+            self.excludedLiveStreamIds = [];
+        }
+    },
+
     updateLiveCategoryCounter: function () {
         const counter = document.getElementById('liveCategoryCounter');
         if (!counter) return;
         const all = document.querySelectorAll('input[data-category-type="live"]');
         const checked = document.querySelectorAll('input[data-category-type="live"]:checked');
-        counter.textContent = checked.length + ' of ' + all.length + ' categories selected';
+        // A ticked box means the opposite thing in each mode, so "N of M selected" would read
+        // backwards in exclude mode: it is the unticked categories that get synced there.
+        if (XtreamLibraryConfig.getLiveChannelMode() === 'ExcludeSelected') {
+            counter.textContent = checked.length + ' of ' + all.length + ' categories excluded';
+        } else {
+            counter.textContent = checked.length + ' of ' + all.length + ' categories selected';
+        }
     },
 
     updateLiveChannelModeVisibility: function () {
-        const checked = document.querySelector('input[name="LiveChannelMode"]:checked');
-        const mode = checked ? checked.value : 'IncludeAll';
+        const mode = XtreamLibraryConfig.getLiveChannelMode();
         const customSection = document.getElementById('liveCustomSection');
         if (customSection) {
-            customSection.style.display = (mode === 'Custom') ? '' : 'none';
+            customSection.style.display = (mode === 'Custom' || mode === 'ExcludeSelected') ? '' : 'none';
         }
+
+        const hint = document.getElementById('liveChannelModeHint');
+        if (hint) {
+            if (mode === 'Custom') {
+                hint.textContent = 'Only the categories you tick are synced. Tick nothing and nothing syncs.';
+            } else if (mode === 'ExcludeSelected') {
+                hint.textContent = 'Everything is synced except the categories you tick, so categories your '
+                    + 'provider adds later are picked up automatically. Tick nothing and everything syncs.';
+            } else {
+                hint.textContent = '';
+            }
+        }
+
+        // A ticked box excludes rather than includes in the new mode, so "Select all" would read as
+        // a way to get everything while actually syncing nothing.
+        const selectAllLabel = document.getElementById('btnLiveSelectAllLabel');
+        const deselectAllLabel = document.getElementById('btnLiveDeselectAllLabel');
+        if (selectAllLabel && deselectAllLabel) {
+            selectAllLabel.textContent = (mode === 'ExcludeSelected') ? 'Exclude all' : 'Select all';
+            deselectAllLabel.textContent = (mode === 'ExcludeSelected') ? 'Exclude none' : 'Deselect all';
+        }
+
+        XtreamLibraryConfig.updateLiveCategoryCounter();
     },
 
     filterLiveCategoryList: function () {
@@ -2555,14 +2656,14 @@ function initXtreamLibraryConfig() {
     var selMovieFolderMode = document.getElementById('selMovieFolderMode');
     if (selMovieFolderMode) {
         selMovieFolderMode.addEventListener('change', function () {
-            XtreamLibraryConfig.updateFolderModeVisibility('vod');
+            XtreamLibraryConfig.updateFolderModeVisibility('vod', true);
         });
     }
 
     var selSeriesFolderMode = document.getElementById('selSeriesFolderMode');
     if (selSeriesFolderMode) {
         selSeriesFolderMode.addEventListener('change', function () {
-            XtreamLibraryConfig.updateFolderModeVisibility('series');
+            XtreamLibraryConfig.updateFolderModeVisibility('series', true);
         });
     }
 
@@ -2588,6 +2689,16 @@ function initXtreamLibraryConfig() {
     for (var i = 0; i < liveModeRadios.length; i++) {
         liveModeRadios[i].addEventListener('change', function () {
             XtreamLibraryConfig.updateLiveChannelModeVisibility();
+
+            // The auto-load on page open reads the *saved* mode, so switching into a mode that
+            // needs the category list would otherwise reveal an empty panel until the user found
+            // the Load Categories button.
+            var mode = XtreamLibraryConfig.getLiveChannelMode();
+            var needsList = (mode === 'Custom' || mode === 'ExcludeSelected');
+            var alreadyLoaded = document.querySelectorAll('input[data-category-type="live"]').length > 0;
+            if (needsList && !alreadyLoaded) {
+                XtreamLibraryConfig.loadLiveCategories();
+            }
         });
     }
 

@@ -157,6 +157,126 @@ public class LiveTvServiceTests
             .Should().Be(LiveTvService.CategoryFetchStrategy.BySelectedCategories);
     }
 
+    // GitHub #79: ExcludeSelected reads SelectedLiveCategoryIds as an exclusion list, so that
+    // categories the provider adds later are synced without anyone having to retick the list.
+
+    [Fact]
+    public void ChooseCategoryFetchStrategy_ExcludeSelectedMode_AlwaysAllFromProvider()
+    {
+        // The trap this pins: falling through to the Custom branch would fetch *by*
+        // SelectedLiveCategoryIds, i.e. exactly the categories the user asked to be rid of.
+        // Nothing would throw - the channel list would just be inverted.
+        LiveTvService.ChooseCategoryFetchStrategy(LiveChannelSelectionMode.ExcludeSelected, selectedCategoryCount: 3)
+            .Should().Be(LiveTvService.CategoryFetchStrategy.AllFromProvider);
+
+        LiveTvService.ChooseCategoryFetchStrategy(LiveChannelSelectionMode.ExcludeSelected, selectedCategoryCount: 0)
+            .Should().Be(LiveTvService.CategoryFetchStrategy.AllFromProvider);
+    }
+
+    [Fact]
+    public void FilterExcludedCategories_EmptySelection_KeepsEverything()
+    {
+        // Excluding nothing excludes nothing. Deliberately the opposite of Custom mode's
+        // empty-means-none rule, and matching what Movies and Series do (GitHub #76).
+        // Do not "fix" this into None by analogy with Custom.
+        var channels = MakeCategorisedChannels((1, 10), (2, 20));
+
+        LiveTvService.FilterExcludedCategories(channels, Array.Empty<int>()).Should().HaveCount(2);
+        LiveTvService.FilterExcludedCategories(channels, null).Should().BeSameAs(channels);
+    }
+
+    [Fact]
+    public void FilterExcludedCategories_DropsChannelsInExcludedCategories()
+    {
+        var channels = MakeCategorisedChannels((1, 10), (2, 20), (3, 10), (4, 30));
+
+        var result = LiveTvService.FilterExcludedCategories(channels, new[] { 10 });
+
+        result.Select(c => c.StreamId).Should().BeEquivalentTo(new[] { 2, 4 });
+    }
+
+    [Fact]
+    public void FilterExcludedCategories_ChannelWithoutCategory_IsKept()
+    {
+        // No category means it cannot be in the exclusion list.
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, Name = "Uncategorised", Num = 1, CategoryId = null },
+            new() { StreamId = 2, Name = "Excluded", Num = 2, CategoryId = 10 },
+        };
+
+        var result = LiveTvService.FilterExcludedCategories(channels, new[] { 10 });
+
+        result.Select(c => c.StreamId).Should().BeEquivalentTo(new[] { 1 });
+    }
+
+    [Fact]
+    public void FilterExcludedCategories_HonoursSecondaryCategoryMembership()
+    {
+        // Some providers put one channel in several categories and report the extras only in
+        // category_ids. Include mode fetches per category, so it picks a channel up through any
+        // of them; excluding on the same union is what keeps Exclude the exact complement.
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, Name = "Primary elsewhere", Num = 1, CategoryId = 20, CategoryIds = new[] { 20, 10 } },
+            new() { StreamId = 2, Name = "Untouched", Num = 2, CategoryId = 20, CategoryIds = new[] { 20 } },
+        };
+
+        var result = LiveTvService.FilterExcludedCategories(channels, new[] { 10 });
+
+        result.Select(c => c.StreamId).Should().BeEquivalentTo(new[] { 2 });
+    }
+
+    [Fact]
+    public void FilterExcludedCategories_DoesNotMutateInput()
+    {
+        var channels = MakeCategorisedChannels((1, 10), (2, 20));
+
+        LiveTvService.FilterExcludedCategories(channels, new[] { 10 });
+
+        channels.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void ApplyRenderTimeFilters_ExcludedCategoriesReappliedOnSnapshotRestore()
+    {
+        // A snapshot taken before a category was excluded still holds its channels: in this mode
+        // the category filter runs after the fetch instead of deciding what to fetch, so the
+        // snapshot path has to re-apply it or keep serving what the user just excluded.
+        var config = MakeM3UConfig();
+        config.LiveChannelMode = LiveChannelSelectionMode.ExcludeSelected;
+        config.SelectedLiveCategoryIds = new[] { 10 };
+        var channels = MakeCategorisedChannels((1, 10), (2, 20));
+
+        var result = LiveTvService.ApplyRenderTimeFilters(channels, config);
+
+        result.Select(c => c.StreamId).Should().BeEquivalentTo(new[] { 2 });
+    }
+
+    [Fact]
+    public void ApplyRenderTimeFilters_PerChannelExclusionsHonouredInExcludeSelectedMode()
+    {
+        var config = MakeM3UConfig();
+        config.LiveChannelMode = LiveChannelSelectionMode.ExcludeSelected;
+        config.SelectedLiveCategoryIds = Array.Empty<int>();
+        config.ExcludedLiveStreamIds = new[] { 2 };
+        var channels = MakeCategorisedChannels((1, 10), (2, 20));
+
+        var result = LiveTvService.ApplyRenderTimeFilters(channels, config);
+
+        result.Select(c => c.StreamId).Should().BeEquivalentTo(new[] { 1 });
+    }
+
+    private static List<LiveStreamInfo> MakeCategorisedChannels(params (int StreamId, int CategoryId)[] channels) =>
+        channels.Select(c => new LiveStreamInfo
+        {
+            StreamId = c.StreamId,
+            Name = "Channel " + c.StreamId,
+            Num = c.StreamId,
+            CategoryId = c.CategoryId,
+            CategoryIds = new[] { c.CategoryId },
+        }).ToList();
+
     // BUG-008: multi-provider configs (Providers[0] populated, legacy fields empty) used to
     // produce m3u stream URLs shaped like "/live///{streamId}.ts" because BuildStreamUrl
     // read the legacy single-provider fields directly. These tests pin the resolver and the

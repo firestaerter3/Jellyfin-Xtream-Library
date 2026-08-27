@@ -66,4 +66,91 @@ public class LiveStreamInfoTests
 
         info!.Added.Should().BeEmpty();
     }
+
+    // GitHub #79 added CategoryIds for exclude-mode filtering. It is deserialized on the shared
+    // fetch path, so a shape that throws takes down every Live TV mode - including the two that
+    // never read the field. Same hazard as `added` above, so the same tolerance is required.
+
+    [Fact]
+    public void Deserialize_CategoryIdsAsIntArray_Succeeds()
+    {
+        var json = "{\"category_ids\": [10, 20]}";
+
+        var info = JsonConvert.DeserializeObject<LiveStreamInfo>(json);
+
+        info!.CategoryIds.Should().BeEquivalentTo(new[] { 10, 20 });
+    }
+
+    [Fact]
+    public void Deserialize_CategoryIdsAsStringArray_Succeeds()
+    {
+        var json = "{\"category_ids\": [\"10\", \"20\"]}";
+
+        var info = JsonConvert.DeserializeObject<LiveStreamInfo>(json);
+
+        info!.CategoryIds.Should().BeEquivalentTo(new[] { 10, 20 });
+    }
+
+    [Fact]
+    public void Deserialize_CategoryIdsAsBareScalar_Succeeds()
+    {
+        // A provider reporting one category may send it unwrapped rather than as a 1-element array.
+        var json = "{\"category_ids\": 10}";
+
+        var info = JsonConvert.DeserializeObject<LiveStreamInfo>(json);
+
+        info!.CategoryIds.Should().BeEquivalentTo(new[] { 10 });
+    }
+
+    [Fact]
+    public void Deserialize_CategoryIdsAsCommaSeparatedString_Succeeds()
+    {
+        var json = "{\"category_ids\": \"10,20\"}";
+
+        var info = JsonConvert.DeserializeObject<LiveStreamInfo>(json);
+
+        info!.CategoryIds.Should().BeEquivalentTo(new[] { 10, 20 });
+    }
+
+    [Fact]
+    public void Deserialize_CategoryIdsNullOrMissingOrEmpty_DoesNotThrow()
+    {
+        JsonConvert.DeserializeObject<LiveStreamInfo>("{\"category_ids\": null}")!
+            .CategoryIds.Should().BeNull();
+
+        JsonConvert.DeserializeObject<LiveStreamInfo>("{}")!
+            .CategoryIds.Should().BeNull();
+
+        JsonConvert.DeserializeObject<LiveStreamInfo>("{\"category_ids\": []}")!
+            .CategoryIds.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Deserialize_CategoryIdsGarbage_DegradesInsteadOfThrowing()
+    {
+        // Whatever a provider invents here, losing the secondary membership of one channel is
+        // survivable; failing the fetch is not.
+        JsonConvert.DeserializeObject<LiveStreamInfo>("{\"category_ids\": \"\"}")!
+            .CategoryIds.Should().BeEmpty();
+
+        JsonConvert.DeserializeObject<LiveStreamInfo>("{\"category_ids\": {\"a\": 1}}")!
+            .CategoryIds.Should().BeNull();
+
+        JsonConvert.DeserializeObject<LiveStreamInfo>("{\"category_ids\": [\"x\", 10]}")!
+            .CategoryIds.Should().BeEquivalentTo(new[] { 10 });
+    }
+
+    [Fact]
+    public void Deserialize_FullChannelWithAwkwardCategoryIds_KeepsOtherFields()
+    {
+        // The point of the tolerance: one odd field must not cost the rest of the channel.
+        var json = "{\"stream_id\": 7, \"name\": \"BBC One\", \"category_id\": \"10\", \"category_ids\": 10}";
+
+        var info = JsonConvert.DeserializeObject<LiveStreamInfo>(json);
+
+        info!.StreamId.Should().Be(7);
+        info.Name.Should().Be("BBC One");
+        info.CategoryId.Should().Be(10);
+        info.CategoryIds.Should().BeEquivalentTo(new[] { 10 });
+    }
 }
