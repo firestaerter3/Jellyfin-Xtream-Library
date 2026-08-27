@@ -14,6 +14,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -39,6 +40,17 @@ public static class NfoWriter
     /// <param name="tmdbId">Optional TMDb ID for provider identification.</param>
     /// <param name="year">Optional release year.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="plot">Optional plot/description.</param>
+    /// <param name="genre">Optional comma-separated genre list.</param>
+    /// <param name="director">Optional director name.</param>
+    /// <param name="cast">Optional comma-separated cast list.</param>
+    /// <param name="country">Optional production country.</param>
+    /// <param name="rating">Optional rating (e.g. "7.2"). Ignored if not a valid number.</param>
+    /// <param name="premiered">Optional release date in yyyy-MM-dd format. Ignored if not in that format.</param>
+    /// <param name="youtubeTrailerId">Optional YouTube video id for the trailer.</param>
+    /// <param name="dateAdded">Optional date the content was added on the provider's catalog.</param>
+    /// <param name="posterUrl">Optional remote URL to the poster/cover image. Referenced directly, never downloaded.</param>
+    /// <param name="backdropUrl">Optional remote URL to the backdrop/fanart image. Referenced directly, never downloaded.</param>
     /// <returns>True if NFO was written, false if no data was available.</returns>
     public static async Task<bool> WriteMovieNfoAsync(
         string nfoPath,
@@ -48,12 +60,25 @@ public static class NfoWriter
         int? durationSecs,
         int? tmdbId,
         int? year,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? plot = null,
+        string? genre = null,
+        string? director = null,
+        string? cast = null,
+        string? country = null,
+        string? rating = null,
+        string? premiered = null,
+        string? youtubeTrailerId = null,
+        DateTime? dateAdded = null,
+        string? posterUrl = null,
+        string? backdropUrl = null)
     {
         bool hasMedia = HasUsableData(video, audio);
+        bool hasExtendedMetadata = HasUsableExtendedMetadata(plot, genre, director, cast, country, rating, premiered, youtubeTrailerId, dateAdded) ||
+            !string.IsNullOrWhiteSpace(posterUrl) || !string.IsNullOrWhiteSpace(backdropUrl);
 
-        // Skip if no provider ID and no media info
-        if (!tmdbId.HasValue && !hasMedia)
+        // Skip if no provider ID, no media info and no other usable metadata
+        if (!tmdbId.HasValue && !hasMedia && !hasExtendedMetadata)
         {
             return false;
         }
@@ -68,10 +93,23 @@ public static class NfoWriter
             sb.Append("  <year>").Append(year.Value.ToString(CultureInfo.InvariantCulture)).AppendLine("</year>");
         }
 
+        AppendPlot(sb, plot);
+        AppendRating(sb, rating);
+        AppendPremiered(sb, premiered);
+        AppendGenres(sb, genre);
+        AppendCountry(sb, country);
+        AppendDirector(sb, director);
+        AppendCast(sb, cast);
+        AppendThumb(sb, posterUrl);
+        AppendFanart(sb, backdropUrl);
+        AppendTrailer(sb, youtubeTrailerId);
+
         if (tmdbId.HasValue)
         {
             sb.Append("  <uniqueid type=\"tmdb\" default=\"true\">").Append(tmdbId.Value.ToString(CultureInfo.InvariantCulture)).AppendLine("</uniqueid>");
         }
+
+        AppendDateAdded(sb, dateAdded);
 
         if (hasMedia)
         {
@@ -92,15 +130,32 @@ public static class NfoWriter
     /// <param name="tmdbId">Optional TMDb ID.</param>
     /// <param name="tvdbId">Optional TVDb ID.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>True if NFO was written, false if no provider IDs were available.</returns>
+    /// <param name="plot">Optional plot/description.</param>
+    /// <param name="genre">Optional comma-separated genre list.</param>
+    /// <param name="director">Optional director name.</param>
+    /// <param name="cast">Optional comma-separated cast list.</param>
+    /// <param name="rating">Optional rating (0-10 scale).</param>
+    /// <param name="posterUrl">Optional remote URL to the poster/cover image. Referenced directly, never downloaded.</param>
+    /// <param name="backdropUrl">Optional remote URL to the backdrop/fanart image. Referenced directly, never downloaded.</param>
+    /// <returns>True if NFO was written, false if no provider IDs or other usable metadata were available.</returns>
     public static async Task<bool> WriteShowNfoAsync(
         string nfoPath,
         string title,
         int? tmdbId,
         int? tvdbId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? plot = null,
+        string? genre = null,
+        string? director = null,
+        string? cast = null,
+        decimal? rating = null,
+        string? posterUrl = null,
+        string? backdropUrl = null)
     {
-        if (!tmdbId.HasValue && !tvdbId.HasValue)
+        bool hasExtendedMetadata = HasUsableExtendedMetadata(plot, genre, director, cast, null, null, null, null, null) ||
+            rating.HasValue || !string.IsNullOrWhiteSpace(posterUrl) || !string.IsNullOrWhiteSpace(backdropUrl);
+
+        if (!tmdbId.HasValue && !tvdbId.HasValue && !hasExtendedMetadata)
         {
             return false;
         }
@@ -109,6 +164,14 @@ public static class NfoWriter
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
         sb.AppendLine("<tvshow>");
         sb.Append("  <title>").Append(EscapeXml(title)).AppendLine("</title>");
+
+        AppendPlot(sb, plot);
+        AppendRating(sb, rating);
+        AppendGenres(sb, genre);
+        AppendDirector(sb, director);
+        AppendCast(sb, cast);
+        AppendThumb(sb, posterUrl);
+        AppendFanart(sb, backdropUrl);
 
         // TVDb is the primary identifier for series; TMDb is secondary
         if (tvdbId.HasValue)
@@ -138,15 +201,28 @@ public static class NfoWriter
     /// <param name="audio">Audio stream info.</param>
     /// <param name="durationSecs">Duration in seconds.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>True if NFO was written, false if no media info was available.</returns>
+    /// <param name="plot">Optional episode plot/description.</param>
+    /// <param name="premiered">Optional air date in yyyy-MM-dd format. Ignored if not in that format.</param>
+    /// <param name="rating">Optional rating (0-10 scale).</param>
+    /// <param name="dateAdded">Optional date the episode was added on the provider's catalog.</param>
+    /// <param name="thumbUrl">Optional remote URL to the episode screenshot. Referenced directly, never downloaded.</param>
+    /// <returns>True if NFO was written, false if no media info or other usable metadata was available.</returns>
     public static async Task<bool> WriteEpisodeNfoAsync(
         string nfoPath,
         VideoInfo? video,
         AudioInfo? audio,
         int? durationSecs,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? plot = null,
+        string? premiered = null,
+        decimal? rating = null,
+        DateTime? dateAdded = null,
+        string? thumbUrl = null)
     {
-        if (!HasUsableData(video, audio))
+        bool hasExtendedMetadata = HasUsableExtendedMetadata(plot, null, null, null, null, null, premiered, null, dateAdded) ||
+            rating.HasValue || !string.IsNullOrWhiteSpace(thumbUrl);
+
+        if (!HasUsableData(video, audio) && !hasExtendedMetadata)
         {
             return false;
         }
@@ -155,7 +231,16 @@ public static class NfoWriter
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
         sb.AppendLine("<episodedetails>");
 
-        AppendFileInfo(sb, video, audio, durationSecs);
+        AppendPlot(sb, plot);
+        AppendRating(sb, rating);
+        AppendPremiered(sb, premiered);
+        AppendThumb(sb, thumbUrl);
+        AppendDateAdded(sb, dateAdded);
+
+        if (HasUsableData(video, audio))
+        {
+            AppendFileInfo(sb, video, audio, durationSecs);
+        }
 
         sb.AppendLine("</episodedetails>");
 
@@ -224,6 +309,149 @@ public static class NfoWriter
 
         sb.AppendLine("    </streamdetails>");
         sb.AppendLine("  </fileinfo>");
+    }
+
+    private static void AppendPlot(StringBuilder sb, string? plot)
+    {
+        if (!string.IsNullOrWhiteSpace(plot))
+        {
+            sb.Append("  <plot>").Append(EscapeXml(plot)).AppendLine("</plot>");
+        }
+    }
+
+    private static void AppendGenres(StringBuilder sb, string? genre)
+    {
+        foreach (var value in SplitCsv(genre))
+        {
+            sb.Append("  <genre>").Append(EscapeXml(value)).AppendLine("</genre>");
+        }
+    }
+
+    private static void AppendCast(StringBuilder sb, string? cast)
+    {
+        foreach (var actor in SplitCsv(cast))
+        {
+            sb.AppendLine("  <actor>");
+            sb.Append("    <name>").Append(EscapeXml(actor)).AppendLine("</name>");
+            sb.AppendLine("  </actor>");
+        }
+    }
+
+    private static void AppendDirector(StringBuilder sb, string? director)
+    {
+        if (!string.IsNullOrWhiteSpace(director))
+        {
+            sb.Append("  <director>").Append(EscapeXml(director)).AppendLine("</director>");
+        }
+    }
+
+    private static void AppendCountry(StringBuilder sb, string? country)
+    {
+        if (!string.IsNullOrWhiteSpace(country))
+        {
+            sb.Append("  <country>").Append(EscapeXml(country)).AppendLine("</country>");
+        }
+    }
+
+    private static void AppendThumb(StringBuilder sb, string? posterUrl)
+    {
+        if (!string.IsNullOrWhiteSpace(posterUrl))
+        {
+            sb.Append("  <thumb aspect=\"poster\">").Append(EscapeXml(posterUrl)).AppendLine("</thumb>");
+        }
+    }
+
+    private static void AppendFanart(StringBuilder sb, string? backdropUrl)
+    {
+        if (!string.IsNullOrWhiteSpace(backdropUrl))
+        {
+            sb.AppendLine("  <fanart>");
+            sb.Append("    <thumb>").Append(EscapeXml(backdropUrl)).AppendLine("</thumb>");
+            sb.AppendLine("  </fanart>");
+        }
+    }
+
+    private static void AppendTrailer(StringBuilder sb, string? youtubeTrailerId)
+    {
+        if (string.IsNullOrWhiteSpace(youtubeTrailerId))
+        {
+            return;
+        }
+
+        var url = "https://www.youtube.com/watch?v=" + Uri.EscapeDataString(youtubeTrailerId);
+        sb.Append("  <trailer>").Append(EscapeXml(url)).AppendLine("</trailer>");
+    }
+
+    private static void AppendDateAdded(StringBuilder sb, DateTime? dateAdded)
+    {
+        if (dateAdded.HasValue)
+        {
+            sb.Append("  <dateadded>").Append(dateAdded.Value.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)).AppendLine("</dateadded>");
+        }
+    }
+
+    private static void AppendPremiered(StringBuilder sb, string? premiered)
+    {
+        if (!string.IsNullOrWhiteSpace(premiered) &&
+            DateTime.TryParseExact(premiered, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+        {
+            sb.Append("  <premiered>").Append(premiered).AppendLine("</premiered>");
+        }
+    }
+
+    private static void AppendRating(StringBuilder sb, string? rating)
+    {
+        if (decimal.TryParse(rating, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed))
+        {
+            AppendRating(sb, (decimal?)parsed);
+        }
+    }
+
+    private static void AppendRating(StringBuilder sb, decimal? rating)
+    {
+        if (rating.HasValue && rating.Value > 0)
+        {
+            sb.Append("  <rating>").Append(rating.Value.ToString("0.0", CultureInfo.InvariantCulture)).AppendLine("</rating>");
+        }
+    }
+
+    private static IEnumerable<string> SplitCsv(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv))
+        {
+            yield break;
+        }
+
+        foreach (var part in csv.Split(','))
+        {
+            var trimmed = part.Trim();
+            if (trimmed.Length > 0)
+            {
+                yield return trimmed;
+            }
+        }
+    }
+
+    private static bool HasUsableExtendedMetadata(
+        string? plot,
+        string? genre,
+        string? director,
+        string? cast,
+        string? country,
+        string? rating,
+        string? premiered,
+        string? youtubeTrailerId,
+        DateTime? dateAdded)
+    {
+        return !string.IsNullOrWhiteSpace(plot) ||
+            !string.IsNullOrWhiteSpace(genre) ||
+            !string.IsNullOrWhiteSpace(director) ||
+            !string.IsNullOrWhiteSpace(cast) ||
+            !string.IsNullOrWhiteSpace(country) ||
+            !string.IsNullOrWhiteSpace(rating) ||
+            !string.IsNullOrWhiteSpace(premiered) ||
+            !string.IsNullOrWhiteSpace(youtubeTrailerId) ||
+            dateAdded.HasValue;
     }
 
     private static bool HasUsableData(VideoInfo? video, AudioInfo? audio)

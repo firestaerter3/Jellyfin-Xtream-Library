@@ -2119,7 +2119,18 @@ public partial class StrmSyncService
                                 nfoDurationSecs,
                                 effectiveTmdbId,
                                 year,
-                                ct).ConfigureAwait(false);
+                                ct,
+                                plot: vodInfo?.Info?.Plot,
+                                genre: vodInfo?.Info?.Genre,
+                                director: vodInfo?.Info?.Director,
+                                cast: vodInfo?.Info?.Cast,
+                                country: vodInfo?.Info?.Country,
+                                rating: vodInfo?.Info?.Rating,
+                                premiered: vodInfo?.Info?.ReleaseDate,
+                                youtubeTrailerId: vodInfo?.Info?.YoutubeTrailer,
+                                dateAdded: AddedDateParser.Parse(stream.Added),
+                                posterUrl: vodInfo?.Info?.MovieImage ?? stream.StreamIcon,
+                                backdropUrl: vodInfo?.Info?.BackdropPaths.FirstOrDefault()).ConfigureAwait(false);
                         }
 
                         // Download artwork for unmatched movies (only for first target folder)
@@ -3061,7 +3072,12 @@ public partial class StrmSyncService
                                         episode.Info.Video,
                                         episode.Info.Audio,
                                         episode.Info.DurationSecs,
-                                        ct).ConfigureAwait(false);
+                                        ct,
+                                        plot: episode.Info.Plot,
+                                        premiered: episode.Info.ReleaseDate,
+                                        rating: episode.Info.Rating,
+                                        dateAdded: episode.Added,
+                                        thumbUrl: episode.Info.MovieImage).ConfigureAwait(false);
                                 }
 
                                 // Collect episode thumbnail for batch download
@@ -3131,7 +3147,19 @@ public partial class StrmSyncService
                                 ? overrideTvdbId
                                 : autoLookupTvdbId;
                             var showNfoPath = Path.Combine(seriesFolderPath, "tvshow.nfo");
-                            await NfoWriter.WriteShowNfoAsync(showNfoPath, seriesName, providerTmdbId, showTvdbId, ct).ConfigureAwait(false);
+                            await NfoWriter.WriteShowNfoAsync(
+                                showNfoPath,
+                                seriesName,
+                                providerTmdbId,
+                                showTvdbId,
+                                ct,
+                                plot: series.Plot,
+                                genre: series.Genre,
+                                director: series.Director,
+                                cast: series.Cast,
+                                rating: series.Rating,
+                                posterUrl: series.Cover,
+                                backdropUrl: series.BackdropPaths.FirstOrDefault()).ConfigureAwait(false);
                         }
                     }
 

@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Collections.Generic;
 using Newtonsoft.Json;
 
 #pragma warning disable CS1591
@@ -60,11 +61,23 @@ public class VodInfoDetails
     [JsonProperty("genre")]
     public string? Genre { get; set; }
 
+    [JsonProperty("country")]
+    public string? Country { get; set; }
+
     [JsonProperty("releasedate")]
     public string? ReleaseDate { get; set; }
 
     [JsonProperty("rating")]
     public string? Rating { get; set; }
+
+    [JsonProperty("youtube_trailer")]
+    public string? YoutubeTrailer { get; set; }
+
+    [JsonConverter(typeof(SingularToListConverter<string>))]
+    [JsonProperty("backdrop_path")]
+#pragma warning disable CA2227 // Collection properties should be read-only - Required for Newtonsoft.Json deserialization
+    public ICollection<string> BackdropPaths { get; set; } = new List<string>();
+#pragma warning restore CA2227
 
     [JsonProperty("duration")]
     public string? Duration { get; set; }
