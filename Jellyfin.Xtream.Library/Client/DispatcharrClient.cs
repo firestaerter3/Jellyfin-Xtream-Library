@@ -62,6 +62,11 @@ public class DispatcharrClient : IDispatcharrClient
     /// <inheritdoc />
     public void Configure(string username, string password)
     {
+        // Trimmed for the same reason as ConnectionInfo: whitespace saved with the credential
+        // otherwise reaches the JWT request and the login fails with no useful message.
+        username = (username ?? string.Empty).Trim();
+        password = (password ?? string.Empty).Trim();
+
         if (!string.Equals(_username, username, StringComparison.Ordinal) ||
             !string.Equals(_password, password, StringComparison.Ordinal))
         {
