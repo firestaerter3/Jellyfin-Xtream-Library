@@ -612,7 +612,7 @@ public partial class StrmSyncService
         // would refuse a legitimate write. Case-insensitively they are one file, and not folding
         // them would hand out two claims and let the second silently overwrite the first, which
         // is the exact bug this guard exists to stop.
-        var claimedStrmPaths = new ConcurrentDictionary<string, byte>(PathClaimComparer);
+        var claimedPaths = new ConcurrentDictionary<string, byte>(PathClaimComparer);
 
         // Check if sync is suppressed (e.g., after CleanLibraries)
         if (_syncSuppressed)
@@ -686,7 +686,7 @@ public partial class StrmSyncService
                     CurrentProgress.Phase = $"Provider {i + 1}/{enabledProviders.Count}: {provider.Name}";
                 }
 
-                var providerResult = await SyncProviderAsync(providerIndex, provider, claimedStrmPaths, linkedToken).ConfigureAwait(false);
+                var providerResult = await SyncProviderAsync(providerIndex, provider, claimedPaths, linkedToken).ConfigureAwait(false);
                 MergeResult(globalResult, providerResult);
             }
 
@@ -872,14 +872,16 @@ public partial class StrmSyncService
     /// </summary>
     /// <param name="providerIndex">Zero-based index of this provider in the Providers list.</param>
     /// <param name="provider">The provider configuration.</param>
-    /// <param name="claimedStrmPaths">STRM paths already written during this sync run, shared across providers.</param>
+    /// <param name="claimedPaths">File paths already written during this sync run, shared across providers.
+/// Covers STRM files and the NFO next to them: both are written from the parallel movie and episode
+/// loops, and both can be targeted by more than one stream (GitHub #80, #90).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The sync result for this provider.</returns>
 #pragma warning disable CA5351
     private async Task<SyncResult> SyncProviderAsync(
         int providerIndex,
         ProviderConfig provider,
-        ConcurrentDictionary<string, byte> claimedStrmPaths,
+        ConcurrentDictionary<string, byte> claimedPaths,
         CancellationToken cancellationToken)
     {
         var result = new SyncResult { StartTime = DateTime.UtcNow };
@@ -998,7 +1000,7 @@ public partial class StrmSyncService
                             provider,
                             moviesPath,
                             syncedFiles,
-                            claimedStrmPaths,
+                            claimedPaths,
                             result,
                             previousSnapshot,
                             allCollectedMovies,
@@ -1016,7 +1018,7 @@ public partial class StrmSyncService
                         await SyncSeriesAsync(
                             provider,
                             seriesPath,
-                            claimedStrmPaths,
+                            claimedPaths,
                             syncedFiles,
                             result,
                             previousSnapshot,
@@ -1040,7 +1042,7 @@ public partial class StrmSyncService
                     provider,
                     moviesPath,
                     syncedFiles,
-                    claimedStrmPaths,
+                    claimedPaths,
                     result,
                     previousSnapshot,
                     allCollectedMovies,
@@ -1053,7 +1055,7 @@ public partial class StrmSyncService
                 await SyncSeriesAsync(
                     provider,
                     seriesPath,
-                    claimedStrmPaths,
+                    claimedPaths,
                     syncedFiles,
                     result,
                     previousSnapshot,
@@ -1402,7 +1404,7 @@ public partial class StrmSyncService
         ProviderConfig provider,
         string moviesPath,
         ConcurrentDictionary<string, byte> syncedFiles,
-        ConcurrentDictionary<string, byte> claimedStrmPaths,
+        ConcurrentDictionary<string, byte> claimedPaths,
         SyncResult result,
         ContentSnapshot? previousSnapshot,
         ConcurrentBag<StreamInfo> allCollectedMovies,
@@ -2024,7 +2026,7 @@ public partial class StrmSyncService
                         // File.Exists branch below compares content against a URL that embeds the
                         // stream id, so it can never match across two streams and always falls
                         // through to the overwrite. Refuse instead, and count it.
-                        if (!claimedStrmPaths.TryAdd(strmPath, 0))
+                        if (!claimedPaths.TryAdd(strmPath, 0))
                         {
                             Interlocked.Increment(ref nameCollisions);
                             _logger.LogWarning(
@@ -2071,7 +2073,7 @@ public partial class StrmSyncService
                             // file. Keeping it after a failed create would refuse a later duplicate
                             // that might have succeeded, and the name would end up with no STRM at
                             // all. Hand it back and let the original handler count the error.
-                            claimedStrmPaths.TryRemove(strmPath, out _);
+                            claimedPaths.TryRemove(strmPath, out _);
                             throw;
                         }
 
@@ -2088,6 +2090,7 @@ public partial class StrmSyncService
                             VideoInfo? nfoVideo = null;
                             AudioInfo? nfoAudio = null;
                             int? nfoDurationSecs = null;
+                            bool vodInfoFetchFailed = false;
 
                             if (enableProactiveMediaInfo)
                             {
@@ -2104,33 +2107,91 @@ public partial class StrmSyncService
                                     nfoAudio = vodInfo?.Info?.Audio;
                                     nfoDurationSecs = vodInfo?.Info?.DurationSecs;
                                 }
+                                catch (OperationCanceledException)
+                                {
+                                    throw;
+                                }
                                 catch (Exception ex)
                                 {
-                                    _logger.LogDebug(ex, "Failed to fetch VOD info for NFO: {StreamId}", stream.StreamId);
+                                    // Debug hid this: the write below still went ahead, just without plot,
+                                    // genre, cast or artwork, and overwrote whatever a sibling version had
+                                    // already written (GitHub #90). It is a Warning because the NFO that
+                                    // results is measurably worse than the one the provider could give.
+                                    vodInfoFetchFailed = true;
+                                    _logger.LogWarning(ex, "Failed to fetch VOD info for NFO: {StreamId}", stream.StreamId);
                                 }
                             }
 
                             var nfoPath = Path.Combine(movieFolder, $"{folderName}.nfo");
-                            await NfoWriter.WriteMovieNfoAsync(
-                                nfoPath,
-                                movieName,
-                                nfoVideo,
-                                nfoAudio,
-                                nfoDurationSecs,
-                                effectiveTmdbId,
-                                year,
-                                ct,
-                                plot: vodInfo?.Info?.Plot,
-                                genre: vodInfo?.Info?.Genre,
-                                director: vodInfo?.Info?.Director,
-                                cast: vodInfo?.Info?.Cast,
-                                country: vodInfo?.Info?.Country,
-                                rating: vodInfo?.Info?.Rating,
-                                premiered: vodInfo?.Info?.ReleaseDate,
-                                youtubeTrailerId: vodInfo?.Info?.YoutubeTrailer,
-                                dateAdded: AddedDateParser.Parse(stream.Added),
-                                posterUrl: vodInfo?.Info?.MovieImage ?? stream.StreamIcon,
-                                backdropUrl: vodInfo?.Info?.BackdropPaths.FirstOrDefault()).ConfigureAwait(false);
+
+                            // Every version of a title (V1/V2/V3) resolves to the same folder and so to
+                            // this same NFO path, and they are processed concurrently. Two guards, both
+                            // from GitHub #90:
+                            //
+                            // A failed metadata fetch must not replace a good file. The write would
+                            // otherwise go ahead with plot, cast and artwork missing and win by being
+                            // last. This one also holds across runs, which the claim below cannot.
+                            if (vodInfoFetchFailed && File.Exists(nfoPath))
+                            {
+                                _logger.LogWarning(
+                                    "Keeping the existing NFO for {MovieName}: metadata fetch failed for stream {StreamId}, so writing would strip it",
+                                    baseName,
+                                    stream.StreamId);
+                            }
+                            else if (!claimedPaths.TryAdd(nfoPath, 0))
+                            {
+                                // A sibling version already wrote it in this run. NfoWriter truncates and
+                                // rewrites, so letting both through interleaves them into a short file.
+                                _logger.LogDebug(
+                                    "NFO {NfoPath} already written by another stream in this run; stream {StreamId} skips it",
+                                    nfoPath,
+                                    stream.StreamId);
+                            }
+                            else
+                            {
+                                bool nfoWritten;
+                                try
+                                {
+                                    nfoWritten = await NfoWriter.WriteMovieNfoAsync(
+                                    nfoPath,
+                                    movieName,
+                                    nfoVideo,
+                                    nfoAudio,
+                                    nfoDurationSecs,
+                                    effectiveTmdbId,
+                                    year,
+                                    ct,
+                                    plot: vodInfo?.Info?.Plot,
+                                    genre: vodInfo?.Info?.Genre,
+                                    director: vodInfo?.Info?.Director,
+                                    cast: vodInfo?.Info?.Cast,
+                                    country: vodInfo?.Info?.Country,
+                                    rating: vodInfo?.Info?.Rating,
+                                    premiered: vodInfo?.Info?.ReleaseDate,
+                                    youtubeTrailerId: vodInfo?.Info?.YoutubeTrailer,
+                                    dateAdded: AddedDateParser.Parse(stream.Added),
+                                    posterUrl: vodInfo?.Info?.MovieImage ?? stream.StreamIcon,
+                                    backdropUrl: vodInfo?.Info?.BackdropPaths.FirstOrDefault()).ConfigureAwait(false);
+                                }
+                                catch
+                                {
+                                    // Same reasoning as the STRM claim: a claim is only worth holding
+                                    // once the file exists, otherwise a later version that could have
+                                    // succeeded is refused and the folder ends up with no NFO at all.
+                                    claimedPaths.TryRemove(nfoPath, out _);
+                                    throw;
+                                }
+
+                                if (vodInfoFetchFailed || !nfoWritten)
+                                {
+                                    // Either this stream had nothing to write, or NfoWriter decided
+                                    // there was not enough data to be worth a file. Holding the claim
+                                    // would make the outcome depend on which version happened to run
+                                    // first; releasing it lets a sibling with real metadata write,
+                                    // while the File.Exists guard above stops the reverse.
+                                    claimedPaths.TryRemove(nfoPath, out _);
+                                }
+                            }
                         }
 
                         // Download artwork for unmatched movies (only for first target folder)
@@ -2234,7 +2295,7 @@ public partial class StrmSyncService
     private async Task SyncSeriesAsync(
         ProviderConfig provider,
         string seriesPath,
-        ConcurrentDictionary<string, byte> claimedStrmPaths,
+        ConcurrentDictionary<string, byte> claimedPaths,
         ConcurrentDictionary<string, byte> syncedFiles,
         SyncResult result,
         ContentSnapshot? previousSnapshot,
@@ -3003,7 +3064,7 @@ public partial class StrmSyncService
                                 // File.Exists branch below cannot tell them apart, because it
                                 // compares against a URL carrying the episode id, so it would
                                 // silently overwrite. Refuse and count instead.
-                                if (!claimedStrmPaths.TryAdd(strmPath, 0))
+                                if (!claimedPaths.TryAdd(strmPath, 0))
                                 {
                                     Interlocked.Increment(ref episodeNameCollisions);
 
@@ -3058,7 +3119,7 @@ public partial class StrmSyncService
                                     // See the movie path: a claim is only worth holding once the
                                     // file exists, otherwise a later duplicate that could have
                                     // succeeded is refused and the name gets no STRM at all.
-                                    claimedStrmPaths.TryRemove(strmPath, out _);
+                                    claimedPaths.TryRemove(strmPath, out _);
                                     throw;
                                 }
 
