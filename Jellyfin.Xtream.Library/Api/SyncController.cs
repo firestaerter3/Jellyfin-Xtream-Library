@@ -52,7 +52,6 @@ public class SyncController : ControllerBase
     private readonly IDispatcharrClient _dispatcharrClient;
     private readonly IMetadataLookupService _metadataLookup;
     private readonly SnapshotService _snapshotService;
-    private readonly TmdbRegroupService _regroupService;
     private readonly IServerApplicationPaths _appPaths;
     private readonly ILogger<SyncController> _logger;
 
@@ -64,7 +63,6 @@ public class SyncController : ControllerBase
     /// <param name="dispatcharrClient">The Dispatcharr REST API client.</param>
     /// <param name="metadataLookup">The metadata lookup service.</param>
     /// <param name="snapshotService">The snapshot service.</param>
-    /// <param name="regroupService">The TMDB regroup service.</param>
     /// <param name="appPaths">The server application paths.</param>
     /// <param name="logger">The logger instance.</param>
     public SyncController(
@@ -73,11 +71,9 @@ public class SyncController : ControllerBase
         IDispatcharrClient dispatcharrClient,
         IMetadataLookupService metadataLookup,
         SnapshotService snapshotService,
-        TmdbRegroupService regroupService,
         IServerApplicationPaths appPaths,
         ILogger<SyncController> logger)
     {
-        _regroupService = regroupService;
         _syncService = syncService;
         _client = client;
         _dispatcharrClient = dispatcharrClient;
@@ -657,58 +653,6 @@ public class SyncController : ControllerBase
     public ActionResult<IReadOnlyList<SyncResult>> GetHistory()
     {
         return Ok(_syncService.SyncHistory);
-    }
-
-    /// <summary>
-    /// Merges movie folders that hold the same film, according to the TMDB ids the last sync
-    /// recorded (GitHub #88). Preview first: this moves files.
-    /// </summary>
-    /// <param name="providerIndex">Index of the provider to regroup.</param>
-    /// <param name="dryRun">True reports what would happen without touching anything.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>What was done, or would be done.</returns>
-    [HttpPost("RegroupMovies")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<RegroupResult>> RegroupMovies(
-        [FromQuery] int providerIndex = 0,
-        [FromQuery] bool dryRun = true,
-        CancellationToken cancellationToken = default)
-    {
-        var config = Plugin.Instance.Configuration;
-        if (providerIndex < 0 || providerIndex >= config.Providers.Count)
-        {
-            return BadRequest($"Provider index {providerIndex} does not exist");
-        }
-
-        var provider = config.Providers[providerIndex];
-        if (string.IsNullOrEmpty(provider.LibraryPath))
-        {
-            return BadRequest("Provider has no library path configured");
-        }
-
-        // A preview only reads the snapshot, so it stays available. Moving files while a sync is
-        // writing them would leave a half-merged folder behind, so that is refused outright.
-        if (!dryRun && _syncService.CurrentProgress.IsRunning)
-        {
-            return BadRequest("A sync is running. Wait for it to finish, otherwise files would move while the sync is still writing them.");
-        }
-
-        var providerKey = SnapshotService.BuildProviderKey(providerIndex, provider.BaseUrl);
-        var snapshot = await _snapshotService.LoadLatestSnapshotAsync(providerKey, cancellationToken).ConfigureAwait(false);
-        if (snapshot == null)
-        {
-            return BadRequest("No sync has run for this provider yet, so there is nothing to group by");
-        }
-
-        var plan = TmdbGrouping.Plan(snapshot);
-        var result = _regroupService.Apply(
-            plan,
-            Path.Combine(provider.LibraryPath, "Movies"),
-            dryRun,
-            cancellationToken);
-
-        return Ok(result);
     }
 
     /// <summary>

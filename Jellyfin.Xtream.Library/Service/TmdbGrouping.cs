@@ -13,7 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using Jellyfin.Xtream.Library.Service.Models;
@@ -47,10 +46,10 @@ public static class TmdbGrouping
     /// </para>
     /// </summary>
     /// <param name="snapshot">Snapshot to read, may be null.</param>
-    /// <returns>TMDB id to folder name.</returns>
-    public static Dictionary<int, string> BuildFolderMap(ContentSnapshot? snapshot)
+    /// <returns>TMDB id to the owning stream and its folder.</returns>
+    public static Dictionary<int, (int OwnerStreamId, string FolderName)> BuildFolderMap(ContentSnapshot? snapshot)
     {
-        var map = new Dictionary<int, string>();
+        var map = new Dictionary<int, (int OwnerStreamId, string FolderName)>();
         if (snapshot == null)
         {
             return map;
@@ -59,45 +58,10 @@ public static class TmdbGrouping
         foreach (var group in GroupableMovies(snapshot).GroupBy(m => m.TmdbId!.Value))
         {
             var winner = group.OrderBy(m => m.StreamId).First();
-            map[group.Key] = winner.FolderName;
+            map[group.Key] = (winner.StreamId, winner.FolderName);
         }
 
         return map;
-    }
-
-    /// <summary>
-    /// Works out which folders have to be merged for the snapshot's items to sit together.
-    /// </summary>
-    /// <param name="snapshot">Snapshot to read, may be null.</param>
-    /// <returns>The plan. Empty when there is nothing to merge.</returns>
-    public static GroupingPlan Plan(ContentSnapshot? snapshot)
-    {
-        if (snapshot == null)
-        {
-            return new GroupingPlan([], 0);
-        }
-
-        int unproven = snapshot.Movies.Values.Count(m => m.TmdbId.HasValue && !IsGroupable(m.TmdbIdSource));
-
-        var moves = new List<GroupMove>();
-        foreach (var group in GroupableMovies(snapshot).GroupBy(m => m.TmdbId!.Value).OrderBy(g => g.Key))
-        {
-            string target = group.OrderBy(m => m.StreamId).First().FolderName;
-
-            var sources = group
-                .Select(m => m.FolderName)
-                .Where(f => !string.Equals(f, target, StringComparison.OrdinalIgnoreCase))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(f => f, StringComparer.Ordinal)
-                .ToList();
-
-            if (sources.Count > 0)
-            {
-                moves.Add(new GroupMove(group.Key, target, sources));
-            }
-        }
-
-        return new GroupingPlan(moves, unproven);
     }
 
     private static IEnumerable<MovieSnapshot> GroupableMovies(ContentSnapshot snapshot)
@@ -106,21 +70,3 @@ public static class TmdbGrouping
             && IsGroupable(m.TmdbIdSource)
             && !string.IsNullOrEmpty(m.FolderName));
 }
-
-/// <summary>
-/// One folder that has to absorb the others holding the same film (GitHub #88).
-/// </summary>
-/// <param name="TmdbId">The TMDB id the folders share.</param>
-/// <param name="TargetFolder">Folder that keeps its name.</param>
-/// <param name="SourceFolders">Folders whose contents move into the target.</param>
-public sealed record GroupMove(int TmdbId, string TargetFolder, IReadOnlyList<string> SourceFolders);
-
-/// <summary>
-/// What regrouping would do, worked out before anything on disk is touched.
-/// </summary>
-/// <param name="Moves">Folder merges to perform.</param>
-/// <param name="ItemsWithUnprovenId">
-/// Items carrying an id that may not be grouped because it was guessed by a name lookup or read
-/// back off a folder name. A full sync re-resolves those.
-/// </param>
-public sealed record GroupingPlan(IReadOnlyList<GroupMove> Moves, int ItemsWithUnprovenId);

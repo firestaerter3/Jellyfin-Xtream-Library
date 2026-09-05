@@ -39,7 +39,6 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<IMetadataLookupService, MetadataLookupService>();
         serviceCollection.AddSingleton<SnapshotService>();
         serviceCollection.AddSingleton<DeltaCalculator>();
-        serviceCollection.AddSingleton<TmdbRegroupService>();
         serviceCollection.AddSingleton<StrmSyncService>();
         serviceCollection.AddSingleton<LiveTvService>();
         serviceCollection.AddSingleton<ITunerHost, XtreamTunerHost>();

@@ -406,6 +406,31 @@ public class StrmNameCollisionTests : IDisposable
         File.Exists(guestFile).Should().BeTrue("the provider still lists this stream");
     }
 
+    // Codex review finding: two streams can share a title and a year. Deciding who owns the folder
+    // by comparing names made neither of them a guest, so both claimed the same file name and one
+    // was refused, while its identity was still recorded and an incremental run never retried it.
+    [Fact]
+    public async Task TwoStreamsSharingATitleAndAnId_BothSurviveWhenGrouped()
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(200, "42");
+
+        var result = await RunMovieSyncAsync(
+            [
+                new StreamInfo { StreamId = 100, Name = "Same Movie (2024)", ContainerExtension = "mp4" },
+                new StreamInfo { StreamId = 200, Name = "Same Movie (2024)", ContainerExtension = "mp4" },
+            ],
+            useShippedDefaults: false,
+            groupByTmdbId: true).ConfigureAwait(true);
+
+        var folder = Path.Combine(_libraryPath, "Movies", "Same Movie (2024) [tmdbid-42]");
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).OrderBy(f => f).Should().Equal(
+            "Same Movie (2024) [tmdbid-42] - 200.strm",
+            "Same Movie (2024) [tmdbid-42].strm");
+        result.MovieNameCollisions.Should().Be(0, "the provider offering the film twice is what grouping is for");
+        result.MoviesCreated.Should().Be(2);
+    }
+
     private void VodInfoWithTmdbId(int streamId, string tmdbId)
         => _client.Setup(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), streamId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VodInfoResponse { Info = new VodInfoDetails { TmdbId = tmdbId } });

@@ -731,21 +731,9 @@
                                     Only ids your provider supplies are grouped. An id found by searching on the title
                                     is left alone, because a search can give a film and its remake the same id.
                                     <br />
-                                    This applies to newly synced movies. Folders already on your disk are only moved
-                                    when you press the button below.
+                                    This applies to movies added from now on. Films already in your library stay in
+                                    the folders they are in: nothing on your disk is moved or renamed.
                                 </div>
-                            </div>
-                            <div class="inputContainer">
-                                <button is="emby-button" type="button" id="btnRegroupMovies" class="raised">
-                                    <span>Group existing movies now</span>
-                                </button>
-                                <div class="fieldDescription">
-                                    Shows what it would move first, and asks before touching anything. Moving a film
-                                    to a different folder means Jellyfin sees it as a new item, so watched status and
-                                    any artwork you added by hand can be lost. Run a full sync first, otherwise films
-                                    whose id has not been confirmed by your provider yet are left out.
-                                </div>
-                                <div id="regroupStatus" style="margin-top: 8px;"></div>
                             </div>
                         </div>
 

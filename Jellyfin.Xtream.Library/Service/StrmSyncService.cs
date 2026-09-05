@@ -1435,7 +1435,11 @@ public partial class StrmSyncService
         // even when the name-based metadata lookup is off. Without this, turning grouping on with
         // lookup off would silently do nothing.
         bool needProviderTmdbId = globalConfig.EnableMetadataLookup || groupByTmdb;
-        var groupFolders = new ConcurrentDictionary<int, string>();
+        // Keyed by TMDB id, holding the stream that named the folder. Ownership is tracked by
+        // stream id rather than by comparing names: two streams can share a title and a year, and
+        // comparing names would then make neither of them a guest, so both would claim the same
+        // file name and one would be refused (codex review).
+        var groupFolders = new ConcurrentDictionary<int, (int OwnerStreamId, string FolderName)>();
         if (groupByTmdb)
         {
             foreach (var mapped in TmdbGrouping.BuildFolderMap(previousSnapshot))
@@ -1916,7 +1920,8 @@ public partial class StrmSyncService
                     string candidateName = SanitizeFileName(candidate.Stream.Name, provider.CustomTitleRemoveTerms);
                     groupFolders.TryAdd(
                         candidateTmdbId,
-                        BuildMovieFolderName(candidateName, ExtractYear(candidate.Stream.Name), tmdbOverrides, candidateTmdbId, null));
+                        (candidate.Stream.StreamId,
+                         BuildMovieFolderName(candidateName, ExtractYear(candidate.Stream.Name), tmdbOverrides, candidateTmdbId, null)));
                 }
             }
 
@@ -2084,9 +2089,9 @@ public partial class StrmSyncService
 
                         if (groupByTmdb && groupableTmdbId.HasValue && IsUsableMetadataId(groupableTmdbId.Value))
                         {
-                            string groupFolder = groupFolders.GetOrAdd(groupableTmdbId.Value, folderName);
-                            joinedGroupFolder = !string.Equals(groupFolder, folderName, StringComparison.OrdinalIgnoreCase);
-                            folderName = groupFolder;
+                            var group = groupFolders.GetOrAdd(groupableTmdbId.Value, (stream.StreamId, folderName));
+                            joinedGroupFolder = group.OwnerStreamId != stream.StreamId;
+                            folderName = group.FolderName;
                         }
                     }
 
@@ -4357,6 +4362,24 @@ public partial class StrmSyncService
                 ProviderUrl = provider.BaseUrl,
                 ConfigFingerprint = SnapshotService.CalculateConfigFingerprint(provider, Plugin.Instance.Configuration.EnableMetadataLookup)
             };
+
+            // Movies were not synced this run, so allMovies is empty and rebuilding from it would
+            // drop every identity the previous run recorded, taking the grouping map with it.
+            if (!provider.SyncMovies && previousSnapshot != null)
+            {
+                foreach (var carried in previousSnapshot.Movies)
+                {
+                    snapshot.Movies[carried.Key] = carried.Value;
+                }
+            }
+
+            if (!provider.SyncSeries && previousSnapshot != null)
+            {
+                foreach (var carried in previousSnapshot.Series)
+                {
+                    snapshot.Series[carried.Key] = carried.Value;
+                }
+            }
 
             // Build movie snapshots
             var processedMovieIds = new HashSet<int>();

@@ -42,83 +42,6 @@ public class TmdbGroupingTests
     }
 
     [Fact]
-    public void TwoFoldersSharingAProviderId_AreMerged()
-    {
-        var plan = TmdbGrouping.Plan(SnapshotWith(
-            Movie(100, 42, ItemIdSource.Provider, "The Film (2024) [tmdbid-42]"),
-            Movie(200, 42, ItemIdSource.Provider, "The Film 4K (2024) [tmdbid-42]")));
-
-        plan.Moves.Should().HaveCount(1);
-        plan.Moves[0].TmdbId.Should().Be(42);
-        plan.Moves[0].TargetFolder.Should().Be("The Film (2024) [tmdbid-42]", "the lowest stream id names the folder");
-        plan.Moves[0].SourceFolders.Should().Equal("The Film 4K (2024) [tmdbid-42]");
-    }
-
-    [Fact]
-    public void TheTargetDoesNotDependOnDictionaryOrder()
-    {
-        // Same two films, inserted the other way round.
-        var plan = TmdbGrouping.Plan(SnapshotWith(
-            Movie(200, 42, ItemIdSource.Provider, "The Film 4K (2024) [tmdbid-42]"),
-            Movie(100, 42, ItemIdSource.Provider, "The Film (2024) [tmdbid-42]")));
-
-        plan.Moves[0].TargetFolder.Should().Be("The Film (2024) [tmdbid-42]");
-    }
-
-    [Fact]
-    public void ItemsAlreadySharingAFolder_NeedNoMove()
-    {
-        var plan = TmdbGrouping.Plan(SnapshotWith(
-            Movie(100, 42, ItemIdSource.Provider, "The Film (2024) [tmdbid-42]"),
-            Movie(200, 42, ItemIdSource.Provider, "The Film (2024) [tmdbid-42]")));
-
-        plan.Moves.Should().BeEmpty();
-    }
-
-    [Fact]
-    public void AGuessedIdIsNeverMerged_AndIsReportedInstead()
-    {
-        // The case that must not merge: a search can give a film and its remake one id.
-        var plan = TmdbGrouping.Plan(SnapshotWith(
-            Movie(100, 42, ItemIdSource.Lookup, "The Lion King (1994) [tmdbid-42]"),
-            Movie(200, 42, ItemIdSource.Lookup, "The Lion King (2019) [tmdbid-42]")));
-
-        plan.Moves.Should().BeEmpty();
-        plan.ItemsWithUnprovenId.Should().Be(2, "the user has to be told why nothing happened");
-    }
-
-    [Fact]
-    public void AnIdReadOffDiskCountsAsUnproven_UntilASyncConfirmsIt()
-    {
-        var plan = TmdbGrouping.Plan(SnapshotWith(
-            Movie(100, 42, ItemIdSource.Unknown, "The Film (2024) [tmdbid-42]"),
-            Movie(200, 42, ItemIdSource.Provider, "The Film 4K (2024) [tmdbid-42]")));
-
-        plan.Moves.Should().BeEmpty("one confirmed item is not two");
-        plan.ItemsWithUnprovenId.Should().Be(1);
-    }
-
-    [Fact]
-    public void DifferentIdsStayApart()
-    {
-        var plan = TmdbGrouping.Plan(SnapshotWith(
-            Movie(100, 42, ItemIdSource.Provider, "The Film (2024) [tmdbid-42]"),
-            Movie(200, 43, ItemIdSource.Provider, "Another Film (2024) [tmdbid-43]")));
-
-        plan.Moves.Should().BeEmpty();
-    }
-
-    [Fact]
-    public void AnItemWithNoFolderRecorded_IsIgnored()
-    {
-        var plan = TmdbGrouping.Plan(SnapshotWith(
-            Movie(100, 42, ItemIdSource.Provider, "The Film (2024) [tmdbid-42]"),
-            Movie(200, 42, ItemIdSource.Provider, string.Empty)));
-
-        plan.Moves.Should().BeEmpty();
-    }
-
-    [Fact]
     public void TheFolderMapPinsTheChoiceForLaterSyncs()
     {
         var map = TmdbGrouping.BuildFolderMap(SnapshotWith(
@@ -126,14 +49,15 @@ public class TmdbGroupingTests
             Movie(100, 42, ItemIdSource.Provider, "The Film (2024) [tmdbid-42]"),
             Movie(300, 43, ItemIdSource.Lookup, "Guessed (2024) [tmdbid-43]")));
 
-        map.Should().ContainKey(42).WhoseValue.Should().Be("The Film (2024) [tmdbid-42]");
+        map.Should().ContainKey(42).WhoseValue.Should().Be(
+            (100, "The Film (2024) [tmdbid-42]"),
+            "the lowest stream id owns the folder, and ownership is what decides who keeps the plain file name");
         map.Should().NotContainKey(43, "a guessed id must not steer new movies either");
     }
 
     [Fact]
-    public void NoSnapshotMeansNoPlan()
+    public void NoSnapshotMeansNoMap()
     {
-        TmdbGrouping.Plan(null).Moves.Should().BeEmpty();
         TmdbGrouping.BuildFolderMap(null).Should().BeEmpty();
     }
 }

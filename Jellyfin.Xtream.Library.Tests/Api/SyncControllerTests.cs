@@ -78,7 +78,6 @@ public class SyncControllerTests
             mockDispatcharrClient.Object,
             _mockMetadataLookup.Object,
             snapshotService,
-            new TmdbRegroupService(NullLogger<TmdbRegroupService>.Instance),
             appPathsMock.Object,
             _mockControllerLogger.Object);
     }
@@ -280,8 +279,7 @@ public class SyncControllerTests
                 mockDispatcharrClient.Object,
                 _mockMetadataLookup.Object,
                 snapshotService,
-                new TmdbRegroupService(NullLogger<TmdbRegroupService>.Instance),
-                appPathsMock.Object,
+                    appPathsMock.Object,
                 _mockControllerLogger.Object);
 
             // Act
@@ -349,26 +347,4 @@ public class SyncControllerTests
     }
 
     #endregion
-    // Codex review finding: unlike the clean-library actions, the regroup endpoint had no guard,
-    // so a scheduled sync could be writing into a folder while the action moved and deleted it.
-    [Fact]
-    public async Task RegroupMovies_RefusesToMoveFilesWhileASyncIsRunning()
-    {
-        var config = Plugin.Instance.Configuration;
-        config.Providers = [new ProviderConfig { Name = "test", BaseUrl = "http://p.test", LibraryPath = Path.GetTempPath() }];
-        _syncService.CurrentProgress.IsRunning = true;
-
-        try
-        {
-            var result = await _controller.RegroupMovies(providerIndex: 0, dryRun: false, CancellationToken.None);
-
-            var bad = result.Result.Should().BeOfType<BadRequestObjectResult>().Subject;
-            bad.Value.Should().BeOfType<string>().Which.Should().Contain("sync is running");
-        }
-        finally
-        {
-            _syncService.CurrentProgress.IsRunning = false;
-        }
-    }
-
 }
