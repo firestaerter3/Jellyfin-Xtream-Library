@@ -87,6 +87,23 @@ public class MovieSnapshot
     /// Gets or sets the MD5 checksum of key fields for change detection.
     /// </summary>
     public string Checksum { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the folder this stream was written to, without the library path.
+    /// Empty in a snapshot written before this was recorded (GitHub #88).
+    /// </summary>
+    public string FolderName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the TMDB id the item resolved to, if any.
+    /// </summary>
+    public int? TmdbId { get; set; }
+
+    /// <summary>
+    /// Gets or sets where <see cref="TmdbId"/> came from. Only a provider-supplied id is safe to
+    /// merge two items on.
+    /// </summary>
+    public ItemIdSource TmdbIdSource { get; set; }
 }
 
 /// <summary>
@@ -128,6 +145,27 @@ public class SeriesSnapshot
     /// Gets or sets the MD5 checksum of key fields for change detection.
     /// </summary>
     public string Checksum { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the folder this series was written to, without the library path.
+    /// Empty in a snapshot written before this was recorded (GitHub #88).
+    /// </summary>
+    public string FolderName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the TMDB id the series resolved to, if any.
+    /// </summary>
+    public int? TmdbId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the TVDB id the series resolved to, if any. Series folders prefer TVDB.
+    /// </summary>
+    public int? TvdbId { get; set; }
+
+    /// <summary>
+    /// Gets or sets where the recorded id came from.
+    /// </summary>
+    public ItemIdSource IdSource { get; set; }
 }
 
 /// <summary>

@@ -959,6 +959,12 @@ public partial class StrmSyncService
         var allCollectedSeries = new ConcurrentBag<Series>();
         var allSeriesInfoDict = new ConcurrentDictionary<int, SeriesStreamInfo>();
 
+        // What each stream resolved to on disk this run (GitHub #88). Recorded into the snapshot at
+        // the end so a later sync can group by metadata id without re-deriving it from folder names.
+        // Nothing reads it yet.
+        var movieIdentities = new ConcurrentDictionary<int, ItemIdentity>();
+        var seriesIdentities = new ConcurrentDictionary<int, ItemIdentity>();
+
         // Ensure base directories exist
         string moviesPath = Path.Combine(provider.LibraryPath, "Movies");
         string seriesPath = Path.Combine(provider.LibraryPath, "Series");
@@ -1004,6 +1010,7 @@ public partial class StrmSyncService
                             result,
                             previousSnapshot,
                             allCollectedMovies,
+                            movieIdentities,
                             cancellationToken).ConfigureAwait(false);
                     },
                     cancellationToken));
@@ -1025,6 +1032,7 @@ public partial class StrmSyncService
                             hintSnapshot,
                             allCollectedSeries,
                             allSeriesInfoDict,
+                            seriesIdentities,
                             cancellationToken).ConfigureAwait(false);
                     },
                     cancellationToken));
@@ -1046,6 +1054,7 @@ public partial class StrmSyncService
                     result,
                     previousSnapshot,
                     allCollectedMovies,
+                    movieIdentities,
                     cancellationToken).ConfigureAwait(false);
             }
 
@@ -1062,6 +1071,7 @@ public partial class StrmSyncService
                     hintSnapshot,
                     allCollectedSeries,
                     allSeriesInfoDict,
+                    seriesIdentities,
                     cancellationToken).ConfigureAwait(false);
             }
         }
@@ -1234,7 +1244,7 @@ public partial class StrmSyncService
         if (provider.EnableIncrementalSync && !cancellationToken.IsCancellationRequested)
         {
             CurrentProgress.Phase = "Saving snapshot";
-            await SaveSnapshotAsync(provider, providerKey, allCollectedMovies, allCollectedSeries, allSeriesInfoDict, result.FailedItems, cancellationToken).ConfigureAwait(false);
+            await SaveSnapshotAsync(provider, providerKey, allCollectedMovies, allCollectedSeries, allSeriesInfoDict, movieIdentities, seriesIdentities, result.FailedItems, cancellationToken).ConfigureAwait(false);
         }
 
         result.WasIncrementalSync = isIncrementalSync;
@@ -1408,6 +1418,7 @@ public partial class StrmSyncService
         SyncResult result,
         ContentSnapshot? previousSnapshot,
         ConcurrentBag<StreamInfo> allCollectedMovies,
+        ConcurrentDictionary<int, ItemIdentity> movieIdentities,
         CancellationToken cancellationToken)
     {
         var connectionInfo = new ConnectionInfo(provider.BaseUrl, provider.Username, provider.Password);
@@ -1977,6 +1988,14 @@ public partial class StrmSyncService
                         folderName = BuildMovieFolderName(movieName, year, tmdbOverrides, providerTmdbId, autoLookupTmdbId);
                     }
 
+                    movieIdentities[stream.StreamId] = BuildMovieIdentity(
+                        folderName,
+                        baseName,
+                        existingFolderName != null,
+                        tmdbOverrides,
+                        providerTmdbId,
+                        autoLookupTmdbId);
+
                     // Build STRM URLs and filenames — Dispatcharr multi-stream or standard single-stream
                     var strmEntries = new List<(string StreamUrl, string StrmFileName)>();
                     if (enableDispatcharrMode &&
@@ -2302,6 +2321,7 @@ public partial class StrmSyncService
         ContentSnapshot? hintSnapshot,
         ConcurrentBag<Series> allCollectedSeries,
         ConcurrentDictionary<int, SeriesStreamInfo> allSeriesInfoDict,
+        ConcurrentDictionary<int, ItemIdentity> seriesIdentities,
         CancellationToken cancellationToken)
     {
         var connectionInfo = new ConnectionInfo(provider.BaseUrl, provider.Username, provider.Password);
@@ -2908,6 +2928,13 @@ public partial class StrmSyncService
                     }
 
                     string seriesFolderName = BuildSeriesFolderName(seriesName, year, tvdbOverrides, providerTmdbId, autoLookupTvdbId);
+
+                    seriesIdentities[series.SeriesId] = BuildSeriesIdentity(
+                        seriesFolderName,
+                        baseName,
+                        tvdbOverrides,
+                        providerTmdbId,
+                        autoLookupTvdbId);
 
                     // Determine target folders based on category mappings
                     var targetFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -3811,6 +3838,85 @@ public partial class StrmSyncService
     }
 
     /// <summary>
+    /// Records what a movie stream resolved to, and how trustworthy the id behind it is.
+    /// </summary>
+    /// <param name="folderName">Folder the movie was written to.</param>
+    /// <param name="baseName">Title and year, the key the overrides are stored under.</param>
+    /// <param name="fromExistingFolder">True when the name was reused from a folder already on disk.</param>
+    /// <param name="overrides">Manual TMDB overrides.</param>
+    /// <param name="providerTmdbId">TMDB id the provider itself returned.</param>
+    /// <param name="autoLookupTmdbId">TMDB id a name lookup guessed.</param>
+    /// <returns>The identity to record for this stream.</returns>
+    internal static ItemIdentity BuildMovieIdentity(
+        string folderName,
+        string baseName,
+        bool fromExistingFolder,
+        Dictionary<string, int> overrides,
+        int? providerTmdbId,
+        int? autoLookupTmdbId)
+    {
+        if (fromExistingFolder)
+        {
+            // The folder is the only record left, and it does not say where its id came from.
+            // That matters: grouping may only merge ids the provider supplied, never ones a name
+            // lookup guessed, so this stays unproven until a sync resolves the item again.
+            int? diskTmdbId = FolderIdentity.TryParseTmdbId(folderName, out int parsedTmdbId) ? parsedTmdbId : null;
+            return new ItemIdentity(folderName, diskTmdbId, null, ItemIdSource.Unknown);
+        }
+
+        if (overrides.TryGetValue(baseName, out int overrideTmdbId))
+        {
+            return new ItemIdentity(folderName, overrideTmdbId, null, ItemIdSource.Override);
+        }
+
+        if (providerTmdbId.HasValue)
+        {
+            return new ItemIdentity(folderName, providerTmdbId, null, ItemIdSource.Provider);
+        }
+
+        if (autoLookupTmdbId.HasValue)
+        {
+            return new ItemIdentity(folderName, autoLookupTmdbId, null, ItemIdSource.Lookup);
+        }
+
+        return new ItemIdentity(folderName, null, null, ItemIdSource.None);
+    }
+
+    /// <summary>
+    /// Records what a series resolved to. Series folders prefer TVDB, so both ids are kept.
+    /// </summary>
+    /// <param name="folderName">Folder the series was written to.</param>
+    /// <param name="baseName">Title and year, the key the overrides are stored under.</param>
+    /// <param name="overrides">Manual TVDB overrides.</param>
+    /// <param name="providerTmdbId">TMDB id the provider itself returned.</param>
+    /// <param name="autoLookupTvdbId">TVDB id a name lookup guessed.</param>
+    /// <returns>The identity to record for this series.</returns>
+    internal static ItemIdentity BuildSeriesIdentity(
+        string folderName,
+        string baseName,
+        Dictionary<string, int> overrides,
+        int? providerTmdbId,
+        int? autoLookupTvdbId)
+    {
+        if (overrides.TryGetValue(baseName, out int overrideTvdbId))
+        {
+            return new ItemIdentity(folderName, null, overrideTvdbId, ItemIdSource.Override);
+        }
+
+        if (providerTmdbId.HasValue)
+        {
+            return new ItemIdentity(folderName, providerTmdbId, null, ItemIdSource.Provider);
+        }
+
+        if (autoLookupTvdbId.HasValue)
+        {
+            return new ItemIdentity(folderName, null, autoLookupTvdbId, ItemIdSource.Lookup);
+        }
+
+        return new ItemIdentity(folderName, null, null, ItemIdSource.None);
+    }
+
+    /// <summary>
     /// Builds a movie folder name, optionally with TMDb ID suffix.
     /// </summary>
     /// <param name="sanitizedName">The sanitized movie name.</param>
@@ -4096,6 +4202,8 @@ public partial class StrmSyncService
         ConcurrentBag<StreamInfo> allMovies,
         ConcurrentBag<Series> allSeries,
         ConcurrentDictionary<int, SeriesStreamInfo> seriesInfoDict,
+        ConcurrentDictionary<int, ItemIdentity> movieIdentities,
+        ConcurrentDictionary<int, ItemIdentity> seriesIdentities,
         IReadOnlyList<FailedItem> failedItems,
         CancellationToken cancellationToken)
     {
@@ -4127,7 +4235,12 @@ public partial class StrmSyncService
                         ContainerExtension = movie.ContainerExtension,
                         CategoryId = movie.CategoryId ?? 0,
                         Added = movie.Added,
-                        Checksum = SnapshotService.CalculateChecksum(movie)
+                        Checksum = SnapshotService.CalculateChecksum(movie),
+                        FolderName = movieIdentities.TryGetValue(movie.StreamId, out var movieIdentity)
+                            ? movieIdentity.FolderName
+                            : string.Empty,
+                        TmdbId = movieIdentity?.TmdbId,
+                        TmdbIdSource = movieIdentity?.Source ?? ItemIdSource.None
                     };
                 }
             }
@@ -4152,7 +4265,13 @@ public partial class StrmSyncService
                         CategoryId = series.CategoryId ?? 0,
                         EpisodeCount = episodeCount,
                         LastModified = series.LastModified.GetValueOrDefault(),
-                        Checksum = SnapshotService.CalculateChecksum(series, episodeCount)
+                        Checksum = SnapshotService.CalculateChecksum(series, episodeCount),
+                        FolderName = seriesIdentities.TryGetValue(series.SeriesId, out var seriesIdentity)
+                            ? seriesIdentity.FolderName
+                            : string.Empty,
+                        TmdbId = seriesIdentity?.TmdbId,
+                        TvdbId = seriesIdentity?.TvdbId,
+                        IdSource = seriesIdentity?.Source ?? ItemIdSource.None
                     };
                 }
             }
