@@ -307,23 +307,75 @@ public class StrmNameCollisionTests : IDisposable
             .Should().HaveCount(1);
     }
 
+    // GitHub #88. Two differently titled streams the provider reports under one TMDB id have to
+    // end up as two versions of one film, not two entries. Metadata lookup is off in this harness,
+    // which is the case that matters: grouping keys on the provider's own id, so it has to work
+    // without the name-based lookup being enabled.
+    [Fact]
+    public async Task MoviesSharingAProviderTmdbId_LandInOneFolder()
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(200, "42");
+
+        var result = await RunMovieSyncAsync(
+            [
+                new StreamInfo { StreamId = 100, Name = "Alpha Movie (2024)", ContainerExtension = "mp4" },
+                new StreamInfo { StreamId = 200, Name = "Beta Movie (2024)", ContainerExtension = "mp4" },
+            ],
+            useShippedDefaults: false,
+            groupByTmdbId: true).ConfigureAwait(true);
+
+        var grouped = Path.Combine(_libraryPath, "Movies", "Alpha Movie (2024) [tmdbid-42]");
+        var written = Directory.GetFiles(grouped, "*.strm").Select(Path.GetFileName).OrderBy(f => f).ToList();
+
+        written.Should().Equal(
+            "Alpha Movie (2024) [tmdbid-42] - 200.strm",
+            "Alpha Movie (2024) [tmdbid-42].strm");
+        Directory.Exists(Path.Combine(_libraryPath, "Movies", "Beta Movie (2024)")).Should().BeFalse();
+        result.MovieNameCollisions.Should().Be(0, "sharing a folder is the feature, not a collision");
+        result.Errors.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task WithGroupingOff_TheSameTwoMoviesStayApart()
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(200, "42");
+
+        await RunMovieSyncAsync(
+            [
+                new StreamInfo { StreamId = 100, Name = "Alpha Movie (2024)", ContainerExtension = "mp4" },
+                new StreamInfo { StreamId = 200, Name = "Beta Movie (2024)", ContainerExtension = "mp4" },
+            ],
+            useShippedDefaults: false).ConfigureAwait(true);
+
+        Directory.GetDirectories(Path.Combine(_libraryPath, "Movies")).Should().HaveCount(2);
+    }
+
+    private void VodInfoWithTmdbId(int streamId, string tmdbId)
+        => _client.Setup(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), streamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VodInfoResponse { Info = new VodInfoDetails { TmdbId = tmdbId } });
+
     private Task<SyncResult> RunMovieSyncAsync(params StreamInfo[] streams)
         => RunMovieSyncAsync(streams, useShippedDefaults: false);
 
-    private async Task<SyncResult> RunMovieSyncAsync(StreamInfo[] streams, bool useShippedDefaults)
+    private async Task<SyncResult> RunMovieSyncAsync(StreamInfo[] streams, bool useShippedDefaults, bool groupByTmdbId = false)
     {
         _client.Setup(c => c.GetVodCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Category> { new() { CategoryId = 1, CategoryName = "Movies" } });
         _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<StreamInfo>(streams));
 
-        return await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults).ConfigureAwait(true);
+        return await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults, providerCount: 1, groupByTmdbId).ConfigureAwait(true);
     }
 
     private Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults)
         => RunSyncAsync(syncMovies, syncSeries, useShippedDefaults, providerCount: 1);
 
-    private async Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults, int providerCount)
+    private Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults, int providerCount)
+        => RunSyncAsync(syncMovies, syncSeries, useShippedDefaults, providerCount, groupByTmdbId: false);
+
+    private async Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults, int providerCount, bool groupByTmdbId)
     {
         var appPaths = new Mock<IServerApplicationPaths>();
         appPaths.Setup(p => p.PluginConfigurationsPath).Returns(_libraryPath);
@@ -348,6 +400,7 @@ public class StrmNameCollisionTests : IDisposable
             EnableIncrementalSync = useShippedDefaults,
             SmartSkipExisting = useShippedDefaults,
             DownloadArtworkForUnmatched = false,
+            GroupMoviesByTmdbId = groupByTmdbId,
             SyncParallelism = 1,
         }).ToList();
         plugin.Configuration.EnableLiveTv = false;

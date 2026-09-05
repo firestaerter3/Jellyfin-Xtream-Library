@@ -1428,6 +1428,11 @@ public partial class StrmSyncService
         // choice made on an earlier run keeps holding, then extended with ids first seen this run.
         // Only new movies consult it: nothing already on disk is moved by a sync.
         bool groupByTmdb = provider.GroupMoviesByTmdbId;
+
+        // Grouping keys on the id the provider returns in get_vod_info, so that call has to happen
+        // even when the name-based metadata lookup is off. Without this, turning grouping on with
+        // lookup off would silently do nothing.
+        bool needProviderTmdbId = globalConfig.EnableMetadataLookup || groupByTmdb;
         var groupFolders = new ConcurrentDictionary<int, string>();
         if (groupByTmdb)
         {
@@ -1763,7 +1768,7 @@ public partial class StrmSyncService
             // Pre-fetch VOD info for new movies that need metadata lookup
             // This bulk phase is much faster than per-movie fetching during processing
             var vodInfoCache = new ConcurrentDictionary<int, VodInfoResponse?>();
-            if (enableMetadataLookup)
+            if (needProviderTmdbId)
             {
                 var moviesToPreFetch = batchMovies.Where(m =>
                 {
@@ -1963,14 +1968,22 @@ public partial class StrmSyncService
                     int? autoLookupTmdbId = null;
                     string folderName;
 
+                    // True when this stream is a guest in a folder another title named. Its files
+                    // then carry the stream id, so which of the two gets renamed does not depend on
+                    // the order the parallel loop happened to run them in, and does not swap over
+                    // between syncs (GitHub #88).
+                    bool joinedGroupFolder = false;
+
                     if (existingFolderName != null)
                     {
                         folderName = existingFolderName;
                     }
                     else
                     {
-                        // New movie - get provider TMDB ID from pre-fetched cache
-                        if (enableMetadataLookup && !tmdbOverrides.ContainsKey(baseName))
+                        // New movie - get provider TMDB ID from pre-fetched cache. Gated on the
+                        // wider flag: the name lookup below still needs enableMetadataLookup, but
+                        // the provider's own id is also what grouping keys on.
+                        if (needProviderTmdbId && !tmdbOverrides.ContainsKey(baseName))
                         {
                             if (vodInfoCache.TryGetValue(stream.StreamId, out var cachedInfo))
                             {
@@ -2026,7 +2039,9 @@ public partial class StrmSyncService
 
                         if (groupByTmdb && groupableTmdbId.HasValue)
                         {
-                            folderName = groupFolders.GetOrAdd(groupableTmdbId.Value, folderName);
+                            string groupFolder = groupFolders.GetOrAdd(groupableTmdbId.Value, folderName);
+                            joinedGroupFolder = !string.Equals(groupFolder, folderName, StringComparison.OrdinalIgnoreCase);
+                            folderName = groupFolder;
                         }
                     }
 
@@ -2087,11 +2102,11 @@ public partial class StrmSyncService
                         // File.Exists branch below compares content against a URL that embeds the
                         // stream id, so it can never match across two streams and always falls
                         // through to the overwrite. Refuse instead, and count it.
-                        // With grouping on, two different titles legitimately share a folder, so
-                        // they also produce the same file name: the name is built from the folder.
-                        // That is the feature working, not a provider quirk, so keep both and tell
-                        // them apart by stream id, which gives the same result on every run (#88).
-                        if (groupByTmdb && claimedStrmPaths.ContainsKey(strmPath))
+                        // A guest in someone else's folder takes its file name from that folder, so
+                        // it would collide with the title that named it. That is the feature working,
+                        // not a provider quirk: keep both and tell them apart by stream id. The
+                        // owner keeps the plain name, so neither file is renamed on a later sync.
+                        if (joinedGroupFolder)
                         {
                             string groupedName = $"{Path.GetFileNameWithoutExtension(strmFileName)} - {stream.StreamId}{Path.GetExtension(strmFileName)}";
                             strmPath = Path.Combine(movieFolder, groupedName);
