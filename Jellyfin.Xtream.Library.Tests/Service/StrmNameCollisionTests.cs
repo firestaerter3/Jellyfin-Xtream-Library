@@ -462,6 +462,36 @@ public class StrmNameCollisionTests : IDisposable
         second.MovieNameCollisions.Should().Be(0, "the second run must not refuse a file it wrote itself");
     }
 
+    // Codex review finding: the provider failing to answer for a moment must not dissolve a group
+    // that already exists, or the guest goes back to the plain name, collides with its owner and
+    // has its record downgraded to unproven.
+    [Fact]
+    public async Task AnEstablishedGroupSurvivesTheProviderNotAnswering()
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(200, "42");
+
+        StreamInfo[] Streams() =>
+        [
+            new StreamInfo { StreamId = 100, Name = "Same Movie (2024)", ContainerExtension = "mp4" },
+            new StreamInfo { StreamId = 200, Name = "Same Movie (2024)", ContainerExtension = "mp4" },
+        ];
+
+        await RunMovieSyncAsync(Streams(), useShippedDefaults: false, groupByTmdbId: true).ConfigureAwait(true);
+
+        // The info call starts failing for both streams.
+        _client.Setup(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("provider unavailable"));
+
+        var second = await RunMovieSyncAsync(Streams(), useShippedDefaults: false, groupByTmdbId: true).ConfigureAwait(true);
+
+        var folder = Path.Combine(_libraryPath, "Movies", "Same Movie (2024) [tmdbid-42]");
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).OrderBy(f => f).Should().Equal(
+            "Same Movie (2024) [tmdbid-42] - 200.strm",
+            "Same Movie (2024) [tmdbid-42].strm");
+        second.MovieNameCollisions.Should().Be(0, "the group the provider confirmed earlier still stands");
+    }
+
     private void VodInfoWithTmdbId(int streamId, string tmdbId)
         => _client.Setup(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), streamId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VodInfoResponse { Info = new VodInfoDetails { TmdbId = tmdbId } });

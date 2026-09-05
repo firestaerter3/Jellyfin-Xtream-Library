@@ -2062,6 +2062,21 @@ public partial class StrmSyncService
                                 ? pinnedExistingId
                                 : providerTmdbId;
 
+                            // The provider can simply fail to answer for a moment. Letting that
+                            // dissolve a group that already exists would put the guest back on the
+                            // plain file name, collide it with its owner, and downgrade its record
+                            // to unproven, after which cleanup could take its file. A group the
+                            // provider confirmed earlier stands until it says otherwise.
+                            if (!existingGroupId.HasValue
+                                && groupingHint != null
+                                && groupingHint.Movies.TryGetValue(stream.StreamId, out var recordedIdentity)
+                                && recordedIdentity.TmdbId.HasValue
+                                && TmdbGrouping.IsGroupable(recordedIdentity.TmdbIdSource))
+                            {
+                                existingGroupId = recordedIdentity.TmdbId;
+                                providerTmdbId = recordedIdentity.TmdbId;
+                            }
+
                             if (existingGroupId.HasValue
                                 && IsUsableMetadataId(existingGroupId.Value)
                                 && groupFolders.TryGetValue(existingGroupId.Value, out var recordedGroup)
