@@ -57,6 +57,16 @@ public static class TmdbGrouping
 
         foreach (var group in GroupableMovies(snapshot).GroupBy(m => m.TmdbId!.Value))
         {
+            // Prefer what the run that created this group actually did. Recomputing a winner
+            // here can disagree with the file names already on disk, and the disagreement shows up
+            // as one stream overwriting another's STRM on the next run.
+            var recorded = group.FirstOrDefault(m => m.GroupOwnerStreamId.HasValue);
+            if (recorded != null)
+            {
+                map[group.Key] = (recorded.GroupOwnerStreamId!.Value, recorded.FolderName);
+                continue;
+            }
+
             var winner = group.OrderBy(m => m.StreamId).First();
             map[group.Key] = (winner.StreamId, winner.FolderName);
         }

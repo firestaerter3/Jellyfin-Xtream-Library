@@ -1250,7 +1250,7 @@ public partial class StrmSyncService
         if ((provider.EnableIncrementalSync || provider.GroupMoviesByTmdbId) && !cancellationToken.IsCancellationRequested)
         {
             CurrentProgress.Phase = "Saving snapshot";
-            await SaveSnapshotAsync(provider, providerKey, allCollectedMovies, allCollectedSeries, allSeriesInfoDict, movieIdentities, seriesIdentities, previousSnapshot, result.FailedItems, cancellationToken).ConfigureAwait(false);
+            await SaveSnapshotAsync(provider, providerKey, allCollectedMovies, allCollectedSeries, allSeriesInfoDict, movieIdentities, seriesIdentities, hintSnapshot, result.FailedItems, cancellationToken).ConfigureAwait(false);
         }
 
         result.WasIncrementalSync = isIncrementalSync;
@@ -1918,19 +1918,34 @@ public partial class StrmSyncService
                 // depend on how the parallel loop below happened to schedule them.
                 foreach (var candidate in batchMovies.OrderBy(m => m.Stream.StreamId))
                 {
-                    if (!vodInfoCache.TryGetValue(candidate.Stream.StreamId, out var candidateInfo)
+                    string candidateName = SanitizeFileName(candidate.Stream.Name, provider.CustomTitleRemoveTerms);
+                    int? candidateYear = ExtractYear(candidate.Stream.Name);
+                    string candidateBaseName = candidateYear.HasValue ? $"{candidateName} ({candidateYear})" : candidateName;
+
+                    // An id pinned by hand groups exactly like one the provider gave, so it is
+                    // seeded here too. Ownership has to be settled before any file is written,
+                    // otherwise the owner recorded afterwards can disagree with the names on disk.
+                    int candidateTmdbId;
+                    if (tmdbOverrides.TryGetValue(candidateBaseName, out int pinnedCandidateId))
+                    {
+                        candidateTmdbId = pinnedCandidateId;
+                    }
+                    else if (!vodInfoCache.TryGetValue(candidate.Stream.StreamId, out var candidateInfo)
                         || string.IsNullOrEmpty(candidateInfo?.Info?.TmdbId)
-                        || !int.TryParse(candidateInfo.Info.TmdbId, out int candidateTmdbId)
-                        || !IsUsableMetadataId(candidateTmdbId))
+                        || !int.TryParse(candidateInfo.Info.TmdbId, out candidateTmdbId))
                     {
                         continue;
                     }
 
-                    string candidateName = SanitizeFileName(candidate.Stream.Name, provider.CustomTitleRemoveTerms);
+                    if (!IsUsableMetadataId(candidateTmdbId))
+                    {
+                        continue;
+                    }
+
                     groupFolders.TryAdd(
                         candidateTmdbId,
                         (candidate.Stream.StreamId,
-                         BuildMovieFolderName(candidateName, ExtractYear(candidate.Stream.Name), tmdbOverrides, candidateTmdbId, null)));
+                         BuildMovieFolderName(candidateName, candidateYear, tmdbOverrides, candidateTmdbId, null)));
                 }
             }
 
@@ -2001,6 +2016,7 @@ public partial class StrmSyncService
                     // the order the parallel loop happened to run them in, and does not swap over
                     // between syncs (GitHub #88).
                     bool joinedGroupFolder = false;
+                    int? groupOwnerStreamId = null;
 
                     if (existingFolderName != null)
                     {
@@ -2100,6 +2116,7 @@ public partial class StrmSyncService
                         {
                             var group = groupFolders.GetOrAdd(groupableTmdbId.Value, (stream.StreamId, folderName));
                             joinedGroupFolder = group.OwnerStreamId != stream.StreamId;
+                            groupOwnerStreamId = group.OwnerStreamId;
                             folderName = group.FolderName;
                         }
                     }
@@ -2110,7 +2127,7 @@ public partial class StrmSyncService
                         existingFolderName != null,
                         tmdbOverrides,
                         providerTmdbId,
-                        autoLookupTmdbId);
+                        autoLookupTmdbId) with { GroupOwnerStreamId = groupOwnerStreamId };
 
                     // Build STRM URLs and filenames — Dispatcharr multi-stream or standard single-stream
                     var strmEntries = new List<(string StreamUrl, string StrmFileName)>();
@@ -4038,7 +4055,7 @@ public partial class StrmSyncService
     /// <param name="previousSnapshot">Snapshot from the previous run, may be null.</param>
     /// <param name="streamId">Stream to look up.</param>
     /// <returns>Folder, id and where the id came from.</returns>
-    internal static (string FolderName, int? TmdbId, ItemIdSource Source) EffectiveMovieIdentity(
+    internal static (string FolderName, int? TmdbId, ItemIdSource Source, int? GroupOwnerStreamId) EffectiveMovieIdentity(
         ConcurrentDictionary<int, ItemIdentity> identities,
         ContentSnapshot? previousSnapshot,
         int streamId)
@@ -4047,15 +4064,15 @@ public partial class StrmSyncService
         // fresh answer, not a missing one.
         if (identities.TryGetValue(streamId, out var identity))
         {
-            return (identity.FolderName, identity.TmdbId, identity.Source);
+            return (identity.FolderName, identity.TmdbId, identity.Source, identity.GroupOwnerStreamId);
         }
 
         if (previousSnapshot != null && previousSnapshot.Movies.TryGetValue(streamId, out var earlier))
         {
-            return (earlier.FolderName, earlier.TmdbId, earlier.TmdbIdSource);
+            return (earlier.FolderName, earlier.TmdbId, earlier.TmdbIdSource, earlier.GroupOwnerStreamId);
         }
 
-        return (string.Empty, null, ItemIdSource.None);
+        return (string.Empty, null, ItemIdSource.None, null);
     }
 
     /// <summary>
@@ -4380,7 +4397,7 @@ public partial class StrmSyncService
         ConcurrentDictionary<int, SeriesStreamInfo> seriesInfoDict,
         ConcurrentDictionary<int, ItemIdentity> movieIdentities,
         ConcurrentDictionary<int, ItemIdentity> seriesIdentities,
-        ContentSnapshot? previousSnapshot,
+        ContentSnapshot? carryForwardFrom,
         IReadOnlyList<FailedItem> failedItems,
         CancellationToken cancellationToken)
     {
@@ -4400,17 +4417,17 @@ public partial class StrmSyncService
 
             // Movies were not synced this run, so allMovies is empty and rebuilding from it would
             // drop every identity the previous run recorded, taking the grouping map with it.
-            if (!provider.SyncMovies && previousSnapshot != null)
+            if (!provider.SyncMovies && carryForwardFrom != null)
             {
-                foreach (var carried in previousSnapshot.Movies)
+                foreach (var carried in carryForwardFrom.Movies)
                 {
                     snapshot.Movies[carried.Key] = carried.Value;
                 }
             }
 
-            if (!provider.SyncSeries && previousSnapshot != null)
+            if (!provider.SyncSeries && carryForwardFrom != null)
             {
-                foreach (var carried in previousSnapshot.Series)
+                foreach (var carried in carryForwardFrom.Series)
                 {
                     snapshot.Series[carried.Key] = carried.Value;
                 }
@@ -4422,7 +4439,7 @@ public partial class StrmSyncService
             {
                 if (processedMovieIds.Add(movie.StreamId) && !failedMovieIds.Contains(movie.StreamId))
                 {
-                    var movieIdentity = EffectiveMovieIdentity(movieIdentities, previousSnapshot, movie.StreamId);
+                    var movieIdentity = EffectiveMovieIdentity(movieIdentities, carryForwardFrom, movie.StreamId);
                     snapshot.Movies[movie.StreamId] = new MovieSnapshot
                     {
                         StreamId = movie.StreamId,
@@ -4441,7 +4458,8 @@ public partial class StrmSyncService
                         // no id at all, because that is a fresh answer rather than a missing one.
                         FolderName = movieIdentity.FolderName,
                         TmdbId = movieIdentity.TmdbId,
-                        TmdbIdSource = movieIdentity.Source
+                        TmdbIdSource = movieIdentity.Source,
+                        GroupOwnerStreamId = movieIdentity.GroupOwnerStreamId
                     };
                 }
             }
@@ -4458,7 +4476,7 @@ public partial class StrmSyncService
                         episodeCount = info.Episodes.Values.Sum(eps => eps.Count);
                     }
 
-                    var seriesIdentity = EffectiveSeriesIdentity(seriesIdentities, previousSnapshot, series.SeriesId);
+                    var seriesIdentity = EffectiveSeriesIdentity(seriesIdentities, carryForwardFrom, series.SeriesId);
                     snapshot.Series[series.SeriesId] = new SeriesSnapshot
                     {
                         SeriesId = series.SeriesId,

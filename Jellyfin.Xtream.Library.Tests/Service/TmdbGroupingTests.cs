@@ -30,6 +30,31 @@ public class TmdbGroupingTests
     private static MovieSnapshot Movie(int streamId, int? tmdbId, ItemIdSource source, string folder) =>
         new() { StreamId = streamId, TmdbId = tmdbId, TmdbIdSource = source, FolderName = folder };
 
+    // Codex review finding: which stream ends up owning a folder depends on the order a run
+    // processed them. A later run that worked the owner out again could pick a different one, hand
+    // the plain file name to a second stream, and overwrite the first one's file.
+    [Fact]
+    public void TheRecordedOwnerIsHonoured_EvenWhenItIsNotTheLowestStreamId()
+    {
+        var snapshot = SnapshotWith(
+            new MovieSnapshot { StreamId = 100, TmdbId = 42, TmdbIdSource = ItemIdSource.Provider, FolderName = "The Film 4K (2024) [tmdbid-42]", GroupOwnerStreamId = 200 },
+            new MovieSnapshot { StreamId = 200, TmdbId = 42, TmdbIdSource = ItemIdSource.Provider, FolderName = "The Film 4K (2024) [tmdbid-42]", GroupOwnerStreamId = 200 });
+
+        TmdbGrouping.BuildFolderMap(snapshot)[42]
+            .Should().Be((200, "The Film 4K (2024) [tmdbid-42]"), "the files on disk were named by 200");
+    }
+
+    [Fact]
+    public void WithNothingRecorded_TheLowestStreamIdStillDecides()
+    {
+        // Snapshots written before ownership was recorded fall back to the old rule.
+        var map = TmdbGrouping.BuildFolderMap(SnapshotWith(
+            Movie(200, 42, ItemIdSource.Provider, "The Film (2024) [tmdbid-42]"),
+            Movie(100, 42, ItemIdSource.Provider, "The Film (2024) [tmdbid-42]")));
+
+        map[42].OwnerStreamId.Should().Be(100);
+    }
+
     [Theory]
     [InlineData(ItemIdSource.Provider, true)]
     [InlineData(ItemIdSource.Override, true)]
