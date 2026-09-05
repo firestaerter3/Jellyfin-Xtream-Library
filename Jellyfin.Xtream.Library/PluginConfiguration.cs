@@ -316,6 +316,11 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool EnableDispatcharrMode { get; set; }
 
     /// <summary>Gets or sets the legacy Dispatcharr API user. Migrated to Providers[0].</summary>
+    public string DispatcharrBaseUrl { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the Dispatcharr REST API username.
+    /// </summary>
     public string DispatcharrApiUser { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the legacy Dispatcharr API password. Migrated to Providers[0].</summary>

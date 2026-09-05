@@ -83,7 +83,7 @@ public class DispatcharrClient : IDispatcharrClient
     {
         try
         {
-            var json = await GetAuthenticatedAsync($"{baseUrl}/api/vod/movies/{movieId}/", cancellationToken).ConfigureAwait(false);
+            var json = await GetAuthenticatedAsync(baseUrl, $"{baseUrl}/api/vod/movies/{movieId}/", cancellationToken).ConfigureAwait(false);
             if (json == null)
             {
                 return null;
@@ -103,7 +103,7 @@ public class DispatcharrClient : IDispatcharrClient
     {
         try
         {
-            var json = await GetAuthenticatedAsync($"{baseUrl}/api/vod/movies/{movieId}/providers/", cancellationToken).ConfigureAwait(false);
+            var json = await GetAuthenticatedAsync(baseUrl, $"{baseUrl}/api/vod/movies/{movieId}/providers/", cancellationToken).ConfigureAwait(false);
             if (json == null)
             {
                 return new List<DispatcharrMovieProvider>();
@@ -133,12 +133,11 @@ public class DispatcharrClient : IDispatcharrClient
         }
     }
 
-    private async Task<string?> GetAuthenticatedAsync(string url, CancellationToken cancellationToken)
+    private async Task<string?> GetAuthenticatedAsync(string baseUrl, string url, CancellationToken cancellationToken)
     {
-        // Extract base URL from the full URL for token acquisition
-        var uri = new Uri(url);
-        var baseUrl = $"{uri.Scheme}://{uri.Authority}";
-
+        // The base URL is passed in rather than derived from the request URL. Deriving it as
+        // scheme://authority dropped any path, so a Dispatcharr behind a reverse proxy on a subpath
+        // had its data calls sent to the right place and its login sent to the wrong one (#83).
         await EnsureTokenAsync(baseUrl, cancellationToken).ConfigureAwait(false);
 
         if (_accessToken == null)

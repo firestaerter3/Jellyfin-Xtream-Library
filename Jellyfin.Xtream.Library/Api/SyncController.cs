@@ -312,7 +312,7 @@ public class SyncController : ControllerBase
         try
         {
             _dispatcharrClient.Configure(provider.DispatcharrApiUser, provider.DispatcharrApiPass);
-            var success = await _dispatcharrClient.TestConnectionAsync(provider.BaseUrl, cancellationToken).ConfigureAwait(false);
+            var success = await _dispatcharrClient.TestConnectionAsync(provider.EffectiveDispatcharrBaseUrl, cancellationToken).ConfigureAwait(false);
 
             if (success)
             {
