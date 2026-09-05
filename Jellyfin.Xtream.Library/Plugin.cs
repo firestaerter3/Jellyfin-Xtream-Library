@@ -128,6 +128,8 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             EnableProactiveMediaInfo = config.EnableProactiveMediaInfo,
             FallbackToYearlessLookup = config.FallbackToYearlessLookup,
             EnableDispatcharrMode = config.EnableDispatcharrMode,
+            DispatcharrBaseUrl = config.DispatcharrBaseUrl,
+            GroupMoviesByTmdbId = config.GroupMoviesByTmdbId,
             DispatcharrApiUser = config.DispatcharrApiUser,
             DispatcharrApiPass = config.DispatcharrApiPass,
             EnableIncrementalSync = config.EnableIncrementalSync,
@@ -340,6 +342,8 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         target.EnableProactiveMediaInfo = source.EnableProactiveMediaInfo;
         target.FallbackToYearlessLookup = source.FallbackToYearlessLookup;
         target.EnableDispatcharrMode = source.EnableDispatcharrMode;
+        target.DispatcharrBaseUrl = source.DispatcharrBaseUrl;
+        target.GroupMoviesByTmdbId = source.GroupMoviesByTmdbId;
         target.DispatcharrApiUser = source.DispatcharrApiUser;
         target.DispatcharrApiPass = source.DispatcharrApiPass;
         target.EnableIncrementalSync = source.EnableIncrementalSync;

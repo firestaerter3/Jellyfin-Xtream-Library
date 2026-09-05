@@ -209,6 +209,16 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool EnableChannelNameCleaning { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether channel numbers are prefixed with the category id
+    /// so the guide groups by category (GitHub #86).
+    /// <para>
+    /// Off by default: turning it on renumbers every channel, and Jellyfin keeps the old numbers in
+    /// its own database until the guide is refreshed.
+    /// </para>
+    /// </summary>
+    public bool LiveTvNumberByCategory { get; set; }
+
+    /// <summary>
     /// Gets or sets custom terms to remove from channel names. One term per line.
     /// </summary>
     public string ChannelRemoveTerms { get; set; } = string.Empty;
@@ -315,7 +325,15 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Gets or sets the legacy Dispatcharr mode flag. Migrated to Providers[0].</summary>
     public bool EnableDispatcharrMode { get; set; }
 
+    /// <summary>Gets or sets the legacy group-movies-by-TMDB-id flag. Migrated to Providers[0].</summary>
+    public bool GroupMoviesByTmdbId { get; set; }
+
     /// <summary>Gets or sets the legacy Dispatcharr API user. Migrated to Providers[0].</summary>
+    public string DispatcharrBaseUrl { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the Dispatcharr REST API username.
+    /// </summary>
     public string DispatcharrApiUser { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the legacy Dispatcharr API password. Migrated to Providers[0].</summary>

@@ -57,6 +57,7 @@ public class XtreamTunerHost : ITunerHost
     private volatile Dictionary<string, StreamStatsInfo> _streamStats = new();
     private List<ChannelInfo>? _cachedChannels;
     private DateTime _cacheTime = DateTime.MinValue;
+    private bool _cachedNumberByCategory;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="XtreamTunerHost"/> class.
@@ -94,7 +95,12 @@ public class XtreamTunerHost : ITunerHost
         }
 
         // Return cached channels if available and not expired
-        if (enableCache && _cachedChannels != null && DateTime.UtcNow - _cacheTime < CacheDuration)
+        // The numbering flag is part of the cache identity: flipping it changes every number, and
+        // serving the previous list would leave the numbers and the resolver map disagreeing.
+        if (enableCache
+            && _cachedChannels != null
+            && _cachedNumberByCategory == config.LiveTvNumberByCategory
+            && DateTime.UtcNow - _cacheTime < CacheDuration)
         {
             _logger.LogDebug("Returning cached channel list ({Count} channels)", _cachedChannels.Count);
             return _cachedChannels;
@@ -105,6 +111,7 @@ public class XtreamTunerHost : ITunerHost
         var channels = await _liveTvService.GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
         var categoryNames = await _liveTvService.GetCategoryNameMapAsync(cancellationToken).ConfigureAwait(false);
 
+        int stride = ChannelNumbering.ComputeStride(channels);
         var newMap = new Dictionary<string, string>(channels.Count);
         var newStats = new Dictionary<string, StreamStatsInfo>(channels.Count);
         int statsCount = 0;
@@ -112,7 +119,9 @@ public class XtreamTunerHost : ITunerHost
         var result = new List<ChannelInfo>(channels.Count);
         foreach (var channel in channels)
         {
-            var channelNumber = channel.Num.ToString(CultureInfo.InvariantCulture);
+            var channelNumber = ChannelNumbering
+                .Resolve(channel, stride, config.LiveTvNumberByCategory)
+                .ToString(CultureInfo.InvariantCulture);
             var channelId = BuildChannelId(channel.ProviderIndex, channel.StreamId);
 
             if (!newMap.TryAdd(channelNumber, channelId))
@@ -155,6 +164,7 @@ public class XtreamTunerHost : ITunerHost
         _streamStats = newStats;
         _cachedChannels = result;
         _cacheTime = DateTime.UtcNow;
+        _cachedNumberByCategory = config.LiveTvNumberByCategory;
         _logger.LogInformation("Channel list cached with {Count} channels ({StatsCount} with stream stats)", result.Count, statsCount);
 
         return result;

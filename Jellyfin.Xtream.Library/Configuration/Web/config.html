@@ -633,6 +633,16 @@
                                 </div>
                                 <div id="dispatcharrSettings" style="display: none;">
                                     <div class="inputContainer">
+                                        <label class="inputLabel inputLabelUnfocused" for="txtDispatcharrBaseUrl">Dispatcharr URL</label>
+                                        <input is="emby-input" type="text" id="txtDispatcharrBaseUrl" name="DispatcharrBaseUrl"
+                                            placeholder="http://dispatcharr-host:9191" />
+                                        <div class="fieldDescription">
+                                            Leave empty if Dispatcharr answers on the same address as the Xtream URL above.
+                                            Fill this in when it runs on a different host, port or path, otherwise the login
+                                            is sent to the Xtream server and fails with "JWT login failed with status NotFound".
+                                        </div>
+                                    </div>
+                                    <div class="inputContainer">
                                         <label class="inputLabel inputLabelUnfocused" for="txtDispatcharrApiUser">API Username</label>
                                         <input is="emby-input" type="text" id="txtDispatcharrApiUser" name="DispatcharrApiUser" />
                                         <div class="fieldDescription">
@@ -715,6 +725,24 @@
                                 </label>
                                 <div class="fieldDescription checkboxFieldDescription">
                                     Enable syncing of movies and VOD content.
+                                </div>
+                            </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkGroupMoviesByTmdbId" name="GroupMoviesByTmdbId" />
+                                    <span>Group movies with the same TMDB id into one folder</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Providers often carry the same film several times, in different qualities or
+                                    languages. With this on, copies your provider reports under the same TMDB id are
+                                    written to one folder, so Jellyfin shows them as versions of one film instead of
+                                    separate entries.
+                                    <br />
+                                    Only ids your provider supplies are grouped. An id found by searching on the title
+                                    is left alone, because a search can give a film and its remake the same id.
+                                    <br />
+                                    This applies to movies added from now on. Films already in your library stay in
+                                    the folders they are in: nothing on your disk is moved or renamed.
                                 </div>
                             </div>
                         </div>
@@ -1036,6 +1064,24 @@
                             </div>
                         </div>
 
+                        <div class="verticalSection">
+                            <h3 class="sectionTitle">Channel Order</h3>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkLiveTvNumberByCategory" name="LiveTvNumberByCategory" />
+                                    <span>Group channel numbers by category</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Providers number channels from 1 inside every category, so channel 1 of Sports,
+                                    News and Movies all end up next to each other in the guide. Turn this on to put
+                                    the category in front of the number, so each category's channels stay together.
+                                    This also stops two channels sharing a number, which could make one of them
+                                    unreachable.
+                                    <br />
+                                    Every channel gets a new number, so refresh the guide after changing this.
+                                </div>
+                            </div>
+                        </div>
                         <div class="verticalSection">
                             <h3 class="sectionTitle">Title Cleaning</h3>
                             <div class="checkboxContainer checkboxContainer-withDescription">

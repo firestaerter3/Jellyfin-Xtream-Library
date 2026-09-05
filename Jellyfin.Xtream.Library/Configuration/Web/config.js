@@ -160,6 +160,8 @@ const XtreamLibraryConfig = {
         document.getElementById('chkEnableProactiveMediaInfo').checked = p.EnableProactiveMediaInfo || false;
 
         document.getElementById('chkEnableDispatcharrMode').checked = p.EnableDispatcharrMode || false;
+        document.getElementById('txtDispatcharrBaseUrl').value = p.DispatcharrBaseUrl || '';
+        document.getElementById('chkGroupMoviesByTmdbId').checked = p.GroupMoviesByTmdbId === true;
         document.getElementById('txtDispatcharrApiUser').value = p.DispatcharrApiUser || '';
         document.getElementById('txtDispatcharrApiPass').value = p.DispatcharrApiPass || '';
         self.updateDispatcharrVisibility();
@@ -262,6 +264,8 @@ const XtreamLibraryConfig = {
         p.EnableProactiveMediaInfo = document.getElementById('chkEnableProactiveMediaInfo').checked;
 
         p.EnableDispatcharrMode = document.getElementById('chkEnableDispatcharrMode').checked;
+        p.DispatcharrBaseUrl = document.getElementById('txtDispatcharrBaseUrl').value.trim().replace(/\/$/, '');
+        p.GroupMoviesByTmdbId = document.getElementById('chkGroupMoviesByTmdbId').checked;
         p.DispatcharrApiUser = document.getElementById('txtDispatcharrApiUser').value.trim();
         p.DispatcharrApiPass = document.getElementById('txtDispatcharrApiPass').value.trim();
     },
@@ -338,6 +342,7 @@ const XtreamLibraryConfig = {
 
             // Title cleaning
             document.getElementById('chkEnableChannelNameCleaning').checked = config.EnableChannelNameCleaning !== false;
+            document.getElementById('chkLiveTvNumberByCategory').checked = config.LiveTvNumberByCategory === true;
             document.getElementById('txtChannelRemoveTerms').value = config.ChannelRemoveTerms || '';
 
             // Channel overrides
@@ -422,6 +427,7 @@ const XtreamLibraryConfig = {
 
             // Title cleaning
             config.EnableChannelNameCleaning = document.getElementById('chkEnableChannelNameCleaning').checked;
+            config.LiveTvNumberByCategory = document.getElementById('chkLiveTvNumberByCategory').checked;
             config.ChannelRemoveTerms = document.getElementById('txtChannelRemoveTerms').value;
 
             // Channel overrides

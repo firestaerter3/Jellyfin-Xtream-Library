@@ -49,4 +49,5 @@ public enum ItemIdSource
 /// <param name="TmdbId">Resolved TMDB id, if any.</param>
 /// <param name="TvdbId">Resolved TVDB id, if any. Series only.</param>
 /// <param name="Source">Where <paramref name="TmdbId"/> or <paramref name="TvdbId"/> came from.</param>
-public sealed record ItemIdentity(string FolderName, int? TmdbId, int? TvdbId, ItemIdSource Source);
+/// <param name="GroupOwnerStreamId">Stream whose title named the shared folder, when grouped.</param>
+public sealed record ItemIdentity(string FolderName, int? TmdbId, int? TvdbId, ItemIdSource Source, int? GroupOwnerStreamId = null);

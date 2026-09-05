@@ -307,23 +307,286 @@ public class StrmNameCollisionTests : IDisposable
             .Should().HaveCount(1);
     }
 
+    // GitHub #90. Every version of a title (V1/V2/V3) resolves to one folder and therefore to one
+    // "<folder>.nfo", while the STRM files keep their version label and stay distinct. So the STRM
+    // claim never fires here and the NFO write was unguarded: whichever version finished last won,
+    // including a version whose metadata fetch had failed and had nothing to write.
+
+    private const string RaceNfo = "Race Movie (2024).nfo";
+
+    private static StreamInfo RaceVersion(int streamId, string label)
+        => new() { StreamId = streamId, Name = $"Race Movie (2024) - [{label}]", ContainerExtension = "mp4" };
+
+    private string RaceNfoPath => Path.Combine(_libraryPath, "Movies", "Race Movie (2024)", RaceNfo);
+
+    private void VodInfoReturns(int streamId, string plot)
+        => _client.Setup(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), streamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VodInfoResponse { Info = new VodInfoDetails { Plot = plot } });
+
+    private void VodInfoFails(int streamId)
+        => _client.Setup(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), streamId, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("provider refused the info call"));
+
+    [Fact]
+    public async Task AVersionAddedLaterWhoseFetchFails_DoesNotStripTheExistingNfo()
+    {
+        VodInfoReturns(100, "The good plot");
+        VodInfoFails(200);
+
+        await RunMovieSyncAsync([RaceVersion(100, "V1")], useShippedDefaults: false, proactiveMediaInfo: true)
+            .ConfigureAwait(true);
+        (await File.ReadAllTextAsync(RaceNfoPath).ConfigureAwait(true))
+            .Should().Contain("The good plot", "the first run had working metadata");
+
+        // The provider adds V2 later and its info call fails. V2 is the only stream created this
+        // run, so it is the one that reaches the NFO write, with nothing to put in it.
+        await RunMovieSyncAsync([RaceVersion(100, "V1"), RaceVersion(200, "V2")], useShippedDefaults: false, proactiveMediaInfo: true)
+            .ConfigureAwait(true);
+
+        (await File.ReadAllTextAsync(RaceNfoPath).ConfigureAwait(true))
+            .Should().Contain("The good plot", "a failed fetch must not replace an NFO that already had metadata");
+        _log.Should().Contain(l => l.StartsWith("[Warning] Keeping the existing NFO", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TheFailingVersionRunningFirst_StillLeavesTheRichNfo()
+    {
+        // A plain first-writer-wins claim would lock in the empty NFO here, because the version
+        // that cannot fetch anything is the one that takes the path.
+        VodInfoFails(100);
+        VodInfoReturns(200, "The good plot");
+
+        await RunMovieSyncAsync([RaceVersion(100, "V1"), RaceVersion(200, "V2")], useShippedDefaults: false, proactiveMediaInfo: true)
+            .ConfigureAwait(true);
+
+        (await File.ReadAllTextAsync(RaceNfoPath).ConfigureAwait(true))
+            .Should().Contain("The good plot", "the version with real metadata has to win regardless of order");
+    }
+
+    [Fact]
+    public async Task AFailedFetchWithNothingElseKnown_WritesNoNfoAndSaysWhy()
+    {
+        VodInfoFails(100);
+
+        var result = await RunMovieSyncAsync([RaceVersion(100, "V1")], useShippedDefaults: false, proactiveMediaInfo: true)
+            .ConfigureAwait(true);
+
+        // NfoWriter already refuses to write a file with no TMDB id, no media info and no metadata,
+        // so the outcome here is no NFO rather than an empty one. What changed is that the reason is
+        // now visible instead of being logged at Debug.
+        File.Exists(RaceNfoPath).Should().BeFalse("there was nothing to put in it");
+        result.Errors.Should().Be(0, "a provider that will not answer the info call is not a sync failure");
+        _log.Should().Contain(l => l.StartsWith("[Warning] Failed to fetch VOD info for NFO", StringComparison.Ordinal));
+    }
+    // GitHub #88. Two differently titled streams the provider reports under one TMDB id have to
+    // end up as two versions of one film, not two entries. Metadata lookup is off in this harness,
+    // which is the case that matters: grouping keys on the provider's own id, so it has to work
+    // without the name-based lookup being enabled.
+    [Fact]
+    public async Task MoviesSharingAProviderTmdbId_LandInOneFolder()
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(200, "42");
+
+        var result = await RunMovieSyncAsync(
+            [
+                new StreamInfo { StreamId = 100, Name = "Alpha Movie (2024)", ContainerExtension = "mp4" },
+                new StreamInfo { StreamId = 200, Name = "Beta Movie (2024)", ContainerExtension = "mp4" },
+            ],
+            useShippedDefaults: false,
+            groupByTmdbId: true).ConfigureAwait(true);
+
+        var grouped = Path.Combine(_libraryPath, "Movies", "Alpha Movie (2024) [tmdbid-42]");
+        var written = Directory.GetFiles(grouped, "*.strm").Select(Path.GetFileName).OrderBy(f => f).ToList();
+
+        written.Should().Equal(
+            "Alpha Movie (2024) [tmdbid-42] - 200.strm",
+            "Alpha Movie (2024) [tmdbid-42].strm");
+        Directory.Exists(Path.Combine(_libraryPath, "Movies", "Beta Movie (2024)")).Should().BeFalse();
+        result.MovieNameCollisions.Should().Be(0, "sharing a folder is the feature, not a collision");
+        result.Errors.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task WithGroupingOff_TheSameTwoMoviesStayApart()
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(200, "42");
+
+        await RunMovieSyncAsync(
+            [
+                new StreamInfo { StreamId = 100, Name = "Alpha Movie (2024)", ContainerExtension = "mp4" },
+                new StreamInfo { StreamId = 200, Name = "Beta Movie (2024)", ContainerExtension = "mp4" },
+            ],
+            useShippedDefaults: false).ConfigureAwait(true);
+
+        Directory.GetDirectories(Path.Combine(_libraryPath, "Movies")).Should().HaveCount(2);
+    }
+
+    // Codex review finding: providers send 0 for "no id". Treating it as an id would collapse
+    // every such film into one folder, and then offer that folder for an irreversible merge.
+    [Fact]
+    public async Task MoviesReportingTmdbIdZero_AreNotGroupedTogether()
+    {
+        VodInfoWithTmdbId(100, "0");
+        VodInfoWithTmdbId(200, "0");
+
+        await RunMovieSyncAsync(
+            [
+                new StreamInfo { StreamId = 100, Name = "Alpha Movie (2024)", ContainerExtension = "mp4" },
+                new StreamInfo { StreamId = 200, Name = "Beta Movie (2024)", ContainerExtension = "mp4" },
+            ],
+            useShippedDefaults: false,
+            groupByTmdbId: true).ConfigureAwait(true);
+
+        Directory.GetDirectories(Path.Combine(_libraryPath, "Movies"))
+            .Should().HaveCount(2, "0 means the provider has no id, not that these are the same film");
+        Directory.Exists(Path.Combine(_libraryPath, "Movies", "Alpha Movie (2024) [tmdbid-0]"))
+            .Should().BeFalse("a folder named after a non-id helps nobody");
+    }
+
+    // Codex review finding: a grouped guest lives in the folder its owner named, so the orphan
+    // protection that looks up the guest's own base name cannot find it. When the owner leaves the
+    // provider's catalogue, cleanup would delete a file the provider still lists.
+    [Fact]
+    public async Task AGroupedGuestSurvivesCleanup_WhenItsOwnerLeavesTheCatalogue()
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(200, "42");
+
+        await RunMovieSyncAsync(
+            [
+                new StreamInfo { StreamId = 100, Name = "Alpha Movie (2024)", ContainerExtension = "mp4" },
+                new StreamInfo { StreamId = 200, Name = "Beta Movie (2024)", ContainerExtension = "mp4" },
+            ],
+            useShippedDefaults: false,
+            groupByTmdbId: true).ConfigureAwait(true);
+
+        var guestFile = Path.Combine(
+            _libraryPath, "Movies", "Alpha Movie (2024) [tmdbid-42]", "Alpha Movie (2024) [tmdbid-42] - 200.strm");
+        File.Exists(guestFile).Should().BeTrue("the first run has to have produced the grouped file");
+
+        // The provider drops Alpha. Beta is unchanged, so an incremental run skips it entirely and
+        // only the orphan protection stands between its file and cleanup.
+        await RunMovieSyncAsync(
+            [new StreamInfo { StreamId = 200, Name = "Beta Movie (2024)", ContainerExtension = "mp4" }],
+            useShippedDefaults: true,
+            groupByTmdbId: true,
+            cleanupOrphans: true).ConfigureAwait(true);
+
+        File.Exists(guestFile).Should().BeTrue("the provider still lists this stream");
+
+        // The other half of the same rule: only the guest's own file is spared. Protecting the
+        // whole shared folder would keep the departed owner's file in the library forever.
+        File.Exists(Path.Combine(
+            _libraryPath, "Movies", "Alpha Movie (2024) [tmdbid-42]", "Alpha Movie (2024) [tmdbid-42].strm"))
+            .Should().BeFalse("the provider stopped listing that stream");
+    }
+
+    // Codex review finding: two streams can share a title and a year. Deciding who owns the folder
+    // by comparing names made neither of them a guest, so both claimed the same file name and one
+    // was refused, while its identity was still recorded and an incremental run never retried it.
+    [Fact]
+    public async Task TwoStreamsSharingATitleAndAnId_BothSurviveWhenGrouped()
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(200, "42");
+
+        var result = await RunMovieSyncAsync(
+            [
+                new StreamInfo { StreamId = 100, Name = "Same Movie (2024)", ContainerExtension = "mp4" },
+                new StreamInfo { StreamId = 200, Name = "Same Movie (2024)", ContainerExtension = "mp4" },
+            ],
+            useShippedDefaults: false,
+            groupByTmdbId: true).ConfigureAwait(true);
+
+        var folder = Path.Combine(_libraryPath, "Movies", "Same Movie (2024) [tmdbid-42]");
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).OrderBy(f => f).Should().Equal(
+            "Same Movie (2024) [tmdbid-42] - 200.strm",
+            "Same Movie (2024) [tmdbid-42].strm");
+        result.MovieNameCollisions.Should().Be(0, "the provider offering the film twice is what grouping is for");
+        result.MoviesCreated.Should().Be(2);
+    }
+
+    // Codex review finding: on a later run both same-title streams find the shared folder, and
+    // without restoring who owns it neither counted as a guest, so both built the plain file name
+    // and one was refused as a collision.
+    [Fact]
+    public async Task TwoStreamsSharingATitle_KeepTheirOwnFilesOnEveryRun()
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(200, "42");
+
+        StreamInfo[] Streams() =>
+        [
+            new StreamInfo { StreamId = 100, Name = "Same Movie (2024)", ContainerExtension = "mp4" },
+            new StreamInfo { StreamId = 200, Name = "Same Movie (2024)", ContainerExtension = "mp4" },
+        ];
+
+        await RunMovieSyncAsync(Streams(), useShippedDefaults: false, groupByTmdbId: true).ConfigureAwait(true);
+        var second = await RunMovieSyncAsync(Streams(), useShippedDefaults: false, groupByTmdbId: true).ConfigureAwait(true);
+
+        var folder = Path.Combine(_libraryPath, "Movies", "Same Movie (2024) [tmdbid-42]");
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).OrderBy(f => f).Should().Equal(
+            "Same Movie (2024) [tmdbid-42] - 200.strm",
+            "Same Movie (2024) [tmdbid-42].strm");
+        second.MovieNameCollisions.Should().Be(0, "the second run must not refuse a file it wrote itself");
+    }
+
+    // Codex review finding: the provider failing to answer for a moment must not dissolve a group
+    // that already exists, or the guest goes back to the plain name, collides with its owner and
+    // has its record downgraded to unproven.
+    [Fact]
+    public async Task AnEstablishedGroupSurvivesTheProviderNotAnswering()
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(200, "42");
+
+        StreamInfo[] Streams() =>
+        [
+            new StreamInfo { StreamId = 100, Name = "Same Movie (2024)", ContainerExtension = "mp4" },
+            new StreamInfo { StreamId = 200, Name = "Same Movie (2024)", ContainerExtension = "mp4" },
+        ];
+
+        await RunMovieSyncAsync(Streams(), useShippedDefaults: false, groupByTmdbId: true).ConfigureAwait(true);
+
+        // The info call starts failing for both streams.
+        _client.Setup(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("provider unavailable"));
+
+        var second = await RunMovieSyncAsync(Streams(), useShippedDefaults: false, groupByTmdbId: true).ConfigureAwait(true);
+
+        var folder = Path.Combine(_libraryPath, "Movies", "Same Movie (2024) [tmdbid-42]");
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).OrderBy(f => f).Should().Equal(
+            "Same Movie (2024) [tmdbid-42] - 200.strm",
+            "Same Movie (2024) [tmdbid-42].strm");
+        second.MovieNameCollisions.Should().Be(0, "the group the provider confirmed earlier still stands");
+    }
+
+    private void VodInfoWithTmdbId(int streamId, string tmdbId)
+        => _client.Setup(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), streamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VodInfoResponse { Info = new VodInfoDetails { TmdbId = tmdbId } });
+
     private Task<SyncResult> RunMovieSyncAsync(params StreamInfo[] streams)
         => RunMovieSyncAsync(streams, useShippedDefaults: false);
 
-    private async Task<SyncResult> RunMovieSyncAsync(StreamInfo[] streams, bool useShippedDefaults)
+    private async Task<SyncResult> RunMovieSyncAsync(StreamInfo[] streams, bool useShippedDefaults, bool proactiveMediaInfo = false, bool groupByTmdbId = false, bool cleanupOrphans = false)
     {
         _client.Setup(c => c.GetVodCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Category> { new() { CategoryId = 1, CategoryName = "Movies" } });
         _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<StreamInfo>(streams));
 
-        return await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults).ConfigureAwait(true);
+        return await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults, providerCount: 1, proactiveMediaInfo, groupByTmdbId, cleanupOrphans).ConfigureAwait(true);
     }
 
     private Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults)
         => RunSyncAsync(syncMovies, syncSeries, useShippedDefaults, providerCount: 1);
 
-    private async Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults, int providerCount)
+    private Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults, int providerCount)
+        => RunSyncAsync(syncMovies, syncSeries, useShippedDefaults, providerCount, proactiveMediaInfo: false, groupByTmdbId: false, cleanupOrphans: false);
+
+    private async Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults, int providerCount, bool proactiveMediaInfo, bool groupByTmdbId, bool cleanupOrphans)
     {
         var appPaths = new Mock<IServerApplicationPaths>();
         appPaths.Setup(p => p.PluginConfigurationsPath).Returns(_libraryPath);
@@ -344,10 +607,12 @@ public class StrmNameCollisionTests : IDisposable
             LibraryPath = _libraryPath,
             SyncMovies = syncMovies,
             SyncSeries = syncSeries,
-            CleanupOrphans = false,
+            CleanupOrphans = cleanupOrphans,
             EnableIncrementalSync = useShippedDefaults,
             SmartSkipExisting = useShippedDefaults,
             DownloadArtworkForUnmatched = false,
+            EnableProactiveMediaInfo = proactiveMediaInfo,
+            GroupMoviesByTmdbId = groupByTmdbId,
             SyncParallelism = 1,
         }).ToList();
         plugin.Configuration.EnableLiveTv = false;
