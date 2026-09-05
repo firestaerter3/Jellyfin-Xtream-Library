@@ -437,6 +437,31 @@ public class StrmNameCollisionTests : IDisposable
         result.MoviesCreated.Should().Be(2);
     }
 
+    // Codex review finding: on a later run both same-title streams find the shared folder, and
+    // without restoring who owns it neither counted as a guest, so both built the plain file name
+    // and one was refused as a collision.
+    [Fact]
+    public async Task TwoStreamsSharingATitle_KeepTheirOwnFilesOnEveryRun()
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(200, "42");
+
+        StreamInfo[] Streams() =>
+        [
+            new StreamInfo { StreamId = 100, Name = "Same Movie (2024)", ContainerExtension = "mp4" },
+            new StreamInfo { StreamId = 200, Name = "Same Movie (2024)", ContainerExtension = "mp4" },
+        ];
+
+        await RunMovieSyncAsync(Streams(), useShippedDefaults: false, groupByTmdbId: true).ConfigureAwait(true);
+        var second = await RunMovieSyncAsync(Streams(), useShippedDefaults: false, groupByTmdbId: true).ConfigureAwait(true);
+
+        var folder = Path.Combine(_libraryPath, "Movies", "Same Movie (2024) [tmdbid-42]");
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).OrderBy(f => f).Should().Equal(
+            "Same Movie (2024) [tmdbid-42] - 200.strm",
+            "Same Movie (2024) [tmdbid-42].strm");
+        second.MovieNameCollisions.Should().Be(0, "the second run must not refuse a file it wrote itself");
+    }
+
     private void VodInfoWithTmdbId(int streamId, string tmdbId)
         => _client.Setup(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), streamId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VodInfoResponse { Info = new VodInfoDetails { TmdbId = tmdbId } });

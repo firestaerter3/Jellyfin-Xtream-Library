@@ -2050,6 +2050,27 @@ public partial class StrmSyncService
                                 providerTmdbId = existingTmdbId;
                             }
                         }
+
+                        // Two grouped streams can share a title, which means both find the same
+                        // folder here and neither would count as a guest, so both would build the
+                        // plain file name and one would be refused as a collision. Membership is
+                        // restored from the recorded owner so the guest keeps its own file name on
+                        // every later run (codex review).
+                        if (groupByTmdb)
+                        {
+                            int? existingGroupId = tmdbOverrides.TryGetValue(baseName, out int pinnedExistingId)
+                                ? pinnedExistingId
+                                : providerTmdbId;
+
+                            if (existingGroupId.HasValue
+                                && IsUsableMetadataId(existingGroupId.Value)
+                                && groupFolders.TryGetValue(existingGroupId.Value, out var recordedGroup)
+                                && string.Equals(recordedGroup.FolderName, folderName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                joinedGroupFolder = recordedGroup.OwnerStreamId != stream.StreamId;
+                                groupOwnerStreamId = recordedGroup.OwnerStreamId;
+                            }
+                        }
                     }
                     else
                     {
