@@ -40,6 +40,20 @@ public class SnapshotService : IDisposable
     }
 
     /// <summary>
+    /// Builds the per-provider snapshot key, "{index}-{first 8 of the md5 of the base url}".
+    /// </summary>
+    /// <param name="providerIndex">Index of the provider in the configuration.</param>
+    /// <param name="baseUrl">Provider base URL.</param>
+    /// <returns>The key.</returns>
+#pragma warning disable CA5351 // the hash names a directory, it protects nothing
+    public static string BuildProviderKey(int providerIndex, string baseUrl)
+    {
+        var hash = MD5.HashData(Encoding.UTF8.GetBytes(baseUrl ?? string.Empty));
+        return $"{providerIndex}-{Convert.ToHexString(hash)[..8].ToLowerInvariant()}";
+    }
+#pragma warning restore CA5351
+
+    /// <summary>
     /// Gets the snapshot directory for the given provider key.
     /// Provider key format: "{providerIndex}-{urlHashPrefix}" (e.g. "0-a1b2c3d4").
     /// Use "0-legacy" for snapshots created before multi-provider support.

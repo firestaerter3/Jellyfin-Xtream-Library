@@ -727,6 +727,24 @@
                                     Enable syncing of movies and VOD content.
                                 </div>
                             </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkGroupMoviesByTmdbId" name="GroupMoviesByTmdbId" />
+                                    <span>Group movies with the same TMDB id into one folder</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Providers often carry the same film several times, in different qualities or
+                                    languages. With this on, copies your provider reports under the same TMDB id are
+                                    written to one folder, so Jellyfin shows them as versions of one film instead of
+                                    separate entries.
+                                    <br />
+                                    Only ids your provider supplies are grouped. An id found by searching on the title
+                                    is left alone, because a search can give a film and its remake the same id.
+                                    <br />
+                                    This applies to movies added from now on. Films already in your library stay in
+                                    the folders they are in: nothing on your disk is moved or renamed.
+                                </div>
+                            </div>
                         </div>
 
                         <div class="verticalSection">

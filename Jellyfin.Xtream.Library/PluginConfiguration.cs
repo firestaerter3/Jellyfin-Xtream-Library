@@ -325,6 +325,9 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Gets or sets the legacy Dispatcharr mode flag. Migrated to Providers[0].</summary>
     public bool EnableDispatcharrMode { get; set; }
 
+    /// <summary>Gets or sets the legacy group-movies-by-TMDB-id flag. Migrated to Providers[0].</summary>
+    public bool GroupMoviesByTmdbId { get; set; }
+
     /// <summary>Gets or sets the legacy Dispatcharr API user. Migrated to Providers[0].</summary>
     public string DispatcharrBaseUrl { get; set; } = string.Empty;
 

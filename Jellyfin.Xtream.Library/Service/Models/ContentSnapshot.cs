@@ -104,6 +104,16 @@ public class MovieSnapshot
     /// merge two items on.
     /// </summary>
     public ItemIdSource TmdbIdSource { get; set; }
+
+    /// <summary>
+    /// Gets or sets the stream whose title named the shared folder, when this item was grouped.
+    /// <para>
+    /// Recorded rather than worked out again later: which stream ends up owning a folder depends
+    /// on the order a run processed them, and a later run that recomputed a different owner would
+    /// hand the plain file name to a second stream and overwrite the first one's file.
+    /// </para>
+    /// </summary>
+    public int? GroupOwnerStreamId { get; set; }
 }
 
 /// <summary>
