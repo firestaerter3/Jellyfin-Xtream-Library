@@ -1037,6 +1037,24 @@
                         </div>
 
                         <div class="verticalSection">
+                            <h3 class="sectionTitle">Channel Order</h3>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkLiveTvNumberByCategory" name="LiveTvNumberByCategory" />
+                                    <span>Group channel numbers by category</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Providers number channels from 1 inside every category, so channel 1 of Sports,
+                                    News and Movies all end up next to each other in the guide. Turn this on to put
+                                    the category in front of the number, so each category's channels stay together.
+                                    This also stops two channels sharing a number, which could make one of them
+                                    unreachable.
+                                    <br />
+                                    Every channel gets a new number, so refresh the guide after changing this.
+                                </div>
+                            </div>
+                        </div>
+                        <div class="verticalSection">
                             <h3 class="sectionTitle">Title Cleaning</h3>
                             <div class="checkboxContainer checkboxContainer-withDescription">
                                 <label class="emby-checkbox-label">
