@@ -193,6 +193,57 @@ public class XtreamTunerHostTests : IDisposable
         result[2].ImageUrl.Should().Be("http://127.0.0.1:8096/XtreamLibrary/ChannelLogo/300");
     }
 
+    // GitHub #86. The channel number is both the guide's sort key and the key the tuner resolves
+    // hdhr_<number> back to a stream with, so a provider that numbers from 1 inside every category
+    // interleaves the guide and, worse, makes one of two same-numbered channels unreachable.
+    [Fact]
+    public async Task GetChannels_PrefixesTheCategoryId_WhenNumberByCategoryIsEnabled()
+    {
+        var config = Plugin.Instance.Configuration;
+        config.EnableLiveTv = true;
+        config.EnableNativeTuner = true;
+        config.EnableChannelNameCleaning = false;
+        config.LiveTvNumberByCategory = true;
+
+        _mockClient
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiveStreamInfo>
+            {
+                new() { StreamId = 100, Name = "Sports One", Num = 1, CategoryId = 5 },
+                new() { StreamId = 200, Name = "News One", Num = 1, CategoryId = 6 },
+                new() { StreamId = 300, Name = "Sports Two", Num = 2, CategoryId = 5 },
+            });
+
+        var result = await _tunerHost.GetChannels(false, CancellationToken.None);
+
+        result.Select(c => c.Number).Should().Equal("5001", "6001", "5002");
+        result.Select(c => c.Number).Should().OnlyHaveUniqueItems(
+            "a duplicate number silently makes one of the two channels unreachable");
+    }
+
+    [Fact]
+    public async Task GetChannels_KeepsProviderNumbers_WhenNumberByCategoryIsOff()
+    {
+        var config = Plugin.Instance.Configuration;
+        config.EnableLiveTv = true;
+        config.EnableNativeTuner = true;
+        config.EnableChannelNameCleaning = false;
+        config.LiveTvNumberByCategory = false;
+
+        _mockClient
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiveStreamInfo>
+            {
+                new() { StreamId = 100, Name = "Sports One", Num = 1, CategoryId = 5 },
+                new() { StreamId = 200, Name = "News One", Num = 1, CategoryId = 6 },
+            });
+
+        var result = await _tunerHost.GetChannels(false, CancellationToken.None);
+
+        // Unchanged behaviour for anyone who does not turn the option on, collision included.
+        result.Select(c => c.Number).Should().Equal("1", "1");
+    }
+
     // BUG-011: native tuner channels were ungrouped because ChannelGroup was never set.
     [Fact]
     public async Task GetChannels_SetsChannelGroup_FromCategoryName()

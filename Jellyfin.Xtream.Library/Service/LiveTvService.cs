@@ -844,7 +844,10 @@ public class LiveTvService : IDisposable
             ? channels.Where(c => c.TvArchive && c.TvArchiveDuration > 0).ToList()
             : channels;
 
-        foreach (var channel in filteredChannels.OrderBy(c => c.Num))
+        int stride = ChannelNumbering.ComputeStride(filteredChannels);
+        bool numberByCategory = config.LiveTvNumberByCategory;
+
+        foreach (var channel in filteredChannels.OrderBy(c => ChannelNumbering.Resolve(c, stride, numberByCategory)))
         {
             var cleanName = ChannelNameCleaner.CleanChannelName(
                 channel.Name,
@@ -857,7 +860,7 @@ public class LiveTvService : IDisposable
             extinf.Append("#EXTINF:-1");
             extinf.Append(CultureInfo.InvariantCulture, $" tvg-id=\"{EscapeAttribute(epgId)}\"");
             extinf.Append(CultureInfo.InvariantCulture, $" tvg-name=\"{EscapeAttribute(cleanName)}\"");
-            extinf.Append(CultureInfo.InvariantCulture, $" tvg-chno=\"{channel.Num}\"");
+            extinf.Append(CultureInfo.InvariantCulture, $" tvg-chno=\"{ChannelNumbering.Resolve(channel, stride, numberByCategory)}\"");
 
             var logoUrl = ChannelLogoResolver.ResolveDisplayUrl(channel.StreamIcon, channel.StreamId, baseUrl);
             if (!string.IsNullOrEmpty(logoUrl))
@@ -978,7 +981,10 @@ public class LiveTvService : IDisposable
         sb.AppendLine("<tv generator-info-name=\"Jellyfin Xtream Library\">");
 
         // Channel definitions
-        foreach (var channel in channels.OrderBy(c => c.Num))
+        int epgStride = ChannelNumbering.ComputeStride(channels);
+        bool epgNumberByCategory = config.LiveTvNumberByCategory;
+
+        foreach (var channel in channels.OrderBy(c => ChannelNumbering.Resolve(c, epgStride, epgNumberByCategory)))
         {
             var cleanName = ChannelNameCleaner.CleanChannelName(
                 channel.Name,

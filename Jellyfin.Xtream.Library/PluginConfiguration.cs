@@ -209,6 +209,16 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool EnableChannelNameCleaning { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether channel numbers are prefixed with the category id
+    /// so the guide groups by category (GitHub #86).
+    /// <para>
+    /// Off by default: turning it on renumbers every channel, and Jellyfin keeps the old numbers in
+    /// its own database until the guide is refreshed.
+    /// </para>
+    /// </summary>
+    public bool LiveTvNumberByCategory { get; set; }
+
+    /// <summary>
     /// Gets or sets custom terms to remove from channel names. One term per line.
     /// </summary>
     public string ChannelRemoveTerms { get; set; } = string.Empty;

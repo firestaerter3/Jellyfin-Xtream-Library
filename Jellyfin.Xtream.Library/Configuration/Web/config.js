@@ -338,6 +338,7 @@ const XtreamLibraryConfig = {
 
             // Title cleaning
             document.getElementById('chkEnableChannelNameCleaning').checked = config.EnableChannelNameCleaning !== false;
+            document.getElementById('chkLiveTvNumberByCategory').checked = config.LiveTvNumberByCategory === true;
             document.getElementById('txtChannelRemoveTerms').value = config.ChannelRemoveTerms || '';
 
             // Channel overrides
@@ -422,6 +423,7 @@ const XtreamLibraryConfig = {
 
             // Title cleaning
             config.EnableChannelNameCleaning = document.getElementById('chkEnableChannelNameCleaning').checked;
+            config.LiveTvNumberByCategory = document.getElementById('chkLiveTvNumberByCategory').checked;
             config.ChannelRemoveTerms = document.getElementById('txtChannelRemoveTerms').value;
 
             // Channel overrides
