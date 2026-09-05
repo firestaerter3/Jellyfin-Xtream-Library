@@ -128,6 +128,84 @@ public class ItemIdentityTests
         identity.Source.Should().Be(ItemIdSource.Lookup);
     }
 
+    // Codex review finding: an id the provider confirmed for an item already on disk is proven,
+    // and treating it as Unknown left the regroup action with nothing it was allowed to merge.
+    [Fact]
+    public void AConfirmedProviderId_OutranksReadingItOffTheFolder()
+    {
+        var identity = StrmSyncService.BuildMovieIdentity(
+            "Movie (2024) [tmdbid-1234]",
+            "Movie (2024)",
+            fromExistingFolder: true,
+            NoOverrides,
+            providerTmdbId: 1234,
+            autoLookupTmdbId: null);
+
+        identity.Source.Should().Be(ItemIdSource.Provider, "the provider answered for it this run");
+        identity.TmdbId.Should().Be(1234);
+    }
+
+    // Codex review finding: an incremental run never reaches the loop for an unchanged movie, so
+    // writing an empty identity would erase what an earlier run worked out. One scheduled sync
+    // would then make regrouping impossible.
+    [Fact]
+    public void AnUntouchedMovie_KeepsWhatTheLastRunRecorded()
+    {
+        var previous = new ContentSnapshot();
+        previous.Movies[100] = new MovieSnapshot
+        {
+            StreamId = 100,
+            FolderName = "Movie (2024) [tmdbid-42]",
+            TmdbId = 42,
+            TmdbIdSource = ItemIdSource.Provider,
+        };
+
+        var result = StrmSyncService.EffectiveMovieIdentity(new(), previous, 100);
+
+        result.FolderName.Should().Be("Movie (2024) [tmdbid-42]");
+        result.TmdbId.Should().Be(42);
+        result.Source.Should().Be(ItemIdSource.Provider);
+    }
+
+    [Fact]
+    public void AMovieThisRunHandled_WinsOverTheOlderRecord()
+    {
+        // Including when it resolved to nothing: that is a fresh answer, not a missing one.
+        var previous = new ContentSnapshot();
+        previous.Movies[100] = new MovieSnapshot { StreamId = 100, FolderName = "Old", TmdbId = 42, TmdbIdSource = ItemIdSource.Provider };
+
+        var identities = new System.Collections.Concurrent.ConcurrentDictionary<int, ItemIdentity>();
+        identities[100] = new ItemIdentity("New", null, null, ItemIdSource.None);
+
+        var result = StrmSyncService.EffectiveMovieIdentity(identities, previous, 100);
+
+        result.FolderName.Should().Be("New");
+        result.TmdbId.Should().BeNull();
+        result.Source.Should().Be(ItemIdSource.None);
+    }
+
+    [Fact]
+    public void AMovieNeitherRunKnows_IsSimplyEmpty()
+    {
+        var result = StrmSyncService.EffectiveMovieIdentity(new(), null, 999);
+
+        result.FolderName.Should().BeEmpty();
+        result.TmdbId.Should().BeNull();
+        result.Source.Should().Be(ItemIdSource.None);
+    }
+
+    // Codex review finding: providers send 0 for "no id". Treating it as an id would put every
+    // such film in one folder and then offer that folder for an irreversible merge.
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(-1, false)]
+    [InlineData(1, true)]
+    [InlineData(1234, true)]
+    public void OnlyAPositiveIdIdentifiesSomething(int id, bool usable)
+    {
+        StrmSyncService.IsUsableMetadataId(id).Should().Be(usable);
+    }
+
     [Fact]
     public void TheNewFieldsSurviveTheSnapshotRoundTrip()
     {

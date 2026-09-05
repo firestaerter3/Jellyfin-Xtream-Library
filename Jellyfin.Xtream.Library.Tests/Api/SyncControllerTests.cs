@@ -30,6 +30,9 @@ using Xunit;
 
 namespace Jellyfin.Xtream.Library.Tests.Api;
 
+// Constructs a Plugin, so it has to serialise with the other classes that publish the singleton;
+// without this it races them and Plugin.Instance can vanish mid-test.
+[Collection("PluginSingletonTests")]
 public class SyncControllerTests
 {
     private readonly Mock<IXtreamClient> _mockClient;
@@ -346,4 +349,26 @@ public class SyncControllerTests
     }
 
     #endregion
+    // Codex review finding: unlike the clean-library actions, the regroup endpoint had no guard,
+    // so a scheduled sync could be writing into a folder while the action moved and deleted it.
+    [Fact]
+    public async Task RegroupMovies_RefusesToMoveFilesWhileASyncIsRunning()
+    {
+        var config = Plugin.Instance.Configuration;
+        config.Providers = [new ProviderConfig { Name = "test", BaseUrl = "http://p.test", LibraryPath = Path.GetTempPath() }];
+        _syncService.CurrentProgress.IsRunning = true;
+
+        try
+        {
+            var result = await _controller.RegroupMovies(providerIndex: 0, dryRun: false, CancellationToken.None);
+
+            var bad = result.Result.Should().BeOfType<BadRequestObjectResult>().Subject;
+            bad.Value.Should().BeOfType<string>().Which.Should().Contain("sync is running");
+        }
+        finally
+        {
+            _syncService.CurrentProgress.IsRunning = false;
+        }
+    }
+
 }

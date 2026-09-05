@@ -687,6 +687,13 @@ public class SyncController : ControllerBase
             return BadRequest("Provider has no library path configured");
         }
 
+        // A preview only reads the snapshot, so it stays available. Moving files while a sync is
+        // writing them would leave a half-merged folder behind, so that is refused outright.
+        if (!dryRun && _syncService.CurrentProgress.IsRunning)
+        {
+            return BadRequest("A sync is running. Wait for it to finish, otherwise files would move while the sync is still writing them.");
+        }
+
         var providerKey = SnapshotService.BuildProviderKey(providerIndex, provider.BaseUrl);
         var snapshot = await _snapshotService.LoadLatestSnapshotAsync(providerKey, cancellationToken).ConfigureAwait(false);
         if (snapshot == null)

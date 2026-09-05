@@ -352,6 +352,60 @@ public class StrmNameCollisionTests : IDisposable
         Directory.GetDirectories(Path.Combine(_libraryPath, "Movies")).Should().HaveCount(2);
     }
 
+    // Codex review finding: providers send 0 for "no id". Treating it as an id would collapse
+    // every such film into one folder, and then offer that folder for an irreversible merge.
+    [Fact]
+    public async Task MoviesReportingTmdbIdZero_AreNotGroupedTogether()
+    {
+        VodInfoWithTmdbId(100, "0");
+        VodInfoWithTmdbId(200, "0");
+
+        await RunMovieSyncAsync(
+            [
+                new StreamInfo { StreamId = 100, Name = "Alpha Movie (2024)", ContainerExtension = "mp4" },
+                new StreamInfo { StreamId = 200, Name = "Beta Movie (2024)", ContainerExtension = "mp4" },
+            ],
+            useShippedDefaults: false,
+            groupByTmdbId: true).ConfigureAwait(true);
+
+        Directory.GetDirectories(Path.Combine(_libraryPath, "Movies"))
+            .Should().HaveCount(2, "0 means the provider has no id, not that these are the same film");
+        Directory.Exists(Path.Combine(_libraryPath, "Movies", "Alpha Movie (2024) [tmdbid-0]"))
+            .Should().BeFalse("a folder named after a non-id helps nobody");
+    }
+
+    // Codex review finding: a grouped guest lives in the folder its owner named, so the orphan
+    // protection that looks up the guest's own base name cannot find it. When the owner leaves the
+    // provider's catalogue, cleanup would delete a file the provider still lists.
+    [Fact]
+    public async Task AGroupedGuestSurvivesCleanup_WhenItsOwnerLeavesTheCatalogue()
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(200, "42");
+
+        await RunMovieSyncAsync(
+            [
+                new StreamInfo { StreamId = 100, Name = "Alpha Movie (2024)", ContainerExtension = "mp4" },
+                new StreamInfo { StreamId = 200, Name = "Beta Movie (2024)", ContainerExtension = "mp4" },
+            ],
+            useShippedDefaults: false,
+            groupByTmdbId: true).ConfigureAwait(true);
+
+        var guestFile = Path.Combine(
+            _libraryPath, "Movies", "Alpha Movie (2024) [tmdbid-42]", "Alpha Movie (2024) [tmdbid-42] - 200.strm");
+        File.Exists(guestFile).Should().BeTrue("the first run has to have produced the grouped file");
+
+        // The provider drops Alpha. Beta is unchanged, so an incremental run skips it entirely and
+        // only the orphan protection stands between its file and cleanup.
+        await RunMovieSyncAsync(
+            [new StreamInfo { StreamId = 200, Name = "Beta Movie (2024)", ContainerExtension = "mp4" }],
+            useShippedDefaults: true,
+            groupByTmdbId: true,
+            cleanupOrphans: true).ConfigureAwait(true);
+
+        File.Exists(guestFile).Should().BeTrue("the provider still lists this stream");
+    }
+
     private void VodInfoWithTmdbId(int streamId, string tmdbId)
         => _client.Setup(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), streamId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VodInfoResponse { Info = new VodInfoDetails { TmdbId = tmdbId } });
@@ -359,23 +413,23 @@ public class StrmNameCollisionTests : IDisposable
     private Task<SyncResult> RunMovieSyncAsync(params StreamInfo[] streams)
         => RunMovieSyncAsync(streams, useShippedDefaults: false);
 
-    private async Task<SyncResult> RunMovieSyncAsync(StreamInfo[] streams, bool useShippedDefaults, bool groupByTmdbId = false)
+    private async Task<SyncResult> RunMovieSyncAsync(StreamInfo[] streams, bool useShippedDefaults, bool groupByTmdbId = false, bool cleanupOrphans = false)
     {
         _client.Setup(c => c.GetVodCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Category> { new() { CategoryId = 1, CategoryName = "Movies" } });
         _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<StreamInfo>(streams));
 
-        return await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults, providerCount: 1, groupByTmdbId).ConfigureAwait(true);
+        return await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults, providerCount: 1, groupByTmdbId, cleanupOrphans).ConfigureAwait(true);
     }
 
     private Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults)
         => RunSyncAsync(syncMovies, syncSeries, useShippedDefaults, providerCount: 1);
 
     private Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults, int providerCount)
-        => RunSyncAsync(syncMovies, syncSeries, useShippedDefaults, providerCount, groupByTmdbId: false);
+        => RunSyncAsync(syncMovies, syncSeries, useShippedDefaults, providerCount, groupByTmdbId: false, cleanupOrphans: false);
 
-    private async Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults, int providerCount, bool groupByTmdbId)
+    private async Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults, int providerCount, bool groupByTmdbId, bool cleanupOrphans)
     {
         var appPaths = new Mock<IServerApplicationPaths>();
         appPaths.Setup(p => p.PluginConfigurationsPath).Returns(_libraryPath);
@@ -396,7 +450,7 @@ public class StrmNameCollisionTests : IDisposable
             LibraryPath = _libraryPath,
             SyncMovies = syncMovies,
             SyncSeries = syncSeries,
-            CleanupOrphans = false,
+            CleanupOrphans = cleanupOrphans,
             EnableIncrementalSync = useShippedDefaults,
             SmartSkipExisting = useShippedDefaults,
             DownloadArtworkForUnmatched = false,
