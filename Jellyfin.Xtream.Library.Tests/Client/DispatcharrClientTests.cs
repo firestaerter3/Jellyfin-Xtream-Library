@@ -253,6 +253,37 @@ public class DispatcharrClientTests : IDisposable
     /// <summary>
     /// HTTP handler that delegates to a func for full control.
     /// </summary>
+    // GitHub #83. The token base used to be re-derived from the request URL as scheme://authority,
+    // which silently dropped a path. Dispatcharr behind a reverse proxy on a subpath then had its
+    // data calls routed correctly and its login sent one level too high, where there is no route.
+    [Fact]
+    public async Task TokenRequest_KeepsThePathOfTheBaseUrlItWasGiven()
+    {
+        var requested = new List<string>();
+        var handler = new FuncHttpMessageHandler((request, ct) =>
+        {
+            var url = request.RequestUri!.ToString();
+            requested.Add(url);
+
+            var json = url.Contains("/api/accounts/token/", StringComparison.Ordinal)
+                ? JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })
+                : JsonConvert.SerializeObject(new { id = 42, uuid = "abc-123", name = "Test" });
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json"),
+            });
+        });
+
+        var client = new DispatcharrClient(new HttpClient(handler), _mockLogger.Object);
+        client.Configure("admin", "secret");
+
+        await client.GetMovieDetailAsync("https://proxy.example.com/dispatcharr", 42, CancellationToken.None);
+
+        requested.Should().Contain("https://proxy.example.com/dispatcharr/api/accounts/token/");
+        requested.Should().NotContain(u => u.Equals("https://proxy.example.com/api/accounts/token/", StringComparison.Ordinal));
+    }
+
     private class FuncHttpMessageHandler : HttpMessageHandler
     {
         private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> _handler;

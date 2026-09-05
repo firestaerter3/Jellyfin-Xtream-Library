@@ -1824,10 +1824,10 @@ public partial class StrmSyncService
                     {
                         try
                         {
-                            var detail = await _dispatcharrClient.GetMovieDetailAsync(connectionInfo.BaseUrl, movieEntry.Stream.StreamId, ct).ConfigureAwait(false);
+                            var detail = await _dispatcharrClient.GetMovieDetailAsync(provider.EffectiveDispatcharrBaseUrl, movieEntry.Stream.StreamId, ct).ConfigureAwait(false);
                             if (detail != null && !string.IsNullOrEmpty(detail.Uuid))
                             {
-                                var providers = await _dispatcharrClient.GetMovieProvidersAsync(connectionInfo.BaseUrl, movieEntry.Stream.StreamId, ct).ConfigureAwait(false);
+                                var providers = await _dispatcharrClient.GetMovieProvidersAsync(provider.EffectiveDispatcharrBaseUrl, movieEntry.Stream.StreamId, ct).ConfigureAwait(false);
                                 if (providers.Count > 1)
                                 {
                                     // Deduplicate by stream_id

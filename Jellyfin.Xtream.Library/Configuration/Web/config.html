@@ -633,6 +633,16 @@
                                 </div>
                                 <div id="dispatcharrSettings" style="display: none;">
                                     <div class="inputContainer">
+                                        <label class="inputLabel inputLabelUnfocused" for="txtDispatcharrBaseUrl">Dispatcharr URL</label>
+                                        <input is="emby-input" type="text" id="txtDispatcharrBaseUrl" name="DispatcharrBaseUrl"
+                                            placeholder="http://dispatcharr-host:9191" />
+                                        <div class="fieldDescription">
+                                            Leave empty if Dispatcharr answers on the same address as the Xtream URL above.
+                                            Fill this in when it runs on a different host, port or path, otherwise the login
+                                            is sent to the Xtream server and fails with "JWT login failed with status NotFound".
+                                        </div>
+                                    </div>
+                                    <div class="inputContainer">
                                         <label class="inputLabel inputLabelUnfocused" for="txtDispatcharrApiUser">API Username</label>
                                         <input is="emby-input" type="text" id="txtDispatcharrApiUser" name="DispatcharrApiUser" />
                                         <div class="fieldDescription">

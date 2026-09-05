@@ -208,6 +208,30 @@ public class ProviderConfig
     public bool EnableDispatcharrMode { get; set; }
 
     /// <summary>
+    /// Gets or sets the base URL of the Dispatcharr instance, protocol and port included.
+    /// <para>
+    /// Empty means "the same host as <see cref="BaseUrl"/>", which is what every install did before
+    /// this field existed. Dispatcharr on a different host or port was simply broken: the JWT login
+    /// was posted to the Xtream endpoint, which has no such route and answers 404 (GitHub #83).
+    /// </para>
+    /// </summary>
+    public string DispatcharrBaseUrl { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets the URL Dispatcharr calls actually go to: the dedicated one when set, otherwise the
+    /// Xtream base URL. Any trailing slash is removed, because every caller appends "/api/...".
+    /// A path is kept, so Dispatcharr behind a reverse proxy on a subpath works.
+    /// </summary>
+    public string EffectiveDispatcharrBaseUrl
+    {
+        get
+        {
+            string configured = string.IsNullOrWhiteSpace(DispatcharrBaseUrl) ? BaseUrl : DispatcharrBaseUrl;
+            return (configured ?? string.Empty).Trim().TrimEnd('/');
+        }
+    }
+
+    /// <summary>
     /// Gets or sets the Dispatcharr REST API username.
     /// </summary>
     public string DispatcharrApiUser { get; set; } = string.Empty;

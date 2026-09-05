@@ -160,6 +160,7 @@ const XtreamLibraryConfig = {
         document.getElementById('chkEnableProactiveMediaInfo').checked = p.EnableProactiveMediaInfo || false;
 
         document.getElementById('chkEnableDispatcharrMode').checked = p.EnableDispatcharrMode || false;
+        document.getElementById('txtDispatcharrBaseUrl').value = p.DispatcharrBaseUrl || '';
         document.getElementById('txtDispatcharrApiUser').value = p.DispatcharrApiUser || '';
         document.getElementById('txtDispatcharrApiPass').value = p.DispatcharrApiPass || '';
         self.updateDispatcharrVisibility();
@@ -262,6 +263,7 @@ const XtreamLibraryConfig = {
         p.EnableProactiveMediaInfo = document.getElementById('chkEnableProactiveMediaInfo').checked;
 
         p.EnableDispatcharrMode = document.getElementById('chkEnableDispatcharrMode').checked;
+        p.DispatcharrBaseUrl = document.getElementById('txtDispatcharrBaseUrl').value.trim().replace(/\/$/, '');
         p.DispatcharrApiUser = document.getElementById('txtDispatcharrApiUser').value.trim();
         p.DispatcharrApiPass = document.getElementById('txtDispatcharrApiPass').value.trim();
     },
