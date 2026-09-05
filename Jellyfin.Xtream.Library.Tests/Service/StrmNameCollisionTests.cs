@@ -307,23 +307,98 @@ public class StrmNameCollisionTests : IDisposable
             .Should().HaveCount(1);
     }
 
+    // GitHub #90. Every version of a title (V1/V2/V3) resolves to one folder and therefore to one
+    // "<folder>.nfo", while the STRM files keep their version label and stay distinct. So the STRM
+    // claim never fires here and the NFO write was unguarded: whichever version finished last won,
+    // including a version whose metadata fetch had failed and had nothing to write.
+
+    private const string RaceNfo = "Race Movie (2024).nfo";
+
+    private static StreamInfo RaceVersion(int streamId, string label)
+        => new() { StreamId = streamId, Name = $"Race Movie (2024) - [{label}]", ContainerExtension = "mp4" };
+
+    private string RaceNfoPath => Path.Combine(_libraryPath, "Movies", "Race Movie (2024)", RaceNfo);
+
+    private void VodInfoReturns(int streamId, string plot)
+        => _client.Setup(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), streamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VodInfoResponse { Info = new VodInfoDetails { Plot = plot } });
+
+    private void VodInfoFails(int streamId)
+        => _client.Setup(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), streamId, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("provider refused the info call"));
+
+    [Fact]
+    public async Task AVersionAddedLaterWhoseFetchFails_DoesNotStripTheExistingNfo()
+    {
+        VodInfoReturns(100, "The good plot");
+        VodInfoFails(200);
+
+        await RunMovieSyncAsync([RaceVersion(100, "V1")], useShippedDefaults: false, proactiveMediaInfo: true)
+            .ConfigureAwait(true);
+        (await File.ReadAllTextAsync(RaceNfoPath).ConfigureAwait(true))
+            .Should().Contain("The good plot", "the first run had working metadata");
+
+        // The provider adds V2 later and its info call fails. V2 is the only stream created this
+        // run, so it is the one that reaches the NFO write, with nothing to put in it.
+        await RunMovieSyncAsync([RaceVersion(100, "V1"), RaceVersion(200, "V2")], useShippedDefaults: false, proactiveMediaInfo: true)
+            .ConfigureAwait(true);
+
+        (await File.ReadAllTextAsync(RaceNfoPath).ConfigureAwait(true))
+            .Should().Contain("The good plot", "a failed fetch must not replace an NFO that already had metadata");
+        _log.Should().Contain(l => l.StartsWith("[Warning] Keeping the existing NFO", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TheFailingVersionRunningFirst_StillLeavesTheRichNfo()
+    {
+        // A plain first-writer-wins claim would lock in the empty NFO here, because the version
+        // that cannot fetch anything is the one that takes the path.
+        VodInfoFails(100);
+        VodInfoReturns(200, "The good plot");
+
+        await RunMovieSyncAsync([RaceVersion(100, "V1"), RaceVersion(200, "V2")], useShippedDefaults: false, proactiveMediaInfo: true)
+            .ConfigureAwait(true);
+
+        (await File.ReadAllTextAsync(RaceNfoPath).ConfigureAwait(true))
+            .Should().Contain("The good plot", "the version with real metadata has to win regardless of order");
+    }
+
+    [Fact]
+    public async Task AFailedFetchWithNothingElseKnown_WritesNoNfoAndSaysWhy()
+    {
+        VodInfoFails(100);
+
+        var result = await RunMovieSyncAsync([RaceVersion(100, "V1")], useShippedDefaults: false, proactiveMediaInfo: true)
+            .ConfigureAwait(true);
+
+        // NfoWriter already refuses to write a file with no TMDB id, no media info and no metadata,
+        // so the outcome here is no NFO rather than an empty one. What changed is that the reason is
+        // now visible instead of being logged at Debug.
+        File.Exists(RaceNfoPath).Should().BeFalse("there was nothing to put in it");
+        result.Errors.Should().Be(0, "a provider that will not answer the info call is not a sync failure");
+        _log.Should().Contain(l => l.StartsWith("[Warning] Failed to fetch VOD info for NFO", StringComparison.Ordinal));
+    }
+
     private Task<SyncResult> RunMovieSyncAsync(params StreamInfo[] streams)
         => RunMovieSyncAsync(streams, useShippedDefaults: false);
 
-    private async Task<SyncResult> RunMovieSyncAsync(StreamInfo[] streams, bool useShippedDefaults)
+    private async Task<SyncResult> RunMovieSyncAsync(StreamInfo[] streams, bool useShippedDefaults, bool proactiveMediaInfo = false)
     {
         _client.Setup(c => c.GetVodCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Category> { new() { CategoryId = 1, CategoryName = "Movies" } });
         _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<StreamInfo>(streams));
 
-        return await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults).ConfigureAwait(true);
+        return await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults, providerCount: 1, proactiveMediaInfo).ConfigureAwait(true);
     }
 
     private Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults)
         => RunSyncAsync(syncMovies, syncSeries, useShippedDefaults, providerCount: 1);
 
-    private async Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults, int providerCount)
+    private Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults, int providerCount)
+        => RunSyncAsync(syncMovies, syncSeries, useShippedDefaults, providerCount, proactiveMediaInfo: false);
+
+    private async Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool useShippedDefaults, int providerCount, bool proactiveMediaInfo)
     {
         var appPaths = new Mock<IServerApplicationPaths>();
         appPaths.Setup(p => p.PluginConfigurationsPath).Returns(_libraryPath);
@@ -348,6 +423,7 @@ public class StrmNameCollisionTests : IDisposable
             EnableIncrementalSync = useShippedDefaults,
             SmartSkipExisting = useShippedDefaults,
             DownloadArtworkForUnmatched = false,
+            EnableProactiveMediaInfo = proactiveMediaInfo,
             SyncParallelism = 1,
         }).ToList();
         plugin.Configuration.EnableLiveTv = false;
