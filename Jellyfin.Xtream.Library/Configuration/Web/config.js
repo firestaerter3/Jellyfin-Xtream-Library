@@ -189,7 +189,7 @@ const XtreamLibraryConfig = {
 
         p.BaseUrl = document.getElementById('txtBaseUrl').value.trim().replace(/\/$/, '');
         p.Username = document.getElementById('txtUsername').value.trim();
-        p.Password = document.getElementById('txtPassword').value;
+        p.Password = document.getElementById('txtPassword').value.trim();
         p.UserAgent = document.getElementById('txtUserAgent').value.trim();
         p.LibraryPath = document.getElementById('txtLibraryPath').value.trim();
         p.SyncMovies = document.getElementById('chkSyncMovies').checked;
@@ -263,7 +263,7 @@ const XtreamLibraryConfig = {
 
         p.EnableDispatcharrMode = document.getElementById('chkEnableDispatcharrMode').checked;
         p.DispatcharrApiUser = document.getElementById('txtDispatcharrApiUser').value.trim();
-        p.DispatcharrApiPass = document.getElementById('txtDispatcharrApiPass').value;
+        p.DispatcharrApiPass = document.getElementById('txtDispatcharrApiPass').value.trim();
     },
 
     // Tab switching
@@ -730,7 +730,7 @@ const XtreamLibraryConfig = {
         const credentials = {
             BaseUrl: baseUrl,
             Username: document.getElementById('txtUsername').value.trim(),
-            Password: document.getElementById('txtPassword').value
+            Password: document.getElementById('txtPassword').value.trim()
         };
 
         fetch(ApiClient.getUrl('XtreamLibrary/TestConnection'), {

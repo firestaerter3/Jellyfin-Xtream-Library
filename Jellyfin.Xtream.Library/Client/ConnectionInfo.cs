@@ -21,22 +21,28 @@ namespace Jellyfin.Xtream.Library.Client;
 /// <param name="baseUrl">The base url including protocol and port number, without trailing slash.</param>
 /// <param name="username">The username for authentication.</param>
 /// <param name="password">The password for authentication.</param>
+/// <remarks>
+/// All three values are trimmed. Credentials are interpolated straight into stream URLs, so a
+/// stray space saved with the password produces ".../&lt;password&gt; /12345.mkv" and a 403 on every
+/// item. Trimming here rather than only in the configuration page also repairs configurations
+/// that were already saved with whitespace, without the user having to re-enter anything.
+/// </remarks>
 public class ConnectionInfo(string baseUrl, string username, string password)
 {
     /// <summary>
     /// Gets or sets the base url including protocol and port number, without trailing slash.
     /// </summary>
-    public string BaseUrl { get; set; } = baseUrl;
+    public string BaseUrl { get; set; } = (baseUrl ?? string.Empty).Trim();
 
     /// <summary>
     /// Gets or sets the username for authentication.
     /// </summary>
-    public string UserName { get; set; } = username;
+    public string UserName { get; set; } = (username ?? string.Empty).Trim();
 
     /// <summary>
     /// Gets or sets the password for authentication.
     /// </summary>
-    public string Password { get; set; } = password;
+    public string Password { get; set; } = (password ?? string.Empty).Trim();
 
     /// <inheritdoc />
     public override string ToString() => $"{BaseUrl} {UserName}:***";
