@@ -892,22 +892,26 @@ public partial class StrmSyncService
         _client.RetryDelayMs = provider.RetryDelayMs;
         _client.Timeout = TimeSpan.FromSeconds(provider.TimeoutSeconds);
 
-        // Compute provider key for snapshot directory isolation: "{index}-{urlHash8}"
-        var urlHashBytes = MD5.HashData(Encoding.UTF8.GetBytes(provider.BaseUrl));
-        var providerKey = $"{providerIndex}-{Convert.ToHexString(urlHashBytes)[..8].ToLowerInvariant()}";
+        // Snapshot directory isolation. Shared with the regroup action, which has to find the
+        // same snapshot this sync wrote.
+        var providerKey = SnapshotService.BuildProviderKey(providerIndex, provider.BaseUrl);
 
         // Load previous snapshot for incremental sync
         ContentSnapshot? previousSnapshot = null;
         ContentSnapshot? hintSnapshot = null;
         bool isIncrementalSync = false;
 
-        if (provider.EnableIncrementalSync)
+        if (provider.EnableIncrementalSync || provider.GroupMoviesByTmdbId)
         {
             CurrentProgress.Phase = "Loading snapshot";
-            previousSnapshot = await _snapshotService.LoadLatestSnapshotAsync(providerKey, cancellationToken).ConfigureAwait(false);
+            var loadedSnapshot = await _snapshotService.LoadLatestSnapshotAsync(providerKey, cancellationToken).ConfigureAwait(false);
 
-            // Keep raw snapshot as hint for smart-skip optimization (even during full sync)
-            hintSnapshot = previousSnapshot;
+            // Keep raw snapshot as hint for smart-skip optimization (even during full sync). It is
+            // also the grouping map, which is why it is loaded even with incremental sync off: a
+            // full run that started from nothing would scatter a group that already exists on disk
+            // and then leave the old folder behind as an orphan (codex review).
+            hintSnapshot = loadedSnapshot;
+            previousSnapshot = provider.EnableIncrementalSync ? loadedSnapshot : null;
 
             if (previousSnapshot != null)
             {
@@ -1011,6 +1015,7 @@ public partial class StrmSyncService
                             previousSnapshot,
                             allCollectedMovies,
                             movieIdentities,
+                            hintSnapshot,
                             cancellationToken).ConfigureAwait(false);
                     },
                     cancellationToken));
@@ -1055,6 +1060,7 @@ public partial class StrmSyncService
                     previousSnapshot,
                     allCollectedMovies,
                     movieIdentities,
+                    hintSnapshot,
                     cancellationToken).ConfigureAwait(false);
             }
 
@@ -1240,11 +1246,13 @@ public partial class StrmSyncService
             }
         }
 
-        // Save snapshot for next incremental sync
-        if (provider.EnableIncrementalSync && !cancellationToken.IsCancellationRequested)
+        // Save snapshot for next incremental sync. Grouping needs it too: the snapshot is what
+        // records which folder each stream went to and whether the provider confirmed its id, and
+        // the regroup action has nothing to work from without it (GitHub #88).
+        if ((provider.EnableIncrementalSync || provider.GroupMoviesByTmdbId) && !cancellationToken.IsCancellationRequested)
         {
             CurrentProgress.Phase = "Saving snapshot";
-            await SaveSnapshotAsync(provider, providerKey, allCollectedMovies, allCollectedSeries, allSeriesInfoDict, movieIdentities, seriesIdentities, result.FailedItems, cancellationToken).ConfigureAwait(false);
+            await SaveSnapshotAsync(provider, providerKey, allCollectedMovies, allCollectedSeries, allSeriesInfoDict, movieIdentities, seriesIdentities, hintSnapshot, result.FailedItems, cancellationToken).ConfigureAwait(false);
         }
 
         result.WasIncrementalSync = isIncrementalSync;
@@ -1419,12 +1427,35 @@ public partial class StrmSyncService
         ContentSnapshot? previousSnapshot,
         ConcurrentBag<StreamInfo> allCollectedMovies,
         ConcurrentDictionary<int, ItemIdentity> movieIdentities,
+        ContentSnapshot? groupingHint,
         CancellationToken cancellationToken)
     {
         var connectionInfo = new ConnectionInfo(provider.BaseUrl, provider.Username, provider.Password);
         var globalConfig = Plugin.Instance.Configuration;
         var categories = await _client.GetVodCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
         var processedStreamIds = new ConcurrentDictionary<int, bool>();
+
+        // GitHub #88. Folder each groupable TMDB id lives in. Seeded from the snapshot so the
+        // choice made on an earlier run keeps holding, then extended with ids first seen this run.
+        // Only new movies consult it: nothing already on disk is moved by a sync.
+        bool groupByTmdb = provider.GroupMoviesByTmdbId;
+
+        // Grouping keys on the id the provider returns in get_vod_info, so that call has to happen
+        // even when the name-based metadata lookup is off. Without this, turning grouping on with
+        // lookup off would silently do nothing.
+        bool needProviderTmdbId = globalConfig.EnableMetadataLookup || groupByTmdb;
+        // Keyed by TMDB id, holding the stream that named the folder. Ownership is tracked by
+        // stream id rather than by comparing names: two streams can share a title and a year, and
+        // comparing names would then make neither of them a guest, so both would claim the same
+        // file name and one would be refused (codex review).
+        var groupFolders = new ConcurrentDictionary<int, (int OwnerStreamId, string FolderName)>();
+        if (groupByTmdb)
+        {
+            foreach (var mapped in TmdbGrouping.BuildFolderMap(groupingHint))
+            {
+                groupFolders.TryAdd(mapped.Key, mapped.Value);
+            }
+        }
 
         // Parse folder mappings (category ID → folder names) - only in Multiple folder mode.
         // This has to come before the category filter, because in Multiple folder mode the
@@ -1723,20 +1754,27 @@ public partial class StrmSyncService
 
                     foreach (var targetFolder in targetFolders)
                     {
+                        string movieBasePath = string.IsNullOrEmpty(targetFolder)
+                            ? moviesPath
+                            : Path.Combine(moviesPath, targetFolder);
+
                         if (existingMovieFolders.TryGetValue(targetFolder, out var folderCache) &&
                             folderCache.TryGetValue(baseName, out var existingFolderName))
                         {
-                            string movieBasePath = string.IsNullOrEmpty(targetFolder)
-                                ? moviesPath
-                                : Path.Combine(moviesPath, targetFolder);
-                            string movieFolder = Path.Combine(movieBasePath, existingFolderName);
-                            if (Directory.Exists(movieFolder))
-                            {
-                                foreach (var strmFile in Directory.GetFiles(movieFolder, "*.strm"))
-                                {
-                                    syncedFiles.TryAdd(strmFile, 0);
-                                }
-                            }
+                            ProtectStrmFilesIn(Path.Combine(movieBasePath, existingFolderName), syncedFiles);
+                        }
+
+                        // A grouped guest sits in the folder its owner named, which is not keyed by
+                        // its own base name, so the lookup above cannot find it and cleanup would
+                        // delete a file the provider still lists. The snapshot remembers where the
+                        // file went (GitHub #88). Only the guest's own file is protected: marking
+                        // the whole shared folder would also keep a departed owner's file alive
+                        // forever (codex review).
+                        if (groupingHint != null
+                            && groupingHint.Movies.TryGetValue(m.Stream.StreamId, out var recordedMovie)
+                            && !string.IsNullOrEmpty(recordedMovie.FolderName))
+                        {
+                            ProtectGuestStrmIn(Path.Combine(movieBasePath, recordedMovie.FolderName), m.Stream.StreamId, syncedFiles);
                         }
                     }
                 }
@@ -1752,7 +1790,7 @@ public partial class StrmSyncService
             // Pre-fetch VOD info for new movies that need metadata lookup
             // This bulk phase is much faster than per-movie fetching during processing
             var vodInfoCache = new ConcurrentDictionary<int, VodInfoResponse?>();
-            if (enableMetadataLookup)
+            if (needProviderTmdbId)
             {
                 var moviesToPreFetch = batchMovies.Where(m =>
                 {
@@ -1764,15 +1802,21 @@ public partial class StrmSyncService
                         return false;
                     }
 
-                    // Check if folder already exists (no need to fetch VOD info)
-                    foreach (var targetFolder in m.CategoryIds.SelectMany(cid =>
-                        folderMappings.TryGetValue(cid, out var f) ? f : Enumerable.Empty<string>())
-                        .DefaultIfEmpty(string.Empty))
+                    // Folder already there means nothing left to look up, unless grouping is on:
+                    // the regroup action can only merge folders whose id the provider confirmed,
+                    // so those items have to be fetched too or the button has nothing to work with
+                    // and the "run a full sync first" advice would be a lie (GitHub #88).
+                    if (!groupByTmdb)
                     {
-                        if (existingMovieFolders.TryGetValue(targetFolder, out var fc) &&
-                            fc.ContainsKey(baseName))
+                        foreach (var targetFolder in m.CategoryIds.SelectMany(cid =>
+                            folderMappings.TryGetValue(cid, out var f) ? f : Enumerable.Empty<string>())
+                            .DefaultIfEmpty(string.Empty))
                         {
-                            return false;
+                            if (existingMovieFolders.TryGetValue(targetFolder, out var fc) &&
+                                fc.ContainsKey(baseName))
+                            {
+                                return false;
+                            }
                         }
                     }
 
@@ -1870,6 +1914,43 @@ public partial class StrmSyncService
                 _logger.LogInformation("Found {Count} multi-provider movies in batch {Batch}/{Total}", dispatcharrCache.Count, batchIndex + 1, totalBatches);
             }
 
+            if (groupByTmdb)
+            {
+                // Lowest stream id names the folder, so which of several titles wins does not
+                // depend on how the parallel loop below happened to schedule them.
+                foreach (var candidate in batchMovies.OrderBy(m => m.Stream.StreamId))
+                {
+                    string candidateName = SanitizeFileName(candidate.Stream.Name, provider.CustomTitleRemoveTerms);
+                    int? candidateYear = ExtractYear(candidate.Stream.Name);
+                    string candidateBaseName = candidateYear.HasValue ? $"{candidateName} ({candidateYear})" : candidateName;
+
+                    // An id pinned by hand groups exactly like one the provider gave, so it is
+                    // seeded here too. Ownership has to be settled before any file is written,
+                    // otherwise the owner recorded afterwards can disagree with the names on disk.
+                    int candidateTmdbId;
+                    if (tmdbOverrides.TryGetValue(candidateBaseName, out int pinnedCandidateId))
+                    {
+                        candidateTmdbId = pinnedCandidateId;
+                    }
+                    else if (!vodInfoCache.TryGetValue(candidate.Stream.StreamId, out var candidateInfo)
+                        || string.IsNullOrEmpty(candidateInfo?.Info?.TmdbId)
+                        || !int.TryParse(candidateInfo.Info.TmdbId, out candidateTmdbId))
+                    {
+                        continue;
+                    }
+
+                    if (!IsUsableMetadataId(candidateTmdbId))
+                    {
+                        continue;
+                    }
+
+                    groupFolders.TryAdd(
+                        candidateTmdbId,
+                        (candidate.Stream.StreamId,
+                         BuildMovieFolderName(candidateName, candidateYear, tmdbOverrides, candidateTmdbId, null)));
+                }
+            }
+
             CurrentProgress.MoviePhase = $"Syncing Movies (batch {batchIndex + 1}/{totalBatches})";
             CurrentProgress.AddTotalItems(batchMovies.Count);
 
@@ -1932,14 +2013,88 @@ public partial class StrmSyncService
                     int? autoLookupTmdbId = null;
                     string folderName;
 
+                    // True when this stream is a guest in a folder another title named. Its files
+                    // then carry the stream id, so which of the two gets renamed does not depend on
+                    // the order the parallel loop happened to run them in, and does not swap over
+                    // between syncs (GitHub #88).
+                    bool joinedGroupFolder = false;
+                    int? groupOwnerStreamId = null;
+
                     if (existingFolderName != null)
                     {
                         folderName = existingFolderName;
+
+                        // The folder stays exactly where it is: a sync never moves anything. What
+                        // this does is confirm the provider's id so the regroup action can later
+                        // merge this folder on the user's say-so (GitHub #88).
+                        if (groupByTmdb && !tmdbOverrides.ContainsKey(baseName))
+                        {
+                            if (!vodInfoCache.TryGetValue(stream.StreamId, out vodInfo))
+                            {
+                                try
+                                {
+                                    vodInfo = await _client.GetVodInfoAsync(connectionInfo, stream.StreamId, ct).ConfigureAwait(false);
+                                }
+                                catch (OperationCanceledException)
+                                {
+                                    throw;
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogDebug(ex, "Failed to confirm provider TMDB id for existing folder: {StreamId}", stream.StreamId);
+                                }
+                            }
+
+                            if (!string.IsNullOrEmpty(vodInfo?.Info?.TmdbId)
+                                && int.TryParse(vodInfo.Info.TmdbId, out int existingTmdbId)
+                                && IsUsableMetadataId(existingTmdbId))
+                            {
+                                providerTmdbId = existingTmdbId;
+                            }
+                        }
+
+                        // Two grouped streams can share a title, which means both find the same
+                        // folder here and neither would count as a guest, so both would build the
+                        // plain file name and one would be refused as a collision. Membership is
+                        // restored from the recorded owner so the guest keeps its own file name on
+                        // every later run (codex review).
+                        if (groupByTmdb)
+                        {
+                            int? existingGroupId = tmdbOverrides.TryGetValue(baseName, out int pinnedExistingId)
+                                ? pinnedExistingId
+                                : providerTmdbId;
+
+                            // The provider can simply fail to answer for a moment. Letting that
+                            // dissolve a group that already exists would put the guest back on the
+                            // plain file name, collide it with its owner, and downgrade its record
+                            // to unproven, after which cleanup could take its file. A group the
+                            // provider confirmed earlier stands until it says otherwise.
+                            if (!existingGroupId.HasValue
+                                && groupingHint != null
+                                && groupingHint.Movies.TryGetValue(stream.StreamId, out var recordedIdentity)
+                                && recordedIdentity.TmdbId.HasValue
+                                && TmdbGrouping.IsGroupable(recordedIdentity.TmdbIdSource))
+                            {
+                                existingGroupId = recordedIdentity.TmdbId;
+                                providerTmdbId = recordedIdentity.TmdbId;
+                            }
+
+                            if (existingGroupId.HasValue
+                                && IsUsableMetadataId(existingGroupId.Value)
+                                && groupFolders.TryGetValue(existingGroupId.Value, out var recordedGroup)
+                                && string.Equals(recordedGroup.FolderName, folderName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                joinedGroupFolder = recordedGroup.OwnerStreamId != stream.StreamId;
+                                groupOwnerStreamId = recordedGroup.OwnerStreamId;
+                            }
+                        }
                     }
                     else
                     {
-                        // New movie - get provider TMDB ID from pre-fetched cache
-                        if (enableMetadataLookup && !tmdbOverrides.ContainsKey(baseName))
+                        // New movie - get provider TMDB ID from pre-fetched cache. Gated on the
+                        // wider flag: the name lookup below still needs enableMetadataLookup, but
+                        // the provider's own id is also what grouping keys on.
+                        if (needProviderTmdbId && !tmdbOverrides.ContainsKey(baseName))
                         {
                             if (vodInfoCache.TryGetValue(stream.StreamId, out var cachedInfo))
                             {
@@ -1957,7 +2112,9 @@ public partial class StrmSyncService
                                 }
                             }
 
-                            if (!string.IsNullOrEmpty(vodInfo?.Info?.TmdbId) && int.TryParse(vodInfo.Info.TmdbId, out int tmdbParsed))
+                            if (!string.IsNullOrEmpty(vodInfo?.Info?.TmdbId)
+                                && int.TryParse(vodInfo.Info.TmdbId, out int tmdbParsed)
+                                && IsUsableMetadataId(tmdbParsed))
                             {
                                 providerTmdbId = tmdbParsed;
                             }
@@ -1986,6 +2143,20 @@ public partial class StrmSyncService
                         }
 
                         folderName = BuildMovieFolderName(movieName, year, tmdbOverrides, providerTmdbId, autoLookupTmdbId);
+
+                        // Group on an id the provider gave or the user pinned, never on one a name
+                        // lookup guessed: a lookup can hand a film and its remake the same id.
+                        int? groupableTmdbId = tmdbOverrides.TryGetValue(baseName, out int pinnedTmdbId)
+                            ? pinnedTmdbId
+                            : providerTmdbId;
+
+                        if (groupByTmdb && groupableTmdbId.HasValue && IsUsableMetadataId(groupableTmdbId.Value))
+                        {
+                            var group = groupFolders.GetOrAdd(groupableTmdbId.Value, (stream.StreamId, folderName));
+                            joinedGroupFolder = group.OwnerStreamId != stream.StreamId;
+                            groupOwnerStreamId = group.OwnerStreamId;
+                            folderName = group.FolderName;
+                        }
                     }
 
                     movieIdentities[stream.StreamId] = BuildMovieIdentity(
@@ -1994,7 +2165,7 @@ public partial class StrmSyncService
                         existingFolderName != null,
                         tmdbOverrides,
                         providerTmdbId,
-                        autoLookupTmdbId);
+                        autoLookupTmdbId) with { GroupOwnerStreamId = groupOwnerStreamId };
 
                     // Build STRM URLs and filenames — Dispatcharr multi-stream or standard single-stream
                     var strmEntries = new List<(string StreamUrl, string StrmFileName)>();
@@ -2036,8 +2207,6 @@ public partial class StrmSyncService
                         {
                         string strmPath = Path.Combine(movieFolder, strmFileName);
 
-                        syncedFiles.TryAdd(strmPath, 0);
-
                         // TryAdd fails when another stream in this run already wrote this exact
                         // path. The name is built from the folder name and the version label only,
                         // so two streams sharing a title and a quality tag produce the same one.
@@ -2045,6 +2214,21 @@ public partial class StrmSyncService
                         // File.Exists branch below compares content against a URL that embeds the
                         // stream id, so it can never match across two streams and always falls
                         // through to the overwrite. Refuse instead, and count it.
+                        // A guest in someone else's folder takes its file name from that folder, so
+                        // it would collide with the title that named it. That is the feature working,
+                        // not a provider quirk: keep both and tell them apart by stream id. The
+                        // owner keeps the plain name, so neither file is renamed on a later sync.
+                        if (joinedGroupFolder)
+                        {
+                            string groupedName = $"{Path.GetFileNameWithoutExtension(strmFileName)} - {stream.StreamId}{Path.GetExtension(strmFileName)}";
+                            strmPath = Path.Combine(movieFolder, groupedName);
+                        }
+
+                        // Only now, once the final name is known. Protecting the pre-rename path
+                        // would mark the folder owner's file as still wanted by a guest, so a
+                        // departed owner's file would never be cleaned up (codex review).
+                        syncedFiles.TryAdd(strmPath, 0);
+
                         if (!claimedPaths.TryAdd(strmPath, 0))
                         {
                             Interlocked.Increment(ref nameCollisions);
@@ -3855,23 +4039,25 @@ public partial class StrmSyncService
         int? providerTmdbId,
         int? autoLookupTmdbId)
     {
-        if (fromExistingFolder)
-        {
-            // The folder is the only record left, and it does not say where its id came from.
-            // That matters: grouping may only merge ids the provider supplied, never ones a name
-            // lookup guessed, so this stays unproven until a sync resolves the item again.
-            int? diskTmdbId = FolderIdentity.TryParseTmdbId(folderName, out int parsedTmdbId) ? parsedTmdbId : null;
-            return new ItemIdentity(folderName, diskTmdbId, null, ItemIdSource.Unknown);
-        }
-
         if (overrides.TryGetValue(baseName, out int overrideTmdbId))
         {
             return new ItemIdentity(folderName, overrideTmdbId, null, ItemIdSource.Override);
         }
 
+        // Ahead of the folder-name fallback on purpose: an item already on disk whose id the
+        // provider confirmed this run is proven, and refusing to say so is what would leave the
+        // regroup action with nothing to merge.
         if (providerTmdbId.HasValue)
         {
             return new ItemIdentity(folderName, providerTmdbId, null, ItemIdSource.Provider);
+        }
+
+        if (fromExistingFolder)
+        {
+            // Nothing confirmed it this run, so the folder name is all there is, and it does not
+            // say where its id came from. Unproven until a sync resolves the item again.
+            int? diskTmdbId = FolderIdentity.TryParseTmdbId(folderName, out int parsedTmdbId) ? parsedTmdbId : null;
+            return new ItemIdentity(folderName, diskTmdbId, null, ItemIdSource.Unknown);
         }
 
         if (autoLookupTmdbId.HasValue)
@@ -3915,6 +4101,110 @@ public partial class StrmSyncService
 
         return new ItemIdentity(folderName, null, null, ItemIdSource.None);
     }
+
+    /// <summary>
+    /// Marks one grouped stream's own STRM as still wanted. Its file carries the stream id, so the
+    /// files its folder-mates own are deliberately left to answer for themselves.
+    /// </summary>
+    /// <param name="folder">Shared folder to look in. Missing folders are ignored.</param>
+    /// <param name="streamId">The stream whose file should survive cleanup.</param>
+    /// <param name="syncedFiles">The run's set of files that must survive cleanup.</param>
+    private static void ProtectGuestStrmIn(string folder, int streamId, ConcurrentDictionary<string, byte> syncedFiles)
+    {
+        if (!Directory.Exists(folder))
+        {
+            return;
+        }
+
+        string suffix = $" - {streamId}.strm";
+        foreach (var strmFile in Directory.GetFiles(folder, "*.strm"))
+        {
+            if (Path.GetFileName(strmFile).EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                syncedFiles.TryAdd(strmFile, 0);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Marks every STRM in a folder as still wanted, so orphan cleanup leaves it alone.
+    /// </summary>
+    /// <param name="folder">Folder to protect. Missing folders are ignored.</param>
+    /// <param name="syncedFiles">The run's set of files that must survive cleanup.</param>
+    private static void ProtectStrmFilesIn(string folder, ConcurrentDictionary<string, byte> syncedFiles)
+    {
+        if (!Directory.Exists(folder))
+        {
+            return;
+        }
+
+        foreach (var strmFile in Directory.GetFiles(folder, "*.strm"))
+        {
+            syncedFiles.TryAdd(strmFile, 0);
+        }
+    }
+
+    /// <summary>
+    /// What to record for a movie: what this run worked out, or what the last run recorded when
+    /// this run never looked at the item (GitHub #88).
+    /// </summary>
+    /// <param name="identities">Identities resolved during this run.</param>
+    /// <param name="previousSnapshot">Snapshot from the previous run, may be null.</param>
+    /// <param name="streamId">Stream to look up.</param>
+    /// <returns>Folder, id and where the id came from.</returns>
+    internal static (string FolderName, int? TmdbId, ItemIdSource Source, int? GroupOwnerStreamId) EffectiveMovieIdentity(
+        ConcurrentDictionary<int, ItemIdentity> identities,
+        ContentSnapshot? previousSnapshot,
+        int streamId)
+    {
+        // A stream this run handled wins outright, including when it resolved to no id: that is a
+        // fresh answer, not a missing one.
+        if (identities.TryGetValue(streamId, out var identity))
+        {
+            return (identity.FolderName, identity.TmdbId, identity.Source, identity.GroupOwnerStreamId);
+        }
+
+        if (previousSnapshot != null && previousSnapshot.Movies.TryGetValue(streamId, out var earlier))
+        {
+            return (earlier.FolderName, earlier.TmdbId, earlier.TmdbIdSource, earlier.GroupOwnerStreamId);
+        }
+
+        return (string.Empty, null, ItemIdSource.None, null);
+    }
+
+    /// <summary>
+    /// The series equivalent of <see cref="EffectiveMovieIdentity"/>.
+    /// </summary>
+    /// <param name="identities">Identities resolved during this run.</param>
+    /// <param name="previousSnapshot">Snapshot from the previous run, may be null.</param>
+    /// <param name="seriesId">Series to look up.</param>
+    /// <returns>Folder, ids and where they came from.</returns>
+    internal static (string FolderName, int? TmdbId, int? TvdbId, ItemIdSource Source) EffectiveSeriesIdentity(
+        ConcurrentDictionary<int, ItemIdentity> identities,
+        ContentSnapshot? previousSnapshot,
+        int seriesId)
+    {
+        if (identities.TryGetValue(seriesId, out var identity))
+        {
+            return (identity.FolderName, identity.TmdbId, identity.TvdbId, identity.Source);
+        }
+
+        if (previousSnapshot != null && previousSnapshot.Series.TryGetValue(seriesId, out var earlier))
+        {
+            return (earlier.FolderName, earlier.TmdbId, earlier.TvdbId, earlier.IdSource);
+        }
+
+        return (string.Empty, null, null, ItemIdSource.None);
+    }
+
+    /// <summary>
+    /// Whether a metadata id is worth acting on. Providers routinely send 0 for "no id", and a
+    /// grouping feature that treats 0 as an id would put every such film in one folder and then
+    /// offer that folder for an irreversible merge (GitHub #88).
+    /// </summary>
+    /// <param name="id">The id as the provider reported it.</param>
+    /// <returns>True when the id identifies something.</returns>
+    internal static bool IsUsableMetadataId(int id) => id > 0;
 
     /// <summary>
     /// Builds a movie folder name, optionally with TMDb ID suffix.
@@ -4204,6 +4494,7 @@ public partial class StrmSyncService
         ConcurrentDictionary<int, SeriesStreamInfo> seriesInfoDict,
         ConcurrentDictionary<int, ItemIdentity> movieIdentities,
         ConcurrentDictionary<int, ItemIdentity> seriesIdentities,
+        ContentSnapshot? carryForwardFrom,
         IReadOnlyList<FailedItem> failedItems,
         CancellationToken cancellationToken)
     {
@@ -4221,12 +4512,31 @@ public partial class StrmSyncService
                 ConfigFingerprint = SnapshotService.CalculateConfigFingerprint(provider, Plugin.Instance.Configuration.EnableMetadataLookup)
             };
 
+            // Movies were not synced this run, so allMovies is empty and rebuilding from it would
+            // drop every identity the previous run recorded, taking the grouping map with it.
+            if (!provider.SyncMovies && carryForwardFrom != null)
+            {
+                foreach (var carried in carryForwardFrom.Movies)
+                {
+                    snapshot.Movies[carried.Key] = carried.Value;
+                }
+            }
+
+            if (!provider.SyncSeries && carryForwardFrom != null)
+            {
+                foreach (var carried in carryForwardFrom.Series)
+                {
+                    snapshot.Series[carried.Key] = carried.Value;
+                }
+            }
+
             // Build movie snapshots
             var processedMovieIds = new HashSet<int>();
             foreach (var movie in allMovies)
             {
                 if (processedMovieIds.Add(movie.StreamId) && !failedMovieIds.Contains(movie.StreamId))
                 {
+                    var movieIdentity = EffectiveMovieIdentity(movieIdentities, carryForwardFrom, movie.StreamId);
                     snapshot.Movies[movie.StreamId] = new MovieSnapshot
                     {
                         StreamId = movie.StreamId,
@@ -4236,11 +4546,17 @@ public partial class StrmSyncService
                         CategoryId = movie.CategoryId ?? 0,
                         Added = movie.Added,
                         Checksum = SnapshotService.CalculateChecksum(movie),
-                        FolderName = movieIdentities.TryGetValue(movie.StreamId, out var movieIdentity)
-                            ? movieIdentity.FolderName
-                            : string.Empty,
-                        TmdbId = movieIdentity?.TmdbId,
-                        TmdbIdSource = movieIdentity?.Source ?? ItemIdSource.None
+
+                        // An incremental run never reaches the loop for an unchanged movie, so it
+                        // has no identity to record. Writing empty here would erase what an earlier
+                        // run worked out, and one scheduled sync would silently make regrouping
+                        // impossible (GitHub #88). Carry the previous record forward instead. A
+                        // stream the loop DID handle wins outright, including when it resolved to
+                        // no id at all, because that is a fresh answer rather than a missing one.
+                        FolderName = movieIdentity.FolderName,
+                        TmdbId = movieIdentity.TmdbId,
+                        TmdbIdSource = movieIdentity.Source,
+                        GroupOwnerStreamId = movieIdentity.GroupOwnerStreamId
                     };
                 }
             }
@@ -4257,6 +4573,7 @@ public partial class StrmSyncService
                         episodeCount = info.Episodes.Values.Sum(eps => eps.Count);
                     }
 
+                    var seriesIdentity = EffectiveSeriesIdentity(seriesIdentities, carryForwardFrom, series.SeriesId);
                     snapshot.Series[series.SeriesId] = new SeriesSnapshot
                     {
                         SeriesId = series.SeriesId,
@@ -4266,12 +4583,12 @@ public partial class StrmSyncService
                         EpisodeCount = episodeCount,
                         LastModified = series.LastModified.GetValueOrDefault(),
                         Checksum = SnapshotService.CalculateChecksum(series, episodeCount),
-                        FolderName = seriesIdentities.TryGetValue(series.SeriesId, out var seriesIdentity)
-                            ? seriesIdentity.FolderName
-                            : string.Empty,
-                        TmdbId = seriesIdentity?.TmdbId,
-                        TvdbId = seriesIdentity?.TvdbId,
-                        IdSource = seriesIdentity?.Source ?? ItemIdSource.None
+
+                        // Same carry-forward as movies: a skipped series has no identity this run.
+                        FolderName = seriesIdentity.FolderName,
+                        TmdbId = seriesIdentity.TmdbId,
+                        TvdbId = seriesIdentity.TvdbId,
+                        IdSource = seriesIdentity.Source
                     };
                 }
             }

@@ -30,6 +30,9 @@ using Xunit;
 
 namespace Jellyfin.Xtream.Library.Tests.Api;
 
+// Constructs a Plugin, so it has to serialise with the other classes that publish the singleton;
+// without this it races them and Plugin.Instance can vanish mid-test.
+[Collection("PluginSingletonTests")]
 public class SyncControllerTests
 {
     private readonly Mock<IXtreamClient> _mockClient;
@@ -276,7 +279,7 @@ public class SyncControllerTests
                 mockDispatcharrClient.Object,
                 _mockMetadataLookup.Object,
                 snapshotService,
-                appPathsMock.Object,
+                    appPathsMock.Object,
                 _mockControllerLogger.Object);
 
             // Act
