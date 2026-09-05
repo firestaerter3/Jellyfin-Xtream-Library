@@ -899,13 +899,17 @@ public partial class StrmSyncService
         ContentSnapshot? hintSnapshot = null;
         bool isIncrementalSync = false;
 
-        if (provider.EnableIncrementalSync)
+        if (provider.EnableIncrementalSync || provider.GroupMoviesByTmdbId)
         {
             CurrentProgress.Phase = "Loading snapshot";
-            previousSnapshot = await _snapshotService.LoadLatestSnapshotAsync(providerKey, cancellationToken).ConfigureAwait(false);
+            var loadedSnapshot = await _snapshotService.LoadLatestSnapshotAsync(providerKey, cancellationToken).ConfigureAwait(false);
 
-            // Keep raw snapshot as hint for smart-skip optimization (even during full sync)
-            hintSnapshot = previousSnapshot;
+            // Keep raw snapshot as hint for smart-skip optimization (even during full sync). It is
+            // also the grouping map, which is why it is loaded even with incremental sync off: a
+            // full run that started from nothing would scatter a group that already exists on disk
+            // and then leave the old folder behind as an orphan (codex review).
+            hintSnapshot = loadedSnapshot;
+            previousSnapshot = provider.EnableIncrementalSync ? loadedSnapshot : null;
 
             if (previousSnapshot != null)
             {
@@ -1009,6 +1013,7 @@ public partial class StrmSyncService
                             previousSnapshot,
                             allCollectedMovies,
                             movieIdentities,
+                            hintSnapshot,
                             cancellationToken).ConfigureAwait(false);
                     },
                     cancellationToken));
@@ -1053,6 +1058,7 @@ public partial class StrmSyncService
                     previousSnapshot,
                     allCollectedMovies,
                     movieIdentities,
+                    hintSnapshot,
                     cancellationToken).ConfigureAwait(false);
             }
 
@@ -1419,6 +1425,7 @@ public partial class StrmSyncService
         ContentSnapshot? previousSnapshot,
         ConcurrentBag<StreamInfo> allCollectedMovies,
         ConcurrentDictionary<int, ItemIdentity> movieIdentities,
+        ContentSnapshot? groupingHint,
         CancellationToken cancellationToken)
     {
         var connectionInfo = new ConnectionInfo(provider.BaseUrl, provider.Username, provider.Password);
@@ -1442,7 +1449,7 @@ public partial class StrmSyncService
         var groupFolders = new ConcurrentDictionary<int, (int OwnerStreamId, string FolderName)>();
         if (groupByTmdb)
         {
-            foreach (var mapped in TmdbGrouping.BuildFolderMap(previousSnapshot))
+            foreach (var mapped in TmdbGrouping.BuildFolderMap(groupingHint))
             {
                 groupFolders.TryAdd(mapped.Key, mapped.Value);
             }
@@ -1755,15 +1762,17 @@ public partial class StrmSyncService
                             ProtectStrmFilesIn(Path.Combine(movieBasePath, existingFolderName), syncedFiles);
                         }
 
-                        // A grouped stream sits in the folder its group owner named, which is not
-                        // keyed by this stream's own base name, so the lookup above cannot find it
-                        // and cleanup would delete a file the provider still lists. The snapshot
-                        // remembers where the file actually went (GitHub #88).
-                        if (previousSnapshot != null
-                            && previousSnapshot.Movies.TryGetValue(m.Stream.StreamId, out var recordedMovie)
+                        // A grouped guest sits in the folder its owner named, which is not keyed by
+                        // its own base name, so the lookup above cannot find it and cleanup would
+                        // delete a file the provider still lists. The snapshot remembers where the
+                        // file went (GitHub #88). Only the guest's own file is protected: marking
+                        // the whole shared folder would also keep a departed owner's file alive
+                        // forever (codex review).
+                        if (groupingHint != null
+                            && groupingHint.Movies.TryGetValue(m.Stream.StreamId, out var recordedMovie)
                             && !string.IsNullOrEmpty(recordedMovie.FolderName))
                         {
-                            ProtectStrmFilesIn(Path.Combine(movieBasePath, recordedMovie.FolderName), syncedFiles);
+                            ProtectGuestStrmIn(Path.Combine(movieBasePath, recordedMovie.FolderName), m.Stream.StreamId, syncedFiles);
                         }
                     }
                 }
@@ -2143,8 +2152,6 @@ public partial class StrmSyncService
                         {
                         string strmPath = Path.Combine(movieFolder, strmFileName);
 
-                        syncedFiles.TryAdd(strmPath, 0);
-
                         // TryAdd fails when another stream in this run already wrote this exact
                         // path. The name is built from the folder name and the version label only,
                         // so two streams sharing a title and a quality tag produce the same one.
@@ -2160,8 +2167,12 @@ public partial class StrmSyncService
                         {
                             string groupedName = $"{Path.GetFileNameWithoutExtension(strmFileName)} - {stream.StreamId}{Path.GetExtension(strmFileName)}";
                             strmPath = Path.Combine(movieFolder, groupedName);
-                            syncedFiles.TryAdd(strmPath, 0);
                         }
+
+                        // Only now, once the final name is known. Protecting the pre-rename path
+                        // would mark the folder owner's file as still wanted by a guest, so a
+                        // departed owner's file would never be cleaned up (codex review).
+                        syncedFiles.TryAdd(strmPath, 0);
 
                         if (!claimedStrmPaths.TryAdd(strmPath, 0))
                         {
@@ -3975,6 +3986,30 @@ public partial class StrmSyncService
         }
 
         return new ItemIdentity(folderName, null, null, ItemIdSource.None);
+    }
+
+    /// <summary>
+    /// Marks one grouped stream's own STRM as still wanted. Its file carries the stream id, so the
+    /// files its folder-mates own are deliberately left to answer for themselves.
+    /// </summary>
+    /// <param name="folder">Shared folder to look in. Missing folders are ignored.</param>
+    /// <param name="streamId">The stream whose file should survive cleanup.</param>
+    /// <param name="syncedFiles">The run's set of files that must survive cleanup.</param>
+    private static void ProtectGuestStrmIn(string folder, int streamId, ConcurrentDictionary<string, byte> syncedFiles)
+    {
+        if (!Directory.Exists(folder))
+        {
+            return;
+        }
+
+        string suffix = $" - {streamId}.strm";
+        foreach (var strmFile in Directory.GetFiles(folder, "*.strm"))
+        {
+            if (Path.GetFileName(strmFile).EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                syncedFiles.TryAdd(strmFile, 0);
+            }
+        }
     }
 
     /// <summary>

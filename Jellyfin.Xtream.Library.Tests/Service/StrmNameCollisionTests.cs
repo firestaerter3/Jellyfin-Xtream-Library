@@ -404,6 +404,12 @@ public class StrmNameCollisionTests : IDisposable
             cleanupOrphans: true).ConfigureAwait(true);
 
         File.Exists(guestFile).Should().BeTrue("the provider still lists this stream");
+
+        // The other half of the same rule: only the guest's own file is spared. Protecting the
+        // whole shared folder would keep the departed owner's file in the library forever.
+        File.Exists(Path.Combine(
+            _libraryPath, "Movies", "Alpha Movie (2024) [tmdbid-42]", "Alpha Movie (2024) [tmdbid-42].strm"))
+            .Should().BeFalse("the provider stopped listing that stream");
     }
 
     // Codex review finding: two streams can share a title and a year. Deciding who owns the folder
