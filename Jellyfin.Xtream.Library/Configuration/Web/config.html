@@ -717,6 +717,36 @@
                                     Enable syncing of movies and VOD content.
                                 </div>
                             </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkGroupMoviesByTmdbId" name="GroupMoviesByTmdbId" />
+                                    <span>Group movies with the same TMDB id into one folder</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Providers often carry the same film several times, in different qualities or
+                                    languages. With this on, copies your provider reports under the same TMDB id are
+                                    written to one folder, so Jellyfin shows them as versions of one film instead of
+                                    separate entries.
+                                    <br />
+                                    Only ids your provider supplies are grouped. An id found by searching on the title
+                                    is left alone, because a search can give a film and its remake the same id.
+                                    <br />
+                                    This applies to newly synced movies. Folders already on your disk are only moved
+                                    when you press the button below.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <button is="emby-button" type="button" id="btnRegroupMovies" class="raised">
+                                    <span>Group existing movies now</span>
+                                </button>
+                                <div class="fieldDescription">
+                                    Shows what it would move first, and asks before touching anything. Moving a film
+                                    to a different folder means Jellyfin sees it as a new item, so watched status and
+                                    any artwork you added by hand can be lost. Run a full sync first, otherwise films
+                                    whose id has not been confirmed by your provider yet are left out.
+                                </div>
+                                <div id="regroupStatus" style="margin-top: 8px;"></div>
+                            </div>
                         </div>
 
                         <div class="verticalSection">

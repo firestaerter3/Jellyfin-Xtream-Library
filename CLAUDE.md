@@ -202,6 +202,7 @@ landing somewhere it should not:
 | `/XtreamLibrary/Streams/Vod` | GET | Fetch movies in a VOD category (`?categoryId=&providerIndex=`) |
 | `/XtreamLibrary/Series/List` | GET | Fetch series in a Series category (`?categoryId=&providerIndex=`) |
 | `/XtreamLibrary/RetryFailed` | POST | Retry failed items from last sync |
+| `/XtreamLibrary/RegroupMovies` | POST | Merge movie folders sharing a TMDB id (`?providerIndex=&dryRun=`) |
 | `/XtreamLibrary/CleanMovies` | POST | Delete all Movies library content |
 | `/XtreamLibrary/CleanSeries` | POST | Delete all Series library content |
 | `/XtreamLibrary/ClearMetadataCache` | POST | Clear metadata lookup cache |

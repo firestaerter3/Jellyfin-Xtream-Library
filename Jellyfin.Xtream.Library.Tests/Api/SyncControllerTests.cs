@@ -75,6 +75,7 @@ public class SyncControllerTests
             mockDispatcharrClient.Object,
             _mockMetadataLookup.Object,
             snapshotService,
+            new TmdbRegroupService(NullLogger<TmdbRegroupService>.Instance),
             appPathsMock.Object,
             _mockControllerLogger.Object);
     }
@@ -276,6 +277,7 @@ public class SyncControllerTests
                 mockDispatcharrClient.Object,
                 _mockMetadataLookup.Object,
                 snapshotService,
+                new TmdbRegroupService(NullLogger<TmdbRegroupService>.Instance),
                 appPathsMock.Object,
                 _mockControllerLogger.Object);
 

@@ -160,6 +160,7 @@ const XtreamLibraryConfig = {
         document.getElementById('chkEnableProactiveMediaInfo').checked = p.EnableProactiveMediaInfo || false;
 
         document.getElementById('chkEnableDispatcharrMode').checked = p.EnableDispatcharrMode || false;
+        document.getElementById('chkGroupMoviesByTmdbId').checked = p.GroupMoviesByTmdbId === true;
         document.getElementById('txtDispatcharrApiUser').value = p.DispatcharrApiUser || '';
         document.getElementById('txtDispatcharrApiPass').value = p.DispatcharrApiPass || '';
         self.updateDispatcharrVisibility();
@@ -262,6 +263,7 @@ const XtreamLibraryConfig = {
         p.EnableProactiveMediaInfo = document.getElementById('chkEnableProactiveMediaInfo').checked;
 
         p.EnableDispatcharrMode = document.getElementById('chkEnableDispatcharrMode').checked;
+        p.GroupMoviesByTmdbId = document.getElementById('chkGroupMoviesByTmdbId').checked;
         p.DispatcharrApiUser = document.getElementById('txtDispatcharrApiUser').value.trim();
         p.DispatcharrApiPass = document.getElementById('txtDispatcharrApiPass').value.trim();
     },
@@ -1953,6 +1955,52 @@ const XtreamLibraryConfig = {
         });
     },
 
+    regroupMovies: function () {
+        const statusDiv = document.getElementById('regroupStatus');
+        const providerIndex = this.activeProviderIndex;
+
+        statusDiv.innerHTML = '<span style="color: orange;">Checking what would move...</span>';
+
+        // Preview first. Nothing is touched until the numbers have been shown and accepted.
+        this.callRegroup(providerIndex, true).then(function (preview) {
+            if (!preview.GroupsMerged) {
+                statusDiv.innerHTML = '<span>Nothing to group. '
+                    + (preview.ItemsWithUnprovenId
+                        ? preview.ItemsWithUnprovenId + ' movies have an id that has not been confirmed by the provider yet, run a full sync first.'
+                        : 'Every film your provider reports an id for already sits in one folder.')
+                    + '</span>';
+                return null;
+            }
+
+            const summary = preview.GroupsMerged + ' films would be merged, moving '
+                + preview.FilesMoved + ' files out of ' + preview.FoldersMerged + ' folders.';
+
+            if (!confirm(summary + '\n\nJellyfin sees a moved film as a new item, so watched status and hand-added artwork can be lost.\n\nGo ahead?')) {
+                statusDiv.innerHTML = '<span>Cancelled. Nothing was moved.</span>';
+                return null;
+            }
+
+            statusDiv.innerHTML = '<span style="color: orange;">Moving...</span>';
+            return XtreamLibraryConfig.callRegroup(providerIndex, false).then(function (applied) {
+                statusDiv.innerHTML = '<span style="color: green;">Merged ' + applied.GroupsMerged + ' films, moved '
+                    + applied.FilesMoved + ' files, removed ' + applied.FoldersRemoved + ' empty folders.'
+                    + (applied.FilesSkipped ? ' Left ' + applied.FilesSkipped + ' duplicate metadata files alone.' : '')
+                    + ' Refresh the library in Jellyfin to pick this up.</span>';
+            });
+        }).catch(function (error) {
+            console.error('RegroupMovies error:', error);
+            statusDiv.innerHTML = '<span style="color: red;">Failed: ' + (error.message || 'Check console for details') + '</span>';
+        });
+    },
+
+    callRegroup: function (providerIndex, dryRun) {
+        return ApiClient.ajax({
+            type: 'POST',
+            url: ApiClient.getUrl('XtreamLibrary/RegroupMovies', { providerIndex: providerIndex, dryRun: dryRun }),
+            dataType: 'json'
+        });
+    },
+
     cleanMovies: function () {
         if (!confirm('Are you sure you want to delete ALL Movies content?\n\nThis action cannot be undone.')) {
             return;
@@ -2618,6 +2666,14 @@ function initXtreamLibraryConfig() {
         btnClearMetadataCache.addEventListener('click', function (e) {
             e.preventDefault();
             XtreamLibraryConfig.clearMetadataCache();
+        });
+    }
+
+    var btnRegroupMovies = document.getElementById('btnRegroupMovies');
+    if (btnRegroupMovies) {
+        btnRegroupMovies.addEventListener('click', function (e) {
+            e.preventDefault();
+            XtreamLibraryConfig.regroupMovies();
         });
     }
 

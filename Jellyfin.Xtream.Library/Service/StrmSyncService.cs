@@ -890,9 +890,9 @@ public partial class StrmSyncService
         _client.RetryDelayMs = provider.RetryDelayMs;
         _client.Timeout = TimeSpan.FromSeconds(provider.TimeoutSeconds);
 
-        // Compute provider key for snapshot directory isolation: "{index}-{urlHash8}"
-        var urlHashBytes = MD5.HashData(Encoding.UTF8.GetBytes(provider.BaseUrl));
-        var providerKey = $"{providerIndex}-{Convert.ToHexString(urlHashBytes)[..8].ToLowerInvariant()}";
+        // Snapshot directory isolation. Shared with the regroup action, which has to find the
+        // same snapshot this sync wrote.
+        var providerKey = SnapshotService.BuildProviderKey(providerIndex, provider.BaseUrl);
 
         // Load previous snapshot for incremental sync
         ContentSnapshot? previousSnapshot = null;
@@ -1424,6 +1424,19 @@ public partial class StrmSyncService
         var categories = await _client.GetVodCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
         var processedStreamIds = new ConcurrentDictionary<int, bool>();
 
+        // GitHub #88. Folder each groupable TMDB id lives in. Seeded from the snapshot so the
+        // choice made on an earlier run keeps holding, then extended with ids first seen this run.
+        // Only new movies consult it: nothing already on disk is moved by a sync.
+        bool groupByTmdb = provider.GroupMoviesByTmdbId;
+        var groupFolders = new ConcurrentDictionary<int, string>();
+        if (groupByTmdb)
+        {
+            foreach (var mapped in TmdbGrouping.BuildFolderMap(previousSnapshot))
+            {
+                groupFolders.TryAdd(mapped.Key, mapped.Value);
+            }
+        }
+
         // Parse folder mappings (category ID → folder names) - only in Multiple folder mode.
         // This has to come before the category filter, because in Multiple folder mode the
         // mappings are also what decides which categories are in scope at all.
@@ -1868,6 +1881,26 @@ public partial class StrmSyncService
                 _logger.LogInformation("Found {Count} multi-provider movies in batch {Batch}/{Total}", dispatcharrCache.Count, batchIndex + 1, totalBatches);
             }
 
+            if (groupByTmdb)
+            {
+                // Lowest stream id names the folder, so which of several titles wins does not
+                // depend on how the parallel loop below happened to schedule them.
+                foreach (var candidate in batchMovies.OrderBy(m => m.Stream.StreamId))
+                {
+                    if (!vodInfoCache.TryGetValue(candidate.Stream.StreamId, out var candidateInfo)
+                        || string.IsNullOrEmpty(candidateInfo?.Info?.TmdbId)
+                        || !int.TryParse(candidateInfo.Info.TmdbId, out int candidateTmdbId))
+                    {
+                        continue;
+                    }
+
+                    string candidateName = SanitizeFileName(candidate.Stream.Name, provider.CustomTitleRemoveTerms);
+                    groupFolders.TryAdd(
+                        candidateTmdbId,
+                        BuildMovieFolderName(candidateName, ExtractYear(candidate.Stream.Name), tmdbOverrides, candidateTmdbId, null));
+                }
+            }
+
             CurrentProgress.MoviePhase = $"Syncing Movies (batch {batchIndex + 1}/{totalBatches})";
             CurrentProgress.AddTotalItems(batchMovies.Count);
 
@@ -1984,6 +2017,17 @@ public partial class StrmSyncService
                         }
 
                         folderName = BuildMovieFolderName(movieName, year, tmdbOverrides, providerTmdbId, autoLookupTmdbId);
+
+                        // Group on an id the provider gave or the user pinned, never on one a name
+                        // lookup guessed: a lookup can hand a film and its remake the same id.
+                        int? groupableTmdbId = tmdbOverrides.TryGetValue(baseName, out int pinnedTmdbId)
+                            ? pinnedTmdbId
+                            : providerTmdbId;
+
+                        if (groupByTmdb && groupableTmdbId.HasValue)
+                        {
+                            folderName = groupFolders.GetOrAdd(groupableTmdbId.Value, folderName);
+                        }
                     }
 
                     movieIdentities[stream.StreamId] = BuildMovieIdentity(
@@ -2043,6 +2087,17 @@ public partial class StrmSyncService
                         // File.Exists branch below compares content against a URL that embeds the
                         // stream id, so it can never match across two streams and always falls
                         // through to the overwrite. Refuse instead, and count it.
+                        // With grouping on, two different titles legitimately share a folder, so
+                        // they also produce the same file name: the name is built from the folder.
+                        // That is the feature working, not a provider quirk, so keep both and tell
+                        // them apart by stream id, which gives the same result on every run (#88).
+                        if (groupByTmdb && claimedStrmPaths.ContainsKey(strmPath))
+                        {
+                            string groupedName = $"{Path.GetFileNameWithoutExtension(strmFileName)} - {stream.StreamId}{Path.GetExtension(strmFileName)}";
+                            strmPath = Path.Combine(movieFolder, groupedName);
+                            syncedFiles.TryAdd(strmPath, 0);
+                        }
+
                         if (!claimedStrmPaths.TryAdd(strmPath, 0))
                         {
                             Interlocked.Increment(ref nameCollisions);
