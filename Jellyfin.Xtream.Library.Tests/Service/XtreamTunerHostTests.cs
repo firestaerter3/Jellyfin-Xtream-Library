@@ -306,7 +306,7 @@ public class XtreamTunerHostTests : IDisposable
     }
 
     [Fact]
-    public async Task GetChannelStreamMediaSources_WithoutStats_HasDefaultVideoAndAudioStreams()
+    public async Task GetChannelStreamMediaSources_WithoutStats_LeavesMediaStreamsEmptyAndRequiresOpening()
     {
         var config = Plugin.Instance.Configuration;
         config.BaseUrl = "http://test.example.com";
@@ -316,18 +316,9 @@ public class XtreamTunerHostTests : IDisposable
         var result = await _tunerHost.GetChannelStreamMediaSources("xtream_100", CancellationToken.None);
 
         var source = result[0];
-        source.MediaStreams.Should().HaveCount(2);
-
-        var video = source.MediaStreams[0];
-        video.Type.Should().Be(MediaStreamType.Video);
-        video.Index.Should().Be(0);
-        video.IsInterlaced.Should().BeFalse();
-        video.Codec.Should().BeNull();
-
-        var audio = source.MediaStreams[1];
-        audio.Type.Should().Be(MediaStreamType.Audio);
-        audio.Index.Should().Be(1);
-        audio.Codec.Should().BeNull();
+        source.MediaStreams.Should().BeEmpty();
+        source.SupportsProbing.Should().BeTrue();
+        source.RequiresOpening.Should().BeTrue();
     }
 
     [Fact]
@@ -370,6 +361,7 @@ public class XtreamTunerHostTests : IDisposable
 
         var source = result[0];
         source.SupportsProbing.Should().BeFalse();
+        source.RequiresOpening.Should().BeFalse();
         source.AnalyzeDurationMs.Should().Be(0);
 
         source.MediaStreams.Should().HaveCount(2);

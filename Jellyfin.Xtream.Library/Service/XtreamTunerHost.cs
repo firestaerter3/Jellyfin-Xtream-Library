@@ -311,10 +311,9 @@ public class XtreamTunerHost : ITunerHost
             Protocol = MediaProtocol.Http,
             Container = isHls ? "hls" : "mpegts",
             SupportsProbing = !hasStats,
-            // Required so PlaybackInfo (AutoOpenLiveStream) opens the stream, which is where
-            // Jellyfin runs ffprobe. Without it the source is never opened before the
-            // client's direct-play decision. Jellyfin's own M3U tuner sets this too.
-            RequiresOpening = true,
+            // Jellyfin only probes a live source while opening it, and PlaybackInfo only
+            // opens sources that require it. Stats sources need neither.
+            RequiresOpening = !hasStats,
             IsRemote = true,
             IsInfiniteStream = true,
             SupportsDirectPlay = false,
@@ -380,15 +379,11 @@ public class XtreamTunerHost : ITunerHost
         }
         else
         {
-            // No stats: leave MediaStreams empty so Jellyfin runs ffprobe on open.
-            // MediaSourceManager.OpenLiveStreamInternal only probes when no stream has
-            // Index != -1, so placeholder streams here suppress the probe and leave the
-            // codec unknown. With the codec unknown every client reports
-            // VideoCodecNotSupported and the server transcodes, and EncodingHelper cannot
-            // select a hardware decoder. With a real probe, clients that can play the
-            // source direct-play it and no ffmpeg process runs at all.
+            // No stats: leave MediaStreams empty. MediaSourceManager only probes a live
+            // source when no stream has Index != -1, so placeholder streams here would
+            // suppress the probe and leave the codec unknown to clients and the encoder.
             mediaSource.MediaStreams = new List<MediaStream>();
-            logger.LogDebug("Channel {ChannelId}: no stats available, will probe", channelId);
+            logger.LogDebug("Channel {ChannelId}: no stats available, probing enabled", channelId);
         }
 
         return mediaSource;
