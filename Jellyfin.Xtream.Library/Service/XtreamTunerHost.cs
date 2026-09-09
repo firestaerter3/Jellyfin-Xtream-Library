@@ -311,6 +311,10 @@ public class XtreamTunerHost : ITunerHost
             Protocol = MediaProtocol.Http,
             Container = isHls ? "hls" : "mpegts",
             SupportsProbing = !hasStats,
+            // Required so PlaybackInfo (AutoOpenLiveStream) opens the stream, which is where
+            // Jellyfin runs ffprobe. Without it the source is never opened before the
+            // client's direct-play decision. Jellyfin's own M3U tuner sets this too.
+            RequiresOpening = true,
             IsRemote = true,
             IsInfiniteStream = true,
             SupportsDirectPlay = false,
@@ -376,24 +380,14 @@ public class XtreamTunerHost : ITunerHost
         }
         else
         {
-            // No stats — provide defaults with IsInterlaced=false.
-            // Codec is left null: Jellyfin will transcode video (no stream copy without known codec)
-            // but without yadif deinterlacing, transcode runs at ~2.5x vs ~0.7x with yadif.
-            // Audio stream with null codec ensures audio is included and transcoded.
-            mediaSource.MediaStreams = new List<MediaStream>
-            {
-                new MediaStream
-                {
-                    Type = MediaStreamType.Video,
-                    Index = 0,
-                    IsInterlaced = false,
-                },
-                new MediaStream
-                {
-                    Type = MediaStreamType.Audio,
-                    Index = 1,
-                },
-            };
+            // No stats: leave MediaStreams empty so Jellyfin runs ffprobe on open.
+            // MediaSourceManager.OpenLiveStreamInternal only probes when no stream has
+            // Index != -1, so placeholder streams here suppress the probe and leave the
+            // codec unknown. With the codec unknown every client reports
+            // VideoCodecNotSupported and the server transcodes, and EncodingHelper cannot
+            // select a hardware decoder. With a real probe, clients that can play the
+            // source direct-play it and no ffmpeg process runs at all.
+            mediaSource.MediaStreams = new List<MediaStream>();
             logger.LogDebug("Channel {ChannelId}: no stats available, will probe", channelId);
         }
 
