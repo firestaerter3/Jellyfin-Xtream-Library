@@ -32,6 +32,12 @@ namespace Jellyfin.Xtream.Library;
 /// </summary>
 public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 {
+    // Issue #109: secure default for LiveTvEndpointAllowedIps on a genuinely fresh
+    // install only, see SeedSecureLiveTvAllowListIfNeeded. Loopback plus the standard
+    // private ranges, local/LAN access is allowed by default, the open internet is not.
+    private const string DefaultSecureLiveTvAllowList =
+        "127.0.0.1\n::1\n10.0.0.0/8\n172.16.0.0/12\n192.168.0.0/16\nfc00::/7";
+
     // BUG-009: candidate filenames the orphan-config importer will look at, in addition to
     // (and never equal to) whatever ConfigurationFilePath currently resolves to.
     private static readonly string[] OrphanCandidateFileNames =
@@ -59,6 +65,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         ImportOrphanedLegacyConfigIfNeeded();
         MigrateProvidersIfNeeded();
         MigrateLiveChannelModeIfNeeded();
+        SeedSecureLiveTvAllowListIfNeeded();
     }
 
     /// <inheritdoc />
@@ -162,6 +169,47 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             config.LiveChannelMode = LiveChannelSelectionMode.Custom;
             SaveConfiguration();
         }
+    }
+
+    // Issue #109. Seeds LiveTvEndpointAllowedIps with a secure default, but only for a
+    // genuinely fresh install, never for an existing one upgrading to a plugin version
+    // that has this field for the first time. Both cases deserialize to the same empty
+    // string (the field simply did not exist in an old saved config either), so the
+    // field's own value can't tell them apart on its own. This uses the same trigger
+    // gate ImportOrphanedLegacyConfigIfNeeded and MigrateProvidersIfNeeded already rely
+    // on for the identical problem: whether the in-memory config shows any sign of
+    // prior real configuration at all. Runs last, after the other three migrations
+    // above, so it sees the fully-migrated state, an install recovered from an
+    // orphaned legacy config or promoted from the pre-Providers BaseUrl fields is not
+    // mistaken for a fresh install.
+    //
+    // HasSeededLiveTvAllowList makes the fresh/existing decision itself one-time-only,
+    // independent of the field's value. Without it, an operator who explicitly clears
+    // a seeded value back to empty (to reopen the endpoints) would get it silently
+    // reseeded on the next restart, since an empty string looks the same either way.
+    private void SeedSecureLiveTvAllowListIfNeeded()
+    {
+        var config = Configuration;
+
+        if (config.HasSeededLiveTvAllowList)
+        {
+            return;
+        }
+
+        bool looksFreshlyInstalled =
+            config.Providers.Count == 0
+            && string.IsNullOrEmpty(config.BaseUrl)
+            && string.IsNullOrEmpty(config.MovieFolderMappings)
+            && string.IsNullOrEmpty(config.SeriesFolderMappings)
+            && string.IsNullOrEmpty(config.ChannelOverrides);
+
+        if (looksFreshlyInstalled)
+        {
+            config.LiveTvEndpointAllowedIps = DefaultSecureLiveTvAllowList;
+        }
+
+        config.HasSeededLiveTvAllowList = true;
+        SaveConfiguration();
     }
 
     // BUG-009 (GitHub #49). Some users who upgraded across the v1.33.3.0 GUID change ended up

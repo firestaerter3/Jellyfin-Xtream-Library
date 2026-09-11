@@ -352,6 +352,9 @@ const XtreamLibraryConfig = {
             document.getElementById('chkEnableCatchup').checked = config.EnableCatchup || false;
             document.getElementById('txtCatchupDays').value = config.CatchupDays || 7;
 
+            // Endpoint access restriction
+            document.getElementById('txtLiveTvEndpointAllowedIps').value = config.LiveTvEndpointAllowedIps || '';
+
             // Update Live TV URLs
             self.updateLiveTvUrls();
 
@@ -436,6 +439,9 @@ const XtreamLibraryConfig = {
             // Catch-up
             config.EnableCatchup = document.getElementById('chkEnableCatchup').checked;
             config.CatchupDays = parseInt(document.getElementById('txtCatchupDays').value) || 7;
+
+            // Endpoint access restriction
+            config.LiveTvEndpointAllowedIps = document.getElementById('txtLiveTvEndpointAllowedIps').value;
 
             ApiClient.updatePluginConfiguration(self.pluginUniqueId, config).then(function () {
                 Dashboard.processPluginConfigurationUpdateResult();

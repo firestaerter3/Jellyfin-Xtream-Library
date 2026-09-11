@@ -1154,6 +1154,13 @@
                                 Add these URLs to Jellyfin's Live TV settings (Dashboard → Live TV → Add Tuner).
                                 <br>
                                 <strong>Do not also enable the Native Tuner option above</strong> — adding the M3U URL here as a manual tuner while the native tuner is active causes every channel to appear twice in the Live TV Guide.
+                                <br><br>
+                                <strong>These URLs are unauthenticated by design</strong>, so Jellyfin's own tuner can fetch them directly.
+                                That also means anyone who has one of these URLs gets the Xtream username and password baked into every
+                                stream link in it, no Jellyfin login required. Treat these URLs like your Xtream password.
+                                A new install of this plugin starts with the allow-list below restricted to loopback and private
+                                network ranges; if your tuner is configured with a public URL behind a reverse proxy, or you need
+                                another client to reach these URLs from outside your local network, widen the list accordingly.
                             </div>
                             <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="txtM3UUrl">M3U Playlist URL</label>
@@ -1187,6 +1194,19 @@
                                     <span>Refresh Cache</span>
                                 </button>
                                 <span id="liveTvCacheStatus" style="margin-left: 10px;"></span>
+                            </div>
+                            <div class="inputContainer" style="margin-top: 15px;">
+                                <label class="inputLabel inputLabelUnfocused" for="txtLiveTvEndpointAllowedIps">Endpoint Access Restriction (one IP or CIDR per line)</label>
+                                <textarea is="emby-textarea" id="txtLiveTvEndpointAllowedIps" rows="4"
+                                    placeholder="127.0.0.1&#10;10.0.0.0/8&#10;::1" style="width: 100%; font-family: monospace;"></textarea>
+                                <div class="fieldDescription">
+                                    Restricts the three URLs above and the channel logo endpoint to the listed source IPs/CIDR ranges.
+                                    Leave empty for the default, unrestricted behaviour. If you set this, remember your own Jellyfin
+                                    server's requests need to match too — if your tuner is configured with this server's public HTTPS
+                                    URL, that request comes back in through your reverse proxy, not from 127.0.0.1. Point the tuner at
+                                    <code>http://localhost:8096/XtreamLibrary/...</code> (adjust the port to your setup) instead if you
+                                    want to lock this down to loopback only.
+                                </div>
                             </div>
                         </div>
                     </div>

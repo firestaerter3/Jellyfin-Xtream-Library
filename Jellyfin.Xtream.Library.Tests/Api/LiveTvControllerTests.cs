@@ -15,6 +15,7 @@
 
 using System;
 using System.IO;
+using System.Net;
 using FluentAssertions;
 using Jellyfin.Xtream.Library.Api;
 using Jellyfin.Xtream.Library.Client;
@@ -22,6 +23,7 @@ using Jellyfin.Xtream.Library.Service;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller;
 using MediaBrowser.Model.Serialization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -64,6 +66,13 @@ public class LiveTvControllerTests : IDisposable
         // Create plugin to set Plugin.Instance.
         _ = new Plugin(appPaths.Object, xmlSerializer.Object);
         Plugin.Instance.Configuration.ChannelOverrides = string.Empty;
+
+        // This fixture always constructs Plugin from a bare PluginConfiguration(), which
+        // SeedSecureLiveTvAllowListIfNeeded (issue #109) treats as a fresh install and
+        // seeds with a real allow-list. Reset to the pre-existing "no restriction"
+        // baseline this test class was written against; the allow-list-specific tests
+        // below set LiveTvEndpointAllowedIps (and the caller IP) explicitly themselves.
+        Plugin.Instance.Configuration.LiveTvEndpointAllowedIps = string.Empty;
 
         var mockClient = new Mock<IXtreamClient>();
         var serverAppPaths = new Mock<IServerApplicationPaths>();
@@ -133,5 +142,146 @@ public class LiveTvControllerTests : IDisposable
         var result = _controller.GetChannelLogo(5);
 
         result.Should().BeOfType<NotFoundResult>();
+    }
+
+    /// <summary>
+    /// Tests for the endpoint IP allow-list (issue #109).
+    /// </summary>
+    [Fact]
+    public void GetChannelLogo_NoAllowListConfigured_IgnoresRemoteIp()
+    {
+        // Default behaviour must not change: an unset allow-list serves the request
+        // regardless of what the caller's remote IP looks like.
+        Plugin.Instance.Configuration.LiveTvEndpointAllowedIps = string.Empty;
+        var tmp = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".png");
+        File.WriteAllBytes(tmp, new byte[] { 1, 2, 3 });
+        try
+        {
+            Plugin.Instance.Configuration.ChannelOverrides = "5=Name|1|" + tmp;
+            SetRemoteIp(IPAddress.Parse("203.0.113.5"));
+
+            var result = _controller.GetChannelLogo(5);
+
+            result.Should().BeOfType<PhysicalFileResult>();
+        }
+        finally
+        {
+            File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void GetChannelLogo_AllowListConfigured_NonMatchingIp_ReturnsNotFound()
+    {
+        Plugin.Instance.Configuration.LiveTvEndpointAllowedIps = "10.0.0.0/8";
+        var tmp = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".png");
+        File.WriteAllBytes(tmp, new byte[] { 1, 2, 3 });
+        try
+        {
+            Plugin.Instance.Configuration.ChannelOverrides = "5=Name|1|" + tmp;
+            SetRemoteIp(IPAddress.Parse("203.0.113.5"));
+
+            var result = _controller.GetChannelLogo(5);
+
+            result.Should().BeOfType<NotFoundResult>();
+        }
+        finally
+        {
+            File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void GetChannelLogo_AllowListConfigured_MatchingIp_ReturnsImageFile()
+    {
+        Plugin.Instance.Configuration.LiveTvEndpointAllowedIps = "10.0.0.0/8";
+        var tmp = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".png");
+        File.WriteAllBytes(tmp, new byte[] { 1, 2, 3 });
+        try
+        {
+            Plugin.Instance.Configuration.ChannelOverrides = "5=Name|1|" + tmp;
+            SetRemoteIp(IPAddress.Parse("10.30.30.8"));
+
+            var result = _controller.GetChannelLogo(5);
+
+            result.Should().BeOfType<PhysicalFileResult>();
+        }
+        finally
+        {
+            File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task GetM3UPlaylist_AllowListConfigured_NonMatchingIp_ReturnsNotFound()
+    {
+        // The ACL check must run and reject before the existing "Live TV disabled"/
+        // "no credentials" BadRequest checks further down the same action.
+        Plugin.Instance.Configuration.LiveTvEndpointAllowedIps = "10.0.0.0/8";
+        Plugin.Instance.Configuration.EnableLiveTv = true;
+        SetRemoteIp(IPAddress.Parse("203.0.113.5"));
+
+        var result = await _controller.GetM3UPlaylist(System.Threading.CancellationToken.None);
+
+        result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task GetM3UPlaylist_AllowListConfiguredWithOnlyInvalidEntries_ReturnsNotFound()
+    {
+        // A non-blank setting that parses to zero valid entries (a typo) must fail
+        // closed, not silently fall back to the "unset" open behaviour - that would
+        // defeat the restriction the operator explicitly configured. This has to be
+        // rejected before even looking at the caller's IP, so deliberately not calling
+        // SetRemoteIp here: an unresolved HttpContext must not accidentally pass.
+        Plugin.Instance.Configuration.LiveTvEndpointAllowedIps = "not-an-ip\n# just a comment, still not a real entry";
+        Plugin.Instance.Configuration.EnableLiveTv = true;
+
+        var result = await _controller.GetM3UPlaylist(System.Threading.CancellationToken.None);
+
+        result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task GetCatchupM3UPlaylist_AllowListConfiguredWithOnlyInvalidEntries_ReturnsNotFound()
+    {
+        Plugin.Instance.Configuration.LiveTvEndpointAllowedIps = "300.0.0.0/8";
+        Plugin.Instance.Configuration.EnableLiveTv = true;
+        Plugin.Instance.Configuration.EnableCatchup = true;
+
+        var result = await _controller.GetCatchupM3UPlaylist(System.Threading.CancellationToken.None);
+
+        result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public void GetChannelLogo_AllowListConfiguredWithOnlyInvalidEntries_ReturnsNotFound()
+    {
+        Plugin.Instance.Configuration.LiveTvEndpointAllowedIps = "999.999.999.999";
+        var tmp = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".png");
+        File.WriteAllBytes(tmp, new byte[] { 1, 2, 3 });
+        try
+        {
+            Plugin.Instance.Configuration.ChannelOverrides = "5=Name|1|" + tmp;
+
+            var result = _controller.GetChannelLogo(5);
+
+            result.Should().BeOfType<NotFoundResult>();
+        }
+        finally
+        {
+            File.Delete(tmp);
+        }
+    }
+
+    private void SetRemoteIp(IPAddress address)
+    {
+        _controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                Connection = { RemoteIpAddress = address },
+            },
+        };
     }
 }

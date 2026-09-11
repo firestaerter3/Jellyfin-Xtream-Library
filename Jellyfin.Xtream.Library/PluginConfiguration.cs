@@ -230,6 +230,39 @@ public class PluginConfiguration : BasePluginConfiguration
     public string ChannelOverrides { get; set; } = string.Empty;
 
     /// <summary>
+    /// Gets or sets the IP/CIDR allow-list for the unauthenticated Live TV endpoints
+    /// (LiveTv.m3u, Epg.xml, Catchup.m3u, ChannelLogo). One entry per line, bare address
+    /// or CIDR range. Empty means no restriction, those endpoints stay reachable by
+    /// anyone, unauthenticated. See issue #109: those endpoints have to allow anonymous
+    /// access so Jellyfin's own tuner can reach them, but that also means anyone who has
+    /// the URL gets the Xtream credentials baked into it.
+    /// This property itself has no hardcoded default value, and deliberately not
+    /// 127.0.0.1, because whether Jellyfin's own request even looks like it came from
+    /// loopback depends on how the tuner URL is configured; an operator whose tuner is
+    /// set to a public HTTPS URL behind a reverse proxy would be locked out by a
+    /// loopback-only default baked in here. Instead, <see cref="Plugin"/> seeds this
+    /// field with a secure default (loopback plus private ranges) exactly once, only on
+    /// a genuinely fresh install with no other configuration present yet, see
+    /// <c>Plugin.SeedSecureLiveTvAllowListIfNeeded</c>. Any existing install upgrading
+    /// to a plugin version that has this field keeps whatever it already had (empty,
+    /// same as before this setting existed), and any value the operator sets afterward,
+    /// including deliberately clearing it back to empty, is never overwritten again.
+    /// </summary>
+    public string LiveTvEndpointAllowedIps { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether <see cref="Plugin.SeedSecureLiveTvAllowListIfNeeded"/>
+    /// has already run its one-time decision for <see cref="LiveTvEndpointAllowedIps"/>
+    /// (issue #109). Set on the first boot after upgrading to a plugin version that has
+    /// this field, regardless of whether that boot turned out to be a fresh install
+    /// (seeded) or an existing one (left as-is). Once true, the seeding logic never
+    /// looks at <see cref="LiveTvEndpointAllowedIps"/> again, so an operator's own
+    /// choice afterward, including deliberately clearing a seeded value back to empty
+    /// to reopen the endpoints, is never silently reverted on a later restart.
+    /// </summary>
+    public bool HasSeededLiveTvAllowList { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether catch-up/timeshift is enabled.
     /// </summary>
     public bool EnableCatchup { get; set; }

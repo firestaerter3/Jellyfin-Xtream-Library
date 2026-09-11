@@ -17,7 +17,9 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Net;
 using FluentAssertions;
+using Jellyfin.Xtream.Library.Service;
 using Jellyfin.Xtream.Library.Tests.Helpers;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller;
@@ -326,5 +328,124 @@ public class PluginTests : IDisposable
 
         // Rename failed, so the original orphan stayed on disk (user data not lost).
         File.Exists(Path.Combine(_tempDir, "Jellyfin.Xtream.xml")).Should().BeTrue();
+    }
+
+    // Issue #109: LiveTvEndpointAllowedIps secure-default seeding.
+    [Fact]
+    public void Ctor_FreshInstall_SeedsSecureLiveTvAllowList()
+    {
+        var serializer = new RealXmlSerializer();
+
+        var plugin = new Plugin(_appPaths.Object, serializer);
+
+        plugin.Configuration.LiveTvEndpointAllowedIps.Should().Be(
+            "127.0.0.1\n::1\n10.0.0.0/8\n172.16.0.0/12\n192.168.0.0/16\nfc00::/7");
+        plugin.Configuration.HasSeededLiveTvAllowList.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Ctor_FreshInstall_SeededAllowListAllowsIPv6UniqueLocalAddress()
+    {
+        // CodeRabbit review on PR #110: the seeded default originally covered IPv4 private
+        // ranges and IPv6 loopback, but not the IPv6 unique-local range (fc00::/7), the IPv6
+        // analog of RFC1918. A fresh install on an IPv6-only LAN would otherwise 404 its own
+        // local clients despite them being on the local network.
+        var serializer = new RealXmlSerializer();
+        var plugin = new Plugin(_appPaths.Object, serializer);
+
+        var allowList = IpAllowListParser.Parse(plugin.Configuration.LiveTvEndpointAllowedIps);
+
+        IpAllowListParser.IsAllowed(IPAddress.Parse("fd12:3456:789a::10"), allowList).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Ctor_ExistingInstallWithProviders_LeavesAllowListEmpty()
+    {
+        // An existing, already-in-use install upgrading to a plugin version that has this
+        // field for the first time. Must not be mistaken for a fresh install just because
+        // the new field itself deserializes to empty, same as it would for a real fresh one.
+        var activeConfig = new PluginConfiguration();
+        activeConfig.Providers.Add(new ProviderConfig
+        {
+            Name = "Existing",
+            IsEnabled = true,
+            BaseUrl = "http://already-configured.example",
+            Username = "realuser",
+        });
+
+        var serializer = new Mock<IXmlSerializer>();
+        serializer.Setup(s => s.DeserializeFromFile(It.IsAny<Type>(), It.IsAny<string>()))
+            .Returns(activeConfig);
+
+        var plugin = new Plugin(_appPaths.Object, serializer.Object);
+
+        plugin.Configuration.LiveTvEndpointAllowedIps.Should().BeEmpty();
+        // Marked handled so this decision is not re-evaluated on every future boot.
+        plugin.Configuration.HasSeededLiveTvAllowList.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Ctor_ExistingInstallWithLegacyBaseUrlOnly_LeavesAllowListEmpty()
+    {
+        // Pre-Providers-migration legacy state. MigrateProvidersIfNeeded runs first and
+        // promotes BaseUrl into Providers[0], so by the time the allow-list seeding logic
+        // runs, Providers.Count is already 1 — this exercises that ordering directly.
+        var activeConfig = new PluginConfiguration
+        {
+            BaseUrl = "http://legacy-active.example",
+            Username = "legacyuser",
+        };
+
+        var serializer = new Mock<IXmlSerializer>();
+        serializer.Setup(s => s.DeserializeFromFile(It.IsAny<Type>(), It.IsAny<string>()))
+            .Returns(activeConfig);
+
+        var plugin = new Plugin(_appPaths.Object, serializer.Object);
+
+        plugin.Configuration.Providers.Should().HaveCount(1, "MigrateProvidersIfNeeded should have promoted the legacy BaseUrl");
+        plugin.Configuration.LiveTvEndpointAllowedIps.Should().BeEmpty();
+        plugin.Configuration.HasSeededLiveTvAllowList.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Ctor_AlreadySeeded_DoesNotReSeedEvenIfConfigStillLooksFresh()
+    {
+        // Simulates an operator who was seeded on first boot, then explicitly cleared the
+        // allow-list back to empty to reopen the endpoints, without ever configuring a
+        // provider. Providers.Count == 0 would look "fresh" again on the next restart if
+        // the one-time marker were not checked first — the marker must win.
+        var activeConfig = new PluginConfiguration
+        {
+            HasSeededLiveTvAllowList = true,
+            LiveTvEndpointAllowedIps = string.Empty,
+        };
+
+        var serializer = new Mock<IXmlSerializer>();
+        serializer.Setup(s => s.DeserializeFromFile(It.IsAny<Type>(), It.IsAny<string>()))
+            .Returns(activeConfig);
+
+        var plugin = new Plugin(_appPaths.Object, serializer.Object);
+
+        plugin.Configuration.LiveTvEndpointAllowedIps.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Ctor_AlreadySeeded_PreservesOperatorsCustomValue()
+    {
+        // Simulates an operator who was seeded, then narrowed or replaced the list with
+        // their own values. That choice must never be overwritten on a later restart.
+        var activeConfig = new PluginConfiguration
+        {
+            HasSeededLiveTvAllowList = true,
+            LiveTvEndpointAllowedIps = "203.0.113.0/24",
+        };
+
+        var serializer = new Mock<IXmlSerializer>();
+        serializer.Setup(s => s.DeserializeFromFile(It.IsAny<Type>(), It.IsAny<string>()))
+            .Returns(activeConfig);
+
+        var plugin = new Plugin(_appPaths.Object, serializer.Object);
+
+        plugin.Configuration.LiveTvEndpointAllowedIps.Should().Be("203.0.113.0/24");
     }
 }
