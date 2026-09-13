@@ -368,6 +368,7 @@ var XtreamLibraryConfig = (function () {
             document.getElementById('txtChannelOverrides').value = config.ChannelOverrides || '';
 
             // Catch-up
+            document.getElementById('txtLiveTvEndpointAllowedIps').value = config.LiveTvEndpointAllowedIps || '';
             document.getElementById('chkEnableCatchup').checked = config.EnableCatchup || false;
             document.getElementById('txtCatchupDays').value = config.CatchupDays || 7;
             document.getElementById('chkShowCatchupInJellyfin').checked = config.ShowCatchupInJellyfin || false;
@@ -460,6 +461,7 @@ var XtreamLibraryConfig = (function () {
             config.ChannelOverrides = document.getElementById('txtChannelOverrides').value;
 
             // Catch-up
+            config.LiveTvEndpointAllowedIps = document.getElementById('txtLiveTvEndpointAllowedIps').value;
             config.EnableCatchup = document.getElementById('chkEnableCatchup').checked;
             config.CatchupDays = parseInt(document.getElementById('txtCatchupDays').value) || 7;
             config.ShowCatchupInJellyfin = document.getElementById('chkShowCatchupInJellyfin').checked;

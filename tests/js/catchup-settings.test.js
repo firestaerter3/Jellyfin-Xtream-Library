@@ -79,3 +79,16 @@ test('the setup URLs carry the security warning', () => {
     assert.match(block, /without a Jellyfin login/);
     assert.match(block, /Native Tuner above avoids this/);
 });
+
+test('the Live TV endpoint allow-list is bound and explained', () => {
+    // GitHub #109. Empty means unrestricted, which is what every version so far has done, so the
+    // binding must not coerce a blank value into something else.
+    assert.ok(HTML.includes('id="txtLiveTvEndpointAllowedIps"'), 'config.html has no allow-list field');
+    assert.ok(JS.includes("getElementById('txtLiveTvEndpointAllowedIps')"), 'config.js never binds it');
+    assert.match(JS, /config\.LiveTvEndpointAllowedIps \|\| ''/);
+
+    // The trap is that the operator's own server has to be on the list, because the URL this page
+    // hands out is built from whatever origin the admin is browsing on.
+    const section = HTML.slice(HTML.indexOf('id="txtLiveTvEndpointAllowedIps"'));
+    assert.match(section.slice(0, 1800), /Your own server has to be on the list too/);
+});

@@ -1230,6 +1230,23 @@
                                 reverse proxy to the addresses that need it. The Native Tuner above avoids this entirely:
                                 it hands channels to Jellyfin internally and never publishes a playlist.
                             </div>
+                            <div class="inputContainer" style="margin-top: 15px;">
+                                <label class="inputLabel inputLabelUnfocused" for="txtLiveTvEndpointAllowedIps">Restrict These URLs To (one IP or CIDR per line)</label>
+                                <textarea is="emby-textarea" id="txtLiveTvEndpointAllowedIps" rows="4"
+                                    placeholder="127.0.0.1&#10;::1&#10;10.0.0.0/8&#10;192.168.0.0/16" style="width: 100%; font-family: monospace;"></textarea>
+                                <div class="fieldDescription">
+                                    Leave empty to keep the three URLs above and the channel logo endpoint reachable by
+                                    anyone, which is how they have always worked. Fill it in and everything else gets a
+                                    404, indistinguishable from a URL that does not exist.
+                                    <br /><br />
+                                    <strong>Your own server has to be on the list too.</strong> The URLs above are built
+                                    from the address you are looking at Jellyfin on right now, so if you paste a public
+                                    one into the tuner, Jellyfin's own request arrives from your reverse proxy and not
+                                    from <code>127.0.0.1</code>. Add the proxy's address, or point the tuner at
+                                    <code>http://localhost:8096/XtreamLibrary/...</code> instead. Get this wrong and the
+                                    guide goes empty with no other symptom, so change it while you can watch the result.
+                                </div>
+                            </div>
                             <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="txtM3UUrl">M3U Playlist URL</label>
                                 <div style="display: flex; gap: 10px;">

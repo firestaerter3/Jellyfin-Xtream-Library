@@ -69,6 +69,11 @@ public class LiveTvController : ControllerBase
     {
         var config = Plugin.Instance.Configuration;
 
+        if (!IsCallerAllowed(config))
+        {
+            return NotFound();
+        }
+
         if (!config.EnableLiveTv)
         {
             return BadRequest(new { Error = "Live TV is not enabled in plugin settings." });
@@ -82,6 +87,7 @@ public class LiveTvController : ControllerBase
         try
         {
             var m3u = await _liveTvService.GetM3UPlaylistAsync(cancellationToken).ConfigureAwait(false);
+            Response.Headers.CacheControl = "no-store";
             return Content(m3u, "audio/x-mpegurl");
         }
         catch (System.Exception ex)
@@ -106,6 +112,11 @@ public class LiveTvController : ControllerBase
     public async Task<IActionResult> GetEpgXml(CancellationToken cancellationToken)
     {
         var config = Plugin.Instance.Configuration;
+
+        if (!IsCallerAllowed(config))
+        {
+            return NotFound();
+        }
 
         if (!config.EnableLiveTv)
         {
@@ -150,6 +161,11 @@ public class LiveTvController : ControllerBase
     {
         var config = Plugin.Instance.Configuration;
 
+        if (!IsCallerAllowed(config))
+        {
+            return NotFound();
+        }
+
         if (!config.EnableLiveTv)
         {
             return BadRequest(new { Error = "Live TV is not enabled in plugin settings." });
@@ -168,6 +184,7 @@ public class LiveTvController : ControllerBase
         try
         {
             var m3u = await _liveTvService.GetCatchupM3UPlaylistAsync(cancellationToken).ConfigureAwait(false);
+            Response.Headers.CacheControl = "no-store";
             return Content(m3u, "audio/x-mpegurl");
         }
         catch (System.Exception ex)
@@ -285,7 +302,7 @@ public class LiveTvController : ControllerBase
     public IActionResult GetChannelLogo([FromRoute] int streamId)
     {
         var config = Plugin.Instance?.Configuration;
-        if (config == null)
+        if (config == null || !IsCallerAllowed(config))
         {
             return NotFound();
         }
@@ -330,6 +347,58 @@ public class LiveTvController : ControllerBase
             ".svg" => "image/svg+xml",
             _ => "application/octet-stream",
         };
+    }
+
+    /// <summary>
+    /// Checks the caller's remote IP against <see cref="PluginConfiguration.LiveTvEndpointAllowedIps"/>
+    /// (issue #109). A genuinely empty/unset allow-list means the endpoint stays open,
+    /// matching behaviour before this setting existed. A non-blank setting that fails to
+    /// parse into any valid IP/CIDR entry (a typo) fails closed instead: that case is
+    /// indistinguishable from "unset" once parsed, so it has to be handled here, before
+    /// parsing, using the raw setting text rather than treating an empty parsed list as
+    /// an open pass either way. Relies on <see cref="HttpContext.Connection"/>'s resolved
+    /// remote address rather than reading forwarded headers itself, so it reflects
+    /// whatever trusted-proxy configuration the Jellyfin server admin already has in place
+    /// under Dashboard &gt; Networking.
+    /// </summary>
+    /// <param name="config">The current plugin configuration.</param>
+    /// <returns>True if the request should be served.</returns>
+    private bool IsCallerAllowed(PluginConfiguration config)
+    {
+        var rawAllowList = config.LiveTvEndpointAllowedIps;
+
+        if (string.IsNullOrWhiteSpace(rawAllowList))
+        {
+            return true;
+        }
+
+        var allowList = IpAllowListParser.Parse(rawAllowList);
+
+        if (allowList.Count == 0)
+        {
+            // The setting is configured but none of it parsed, almost certainly a typo.
+            // Deny everyone rather than silently falling back to the "unset" open
+            // behaviour, which would defeat the restriction the operator intended.
+            _logger.LogWarning(
+                "LiveTvEndpointAllowedIps is set but contains no valid IP/CIDR entries, denying all Live TV endpoint requests until this is corrected");
+            return false;
+        }
+
+        // HttpContext is null when a controller action is invoked directly, outside the
+        // ASP.NET Core pipeline (this project's own controller tests do exactly that).
+        // IpAllowListParser.IsAllowed treats a null address as "unknown caller", which is
+        // only actually reachable when a non-empty allow-list is configured.
+        var remoteIp = HttpContext?.Connection?.RemoteIpAddress;
+        var allowed = IpAllowListParser.IsAllowed(remoteIp, allowList);
+
+        if (!allowed)
+        {
+            _logger.LogWarning(
+                "Rejected Live TV endpoint request from {RemoteIp}, does not match the configured allow-list",
+                remoteIp);
+        }
+
+        return allowed;
     }
 
     private static bool HasProviderCredentials(PluginConfiguration config)

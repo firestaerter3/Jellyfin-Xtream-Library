@@ -230,6 +230,24 @@ public class PluginConfiguration : BasePluginConfiguration
     public string ChannelOverrides { get; set; } = string.Empty;
 
     /// <summary>
+    /// Gets or sets the IP/CIDR allow-list for the anonymous Live TV endpoints
+    /// (<c>LiveTv.m3u</c>, <c>Epg.xml</c>, <c>Catchup.m3u</c>, <c>ChannelLogo</c>). One entry per
+    /// line, a bare address or a CIDR range.
+    /// <para>
+    /// Empty means no restriction, which is how these endpoints have always behaved: reachable by
+    /// anyone, with the Xtream credentials in the playlist they return (GitHub #109).
+    /// </para>
+    /// <para>
+    /// Deliberately has no default, not even loopback. The URL the config page offers is built
+    /// from the address the administrator is browsing on, so anyone running Jellyfin behind a
+    /// public hostname is handed a public URL, pastes it into the tuner, and Jellyfin's own fetch
+    /// then arrives from the reverse proxy rather than from loopback. A default would lock exactly
+    /// that setup out of its own channels, with no error and from a setting nobody touched.
+    /// </para>
+    /// </summary>
+    public string LiveTvEndpointAllowedIps { get; set; } = string.Empty;
+
+    /// <summary>
     /// Gets or sets a value indicating whether catch-up/timeshift is enabled.
     /// </summary>
     public bool EnableCatchup { get; set; }
