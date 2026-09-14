@@ -1511,7 +1511,7 @@ var XtreamLibraryConfig = (function () {
         panel.innerHTML = '<div class="fieldDescription" style="padding: 4px 0;">Loading channels...</div>';
 
         fetch(ApiClient.getUrl('XtreamLibrary/Channels/Live?categoryId=' + encodeURIComponent(categoryId)), {
-            headers: { 'X-Emby-Token': ApiClient.accessToken() }
+            headers: { 'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken() }
         })
             .then(function (r) {
                 if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -1672,7 +1672,7 @@ var XtreamLibraryConfig = (function () {
         panel.innerHTML = '<div class="fieldDescription" style="padding: 4px 0;">Loading ' + label + '...</div>';
 
         fetch(ApiClient.getUrl(endpoint) + '?categoryId=' + encodeURIComponent(categoryId) + '&providerIndex=' + self.activeProviderIndex, {
-            headers: { 'X-Emby-Token': ApiClient.accessToken() }
+            headers: { 'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken() }
         })
             .then(function (r) {
                 if (!r.ok) throw new Error('HTTP ' + r.status);
