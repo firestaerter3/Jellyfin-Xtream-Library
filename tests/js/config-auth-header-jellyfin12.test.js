@@ -162,8 +162,12 @@ test('config.js auth header regression for Jellyfin 12 (issue #117)', async (t) 
 
     await t.test('Streams/Vod uses MediaBrowser Token auth header', () => {
         // The fetch URL is built dynamically from the `endpoint` variable, so anchor on the
-        // `fetch(ApiClient.getUrl(endpoint)` call shape rather than the URL string itself.
-        const headersObj = extractHeadersFor('fetch(ApiClient.getUrl(endpoint)');
+        // `ApiClient.getUrl(endpoint)` substring rather than `fetch(ApiClient.getUrl(endpoint)`.
+        // `extractHeadersFor()` walks BACKWARD from the anchor for the nearest `fetch(` token;
+        // anchoring on `fetch(` itself would make it select the previous request
+        // (fetchLiveChannelsForCategory), not this one. Series anchor below is unaffected because
+        // it anchors on the Series/List string literal that appears later in the same fetch call.
+        const headersObj = extractHeadersFor('ApiClient.getUrl(endpoint)');
         assert.ok(
             headersObj.includes("'Authorization': 'MediaBrowser Token='") ||
                 headersObj.includes('"Authorization": "MediaBrowser Token="'),
