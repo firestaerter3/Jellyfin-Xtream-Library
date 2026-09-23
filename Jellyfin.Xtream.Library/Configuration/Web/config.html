@@ -554,8 +554,10 @@
                                     <input is="emby-input" type="number" id="txtRequestDelayMs" name="RequestDelayMs"
                                            min="0" max="5000" step="50" />
                                     <div class="fieldDescription">
-                                        Delay in milliseconds between API requests (0-5000). Helps prevent rate limiting (429 errors)
-                                        from providers that limit request frequency. Default: 100ms. Set to 0 for no delay.
+                                        Minimum gap in milliseconds between requests to your provider (0-5000), shared by all
+                                        parallel workers: 50 means at most 20 requests a second, whatever Sync Parallelism is set to.
+                                        If the provider answers 429 (too many requests), every request to it waits out the retry delay,
+                                        not only the one that was refused. Default: 50ms. Set to 0 for no gap.
                                     </div>
                                 </div>
                                 <div class="inputContainer">

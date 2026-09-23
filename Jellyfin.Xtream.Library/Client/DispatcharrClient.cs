@@ -363,6 +363,7 @@ public class DispatcharrClient : IDispatcharrClient
                 using var request = new HttpRequestMessage(HttpMethod.Get, url);
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
 
+                await RequestGate.WaitTurnAsync(request.RequestUri!, RequestDelayMs, cancellationToken).ConfigureAwait(false);
                 using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
                 if (response.StatusCode == HttpStatusCode.Unauthorized)
@@ -383,27 +384,14 @@ public class DispatcharrClient : IDispatcharrClient
                     // Retry with new token
                     using var retryRequest = new HttpRequestMessage(HttpMethod.Get, url);
                     retryRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
+                    await RequestGate.WaitTurnAsync(retryRequest.RequestUri!, RequestDelayMs, cancellationToken).ConfigureAwait(false);
                     using var retryResponse = await _httpClient.SendAsync(retryRequest, cancellationToken).ConfigureAwait(false);
                     retryResponse.EnsureSuccessStatusCode();
-                    var retryContent = await retryResponse.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-
-                    if (RequestDelayMs > 0)
-                    {
-                        await Task.Delay(RequestDelayMs, cancellationToken).ConfigureAwait(false);
-                    }
-
-                    return retryContent;
+                    return await retryResponse.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                 }
 
                 response.EnsureSuccessStatusCode();
-                var content = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-
-                if (RequestDelayMs > 0)
-                {
-                    await Task.Delay(RequestDelayMs, cancellationToken).ConfigureAwait(false);
-                }
-
-                return content;
+                return await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests ||
                 (ex.StatusCode.HasValue && (int)ex.StatusCode.Value >= 500))
@@ -415,7 +403,9 @@ public class DispatcharrClient : IDispatcharrClient
                 }
 
                 _logger.LogWarning("HTTP {StatusCode} for URL: {Url}. Retry {Retry}/{MaxRetries} after {Delay}ms", (int?)ex.StatusCode, url, retryCount + 1, maxRetries, currentDelay);
-                await Task.Delay(currentDelay, cancellationToken).ConfigureAwait(false);
+
+                // Same as the Xtream client: the whole host backs off, not just this request.
+                RequestGate.Pause(new Uri(url), currentDelay);
                 retryCount++;
                 currentDelay *= 2;
             }
