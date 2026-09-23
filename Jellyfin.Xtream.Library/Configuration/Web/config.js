@@ -166,7 +166,8 @@ var XtreamLibraryConfig = (function () {
 
         document.getElementById('txtSyncParallelism').value = p.SyncParallelism || 10;
         document.getElementById('txtCategoryBatchSize').value = p.CategoryBatchSize || 25;
-        document.getElementById('txtRequestDelayMs').value = p.RequestDelayMs || 50;
+        // ?? rather than ||: 0 is a real setting (no gap), and || turned it back into 50 (#122).
+        document.getElementById('txtRequestDelayMs').value = p.RequestDelayMs ?? 50;
         document.getElementById('txtMaxRetries').value = p.MaxRetries || 3;
         document.getElementById('txtRetryDelayMs').value = p.RetryDelayMs || 1000;
         document.getElementById('txtTimeoutSeconds').value = p.TimeoutSeconds || 300;
@@ -271,7 +272,8 @@ var XtreamLibraryConfig = (function () {
 
         p.SyncParallelism = parseInt(document.getElementById('txtSyncParallelism').value) || 10;
         p.CategoryBatchSize = parseInt(document.getElementById('txtCategoryBatchSize').value) || 25;
-        p.RequestDelayMs = parseInt(document.getElementById('txtRequestDelayMs').value) || 50;
+        var requestDelay = parseInt(document.getElementById('txtRequestDelayMs').value, 10);
+        p.RequestDelayMs = Number.isNaN(requestDelay) ? 50 : requestDelay;
         p.MaxRetries = parseInt(document.getElementById('txtMaxRetries').value) || 3;
         p.RetryDelayMs = parseInt(document.getElementById('txtRetryDelayMs').value) || 1000;
         p.TimeoutSeconds = parseInt(document.getElementById('txtTimeoutSeconds').value) || 300;

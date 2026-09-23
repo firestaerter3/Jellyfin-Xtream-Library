@@ -268,6 +268,10 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
 
         while (true)
         {
+            // Before the timeout starts: time spent waiting for this host's turn is not time the
+            // provider took to answer (GitHub #122).
+            await RequestGate.WaitTurnAsync(uri, RequestDelayMs, cancellationToken).ConfigureAwait(false);
+
             // Bounds this attempt without touching HttpClient.Timeout, which is immutable
             // once a request has been sent and would therefore not be reconfigurable per
             // provider on the long-lived client.
@@ -279,15 +283,7 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
                 using var response = await client.GetAsync(uri, timeoutCts.Token).ConfigureAwait(false);
                 response.EnsureSuccessStatusCode();
 
-                var content = await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
-
-                // Apply request delay to prevent rate limiting
-                if (RequestDelayMs > 0)
-                {
-                    await Task.Delay(RequestDelayMs, cancellationToken).ConfigureAwait(false);
-                }
-
-                return content;
+                return await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
             }
             catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests ||
                 (ex.StatusCode.HasValue && (int)ex.StatusCode.Value >= 500))
@@ -299,7 +295,10 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
                 }
 
                 logger.LogWarning("HTTP {StatusCode} for URL: {Url}. Retry {Retry}/{MaxRetries} after {Delay}ms", (int?)ex.StatusCode, uri, retryCount + 1, MaxRetries, currentDelay);
-                await Task.Delay(currentDelay, cancellationToken).ConfigureAwait(false);
+
+                // Every request to this host waits out the backoff, not only this one; the retry
+                // below takes its turn after it like everything else.
+                RequestGate.Pause(uri, currentDelay);
                 retryCount++;
                 currentDelay = Math.Min(currentDelay * 2, MaxRetryDelayMs); // Exponential backoff, capped
             }
