@@ -1014,18 +1014,72 @@ public class LiveTvServiceTests
         m3u.Should().NotContain("group-title");
     }
 
+    // GitHub #123. M3U is not XML and nothing that reads it decodes entities, so an escaped
+    // ampersand was shown to users as the literal text "&amp;".
     [Fact]
-    public void GenerateM3U_CategoryNameWithAmpersand_IsEscaped()
+    public void GenerateM3U_AmpersandIsWrittenAsIs()
     {
         var channels = new List<LiveStreamInfo>
         {
-            new() { StreamId = 1, Name = "Channel 1", Num = 1, CategoryId = 10 },
+            new() { StreamId = 1, Name = "News & Weather", Num = 1, CategoryId = 10, EpgChannelId = "news&weather.uk" },
         };
         var categoryNames = new Dictionary<int, string> { [10] = "Sports & News" };
 
         var m3u = LiveTvService.GenerateM3U(channels, MakeM3UConfig(), catchupOnly: false, "http://127.0.0.1:8096", categoryNames);
 
-        m3u.Should().Contain("group-title=\"Sports &amp; News\"");
+        m3u.Should().Contain("group-title=\"Sports & News\"");
+        m3u.Should().Contain("tvg-name=\"News & Weather\"");
+        m3u.Should().Contain("tvg-id=\"news&weather.uk\"", "the EPG decodes its channel id, so the playlist has to carry the same text to match");
+        m3u.Should().NotContain("&amp;");
+    }
+
+    // A logo URL with a query string stopped working once its separators became "&amp;".
+    [Fact]
+    public void GenerateM3U_LogoUrlQueryStringSurvives()
+    {
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, Name = "Channel 1", Num = 1, StreamIcon = "http://img.test/logo.png?w=100&h=100" },
+        };
+
+        var m3u = LiveTvService.GenerateM3U(channels, MakeM3UConfig(), catchupOnly: false, "http://127.0.0.1:8096", new Dictionary<int, string>());
+
+        m3u.Should().Contain("tvg-logo=\"http://img.test/logo.png?w=100&h=100\"");
+    }
+
+    // A double quote would end the attribute early. "&quot;" is no better, it is shown literally,
+    // and the old replacement order turned it into "&amp;quot;".
+    [Fact]
+    public void GenerateM3U_DoubleQuoteBecomesSingleQuote()
+    {
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, Name = "Channel 1", Num = 1, CategoryId = 10 },
+        };
+        var categoryNames = new Dictionary<int, string> { [10] = "Kids \"Best Of\"" };
+
+        var m3u = LiveTvService.GenerateM3U(channels, MakeM3UConfig(), catchupOnly: false, "http://127.0.0.1:8096", categoryNames);
+
+        m3u.Should().Contain("group-title=\"Kids 'Best Of'\"");
+        m3u.Should().NotContain("&quot;");
+    }
+
+    // Each channel is two lines, the #EXTINF and its URL. A line break inside a provider's name
+    // splits the entry and makes the rest of the name read as a stream address.
+    [Fact]
+    public void GenerateM3U_LineBreakInANameStaysOnOneLine()
+    {
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, Name = "Channel\r\nhttp://elsewhere.test/x", Num = 1, CategoryId = 10 },
+        };
+        var categoryNames = new Dictionary<int, string> { [10] = "Sports\nNews" };
+
+        var m3u = LiveTvService.GenerateM3U(channels, MakeM3UConfig(), catchupOnly: false, "http://127.0.0.1:8096", categoryNames);
+
+        var lines = m3u.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        lines.Should().NotContain(l => l.TrimEnd('\r').StartsWith("http://elsewhere.test", StringComparison.Ordinal));
+        m3u.Should().Contain("group-title=\"Sports News\"");
     }
 
     // Live TV never applied the per-provider client tuning at all, so every Live TV call ran

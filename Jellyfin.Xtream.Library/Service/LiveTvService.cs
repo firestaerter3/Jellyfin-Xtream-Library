@@ -1005,7 +1005,7 @@ public class LiveTvService : IDisposable
                 extinf.Append(CultureInfo.InvariantCulture, $" catchup-source=\"{EscapeAttribute(catchupSource)}\"");
             }
 
-            extinf.Append(CultureInfo.InvariantCulture, $",{cleanName}");
+            extinf.Append(CultureInfo.InvariantCulture, $",{SingleLine(cleanName)}");
 
             sb.AppendLine(extinf.ToString());
 
@@ -1562,7 +1562,20 @@ public class LiveTvService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Makes a value safe inside an M3U attribute (GitHub #123). M3U is not XML and no reader
+    /// decodes entities, so escaping "&amp;" showed the entity itself in the guide and broke logo
+    /// URLs with a query string. Only a double quote, which would end the attribute, and a line
+    /// break, which would end the entry, need handling, and neither has an escape that survives.
+    /// </summary>
     private static string EscapeAttribute(string value)
+        => SingleLine(value).Replace('"', '\'');
+
+    /// <summary>
+    /// Keeps a value on one line, so it cannot split an #EXTINF entry and turn the rest of a
+    /// provider's text into a line the player reads as a stream address.
+    /// </summary>
+    private static string SingleLine(string value)
     {
         if (string.IsNullOrEmpty(value))
         {
@@ -1570,8 +1583,9 @@ public class LiveTvService : IDisposable
         }
 
         return value
-            .Replace("\"", "&quot;", StringComparison.Ordinal)
-            .Replace("&", "&amp;", StringComparison.Ordinal);
+            .Replace("\r\n", " ", StringComparison.Ordinal)
+            .Replace('\r', ' ')
+            .Replace('\n', ' ');
     }
 
     /// <summary>
