@@ -38,6 +38,9 @@ public class StrmNameCollisionTests : IDisposable
     private readonly string _libraryPath;
     private readonly Mock<IXtreamClient> _client = new();
     private readonly List<string> _log = [];
+    private readonly Mock<IMetadataLookupService> _lookup = new();
+    private bool _metadataLookup;
+    private StrmSyncService? _lastService;
 
     private sealed class ListLogger(List<string> sink) : Microsoft.Extensions.Logging.ILogger<StrmSyncService>
     {
@@ -563,6 +566,120 @@ public class StrmNameCollisionTests : IDisposable
         second.MovieNameCollisions.Should().Be(0, "the group the provider confirmed earlier still stands");
     }
 
+    // GitHub #88, the reporter's own two streams. The provider does not answer for the second one,
+    // the title search finds the id the first one's provider confirmed, and writing it anyway gave
+    // it a folder of its own that no later sync would move.
+    [Fact]
+    public async Task AStreamTheProviderDidNotAnswerFor_WaitsAndJoinsItsGroupOnTheNextSync()
+    {
+        VodInfoWithTmdbId(83302, "10882");
+        VodInfoNotAnswered(114677);
+        TitleSearchFinds(10882);
+
+        var first = await RunTwoCategorySleepingBeautySyncAsync(groupByTmdbId: true).ConfigureAwait(true);
+
+        MovieFolders().Should().Equal("La bella addormentata nel bosco (1959) [tmdbid-10882]");
+        first.MoviesDeferredForGrouping.Should().Be(1);
+        first.FailedItems.Should().ContainSingle(f => f.ItemId == 114677 && f.RetryOnNextSyncOnly);
+        _log.Should().Contain(l => l.StartsWith("[Warning] 1 movies were not written", StringComparison.Ordinal));
+
+        VodInfoWithTmdbId(114677, "10882");
+        var second = await RunTwoCategorySleepingBeautySyncAsync(groupByTmdbId: true).ConfigureAwait(true);
+
+        MovieFolders().Should().Equal("La bella addormentata nel bosco (1959) [tmdbid-10882]");
+        Directory.GetFiles(Path.Combine(_libraryPath, "Movies", "La bella addormentata nel bosco (1959) [tmdbid-10882]"), "*.strm")
+            .Should().HaveCount(2);
+        second.MoviesDeferredForGrouping.Should().Be(0);
+    }
+
+    // An answer without an id is an answer: asking again next sync would get the same one, so the
+    // film is written on its own as it always was.
+    [Fact]
+    public async Task AProviderAnswerWithoutAnId_IsWrittenUngroupedAsBefore()
+    {
+        VodInfoWithTmdbId(83302, "10882");
+        _client.Setup(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), 114677, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VodInfoResponse { Info = new VodInfoDetails() });
+        TitleSearchFinds(10882);
+
+        var result = await RunTwoCategorySleepingBeautySyncAsync(groupByTmdbId: true).ConfigureAwait(true);
+
+        MovieFolders().Should().HaveCount(2);
+        result.MoviesDeferredForGrouping.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task WithGroupingOff_AStreamTheProviderDidNotAnswerFor_IsStillWritten()
+    {
+        VodInfoWithTmdbId(83302, "10882");
+        VodInfoNotAnswered(114677);
+        TitleSearchFinds(10882);
+
+        var result = await RunTwoCategorySleepingBeautySyncAsync(groupByTmdbId: false).ConfigureAwait(true);
+
+        MovieFolders().Should().HaveCount(2);
+        result.MoviesDeferredForGrouping.Should().Be(0);
+    }
+
+    // A guest's folder carries its owner's name, so a full sync treats it as new. Deferring it
+    // there would leave its file unprotected and cleanup would take it.
+    [Fact]
+    public async Task AnEstablishedGuestTheProviderStopsAnsweringFor_KeepsItsFileThroughCleanup()
+    {
+        VodInfoWithTmdbId(83302, "10882");
+        VodInfoWithTmdbId(114677, "10882");
+        TitleSearchFinds(10882);
+        await RunTwoCategorySleepingBeautySyncAsync(groupByTmdbId: true, cleanupOrphans: true, incremental: false).ConfigureAwait(true);
+
+        VodInfoNotAnswered(114677);
+        var second = await RunTwoCategorySleepingBeautySyncAsync(groupByTmdbId: true, cleanupOrphans: true, incremental: false).ConfigureAwait(true);
+
+        MovieFolders().Should().Equal("La bella addormentata nel bosco (1959) [tmdbid-10882]");
+        Directory.GetFiles(Path.Combine(_libraryPath, "Movies", "La bella addormentata nel bosco (1959) [tmdbid-10882]"), "*.strm")
+            .Should().HaveCount(2);
+        second.MoviesDeferredForGrouping.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task RetryFailed_LeavesADeferredMovieForTheNextSync()
+    {
+        VodInfoWithTmdbId(83302, "10882");
+        VodInfoNotAnswered(114677);
+        TitleSearchFinds(10882);
+        await RunTwoCategorySleepingBeautySyncAsync(groupByTmdbId: true).ConfigureAwait(true);
+
+        var retry = await _lastService!.RetryFailedAsync(CancellationToken.None).ConfigureAwait(true);
+
+        retry.MoviesCreated.Should().Be(0);
+        MovieFolders().Should().Equal("La bella addormentata nel bosco (1959) [tmdbid-10882]");
+    }
+
+    private string[] MovieFolders()
+        => Directory.GetDirectories(Path.Combine(_libraryPath, "Movies")).Select(d => Path.GetFileName(d)!).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+
+    private void VodInfoNotAnswered(int streamId)
+        => _client.Setup(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), streamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((VodInfoResponse?)null);
+
+    private void TitleSearchFinds(int tmdbId)
+    {
+        _metadataLookup = true;
+        _lookup.Setup(l => l.LookupMovieTmdbIdAsync(It.IsAny<string>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(tmdbId);
+    }
+
+    private Task<SyncResult> RunTwoCategorySleepingBeautySyncAsync(bool groupByTmdbId, bool cleanupOrphans = false, bool incremental = true)
+    {
+        _client.Setup(c => c.GetVodCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Category> { new() { CategoryId = 105, CategoryName = "Animazione" }, new() { CategoryId = 296, CategoryName = "Disney" } });
+        _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 105, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<StreamInfo> { new() { StreamId = 83302, Name = "La bella addormentata nel bosco (1959)", ContainerExtension = "mkv", CategoryId = 105 } });
+        _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 296, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<StreamInfo> { new() { StreamId = 114677, Name = "La Bella Addormentata Nel Bosco - ", ContainerExtension = "mkv", CategoryId = 296 } });
+
+        return RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: incremental, providerCount: 1, proactiveMediaInfo: false, groupByTmdbId, cleanupOrphans);
+    }
+
     private void VodInfoWithTmdbId(int streamId, string tmdbId)
         => _client.Setup(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), streamId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VodInfoResponse { Info = new VodInfoDetails { TmdbId = tmdbId } });
@@ -616,19 +733,20 @@ public class StrmNameCollisionTests : IDisposable
             SyncParallelism = 1,
         }).ToList();
         plugin.Configuration.EnableLiveTv = false;
-        plugin.Configuration.EnableMetadataLookup = false;
+        plugin.Configuration.EnableMetadataLookup = _metadataLookup;
 
         var service = new StrmSyncService(
             _client.Object,
             new Mock<IDispatcharrClient>().Object,
             new Mock<ILibraryManager>().Object,
-            new Mock<IMetadataLookupService>().Object,
+            _lookup.Object,
             new SnapshotService(appPaths.Object, NullLogger<SnapshotService>.Instance),
             new DeltaCalculator(NullLogger<DeltaCalculator>.Instance),
             new LiveTvService(_client.Object, new Mock<IDispatcharrClient>().Object, appPaths.Object, MockAppHost(), NullLogger<LiveTvService>.Instance),
             appPaths.Object,
             new ListLogger(_log));
 
+        _lastService = service;
         return await service.SyncAsync(CancellationToken.None).ConfigureAwait(true);
     }
 
