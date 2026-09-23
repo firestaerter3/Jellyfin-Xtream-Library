@@ -204,7 +204,13 @@ public partial class StrmSyncService
         var config = Plugin.Instance.Configuration;
         var result = new SyncResult { StartTime = DateTime.UtcNow };
 
-        var itemsToRetry = FailedItems.ToList();
+        var itemsToRetry = FailedItems.Where(i => !i.RetryOnNextSyncOnly).ToList();
+        int leftForSync = FailedItems.Count - itemsToRetry.Count;
+        if (leftForSync > 0)
+        {
+            _logger.LogInformation("Leaving {Count} failed items for the next sync, which retries them with TMDB grouping", leftForSync);
+        }
+
         if (itemsToRetry.Count == 0)
         {
             result.EndTime = DateTime.UtcNow;
@@ -1370,6 +1376,7 @@ public partial class StrmSyncService
         globalResult.MoviesDeleted += providerResult.MoviesDeleted;
         globalResult.MoviesUnmatched += providerResult.MoviesUnmatched;
         globalResult.MovieNameCollisions += providerResult.MovieNameCollisions;
+        globalResult.MoviesDeferredForGrouping += providerResult.MoviesDeferredForGrouping;
         globalResult.SeriesCreated += providerResult.SeriesCreated;
         globalResult.SeriesSkipped += providerResult.SeriesSkipped;
         globalResult.SeriesDeleted += providerResult.SeriesDeleted;
@@ -1629,8 +1636,10 @@ public partial class StrmSyncService
         int nameCollisions = 0;
         int errors = 0;
         int unmatchedCount = 0;
+        int groupingDeferred = 0;
         var failedItems = new ConcurrentBag<FailedItem>();
         var unmatchedMovies = new ConcurrentBag<string>();
+        var groupingDeferredNames = new ConcurrentBag<string>();
 
         // Parse folder ID overrides
         var tmdbOverrides = ParseFolderIdOverrides(provider.TmdbFolderIdOverrides);
@@ -2194,7 +2203,23 @@ public partial class StrmSyncService
                             {
                                 providerTmdbId = tmdbParsed;
                             }
+
+                            // A guest's folder is named after its owner, so on a full sync the
+                            // lookup above cannot find it and it arrives here as new. If the
+                            // provider does not answer, the id recorded when the group was built
+                            // keeps it in place, the same way the existing-folder branch does.
+                            if (vodInfo == null
+                                && groupByTmdb
+                                && groupingHint != null
+                                && groupingHint.Movies.TryGetValue(stream.StreamId, out var recordedNew)
+                                && recordedNew.TmdbId.HasValue
+                                && TmdbGrouping.IsGroupable(recordedNew.TmdbIdSource))
+                            {
+                                providerTmdbId = recordedNew.TmdbId;
+                            }
                         }
+
+                        bool providerDidNotAnswer = needProviderTmdbId && !tmdbOverrides.ContainsKey(baseName) && vodInfo == null;
 
                         // Only do metadata lookup if provider doesn't have TMDB ID
                         if (!providerTmdbId.HasValue && enableMetadataLookup && !tmdbOverrides.ContainsKey(baseName))
@@ -2225,6 +2250,33 @@ public partial class StrmSyncService
                         int? groupableTmdbId = tmdbOverrides.TryGetValue(baseName, out int pinnedTmdbId)
                             ? pinnedTmdbId
                             : providerTmdbId;
+
+                        // The provider did not answer for this stream, but the title search found
+                        // an id another stream's provider already confirmed. Writing it now would
+                        // give it a folder of its own, and a sync never moves a folder, so the
+                        // split would be permanent (GitHub #88). Leave it out of this run instead:
+                        // a failed item stays out of the snapshot, so the next sync sees it as new
+                        // and asks the provider again. Only a collision with a confirmed group
+                        // defers; anything else is written as before, so a stream whose info call
+                        // always fails still appears and is not re-fetched on every sync.
+                        if (groupByTmdb
+                            && providerDidNotAnswer
+                            && !groupableTmdbId.HasValue
+                            && autoLookupTmdbId.HasValue
+                            && groupFolders.ContainsKey(autoLookupTmdbId.Value))
+                        {
+                            Interlocked.Increment(ref groupingDeferred);
+                            groupingDeferredNames.Add(baseName);
+                            failedItems.Add(new FailedItem
+                            {
+                                ItemType = "Movie",
+                                ItemId = stream.StreamId,
+                                Name = stream.Name,
+                                ErrorMessage = $"Provider did not return movie info. Not written, so it can join the TMDB {autoLookupTmdbId.Value} group on the next sync",
+                                RetryOnNextSyncOnly = true,
+                            });
+                            return;
+                        }
 
                         if (groupByTmdb && groupableTmdbId.HasValue && IsUsableMetadataId(groupableTmdbId.Value))
                         {
@@ -2552,6 +2604,7 @@ public partial class StrmSyncService
         result.MoviesUpdated += moviesUpdated;
         result.MoviesSkipped += moviesSkipped;
         result.MovieNameCollisions += nameCollisions;
+        result.MoviesDeferredForGrouping += groupingDeferred;
         result.AddErrors(errors);
         result.AddFailedItems(failedItems);
         result.MoviesUnmatched = unmatchedCount;
@@ -2561,6 +2614,14 @@ public partial class StrmSyncService
             _logger.LogWarning(
                 "{Count} movie STRM files were not written because a different provider stream had already claimed the same name. The provider is offering duplicate streams that share a title and a quality tag.",
                 nameCollisions);
+        }
+
+        if (groupingDeferred > 0)
+        {
+            _logger.LogWarning(
+                "{Count} movies were not written because the provider did not return their info, and without it they cannot join the TMDB group their title matches. The next sync asks again. Examples: {Examples}",
+                groupingDeferred,
+                string.Join(", ", groupingDeferredNames.OrderBy(n => n, StringComparer.Ordinal).Take(5)));
         }
 
         // Log unmatched movies
@@ -4969,6 +5030,14 @@ public class SyncResult
     public int MovieNameCollisions { get; set; }
 
     /// <summary>
+    /// Gets or sets the number of movies left out of this run because the provider did not
+    /// return their info while the title search matched a TMDB group another stream's provider
+    /// had confirmed. Writing them would split the group permanently, so the next sync retries
+    /// them instead (GitHub #88).
+    /// </summary>
+    public int MoviesDeferredForGrouping { get; set; }
+
+    /// <summary>
     /// Gets the total number of movies (created + skipped + updated).
     /// </summary>
     public int TotalMovies => MoviesCreated + MoviesSkipped + MoviesUpdated;
@@ -5287,4 +5356,11 @@ public class FailedItem
     /// Defaults to 0 for backward compatibility with persisted history.
     /// </summary>
     public int ProviderIndex { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether only a sync may retry this item. Retry Failed
+    /// writes a plain folder named from the title, which for a movie deferred to join a TMDB
+    /// group would create the very split the deferral exists to prevent (GitHub #88).
+    /// </summary>
+    public bool RetryOnNextSyncOnly { get; set; }
 }
