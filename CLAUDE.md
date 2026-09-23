@@ -225,9 +225,17 @@ for each, with `targetAbi` telling the server which one it may install: `10.11.0
 entries, `12.0.0.0` on the 2.x ones. That is what 32 of 32 official plugins did when 12.0 shipped,
 and all 32 stopped publishing for 10.11 at the same moment.
 
-**The 1.x line is frozen at 1.55.0.0.** Anything still on Jellyfin 10.11 stays there. Before
-reviving it for a fix, check the download counts on both lines: that split is the only measurement
-of how many users are still on 10.11, since the plugin has no telemetry.
+**The 1.x line is maintained on `release/1.x`**, branched from `v1.55.0.0`. `main` is 2.x only.
+User-facing bug fixes land on `main` first and are cherry-picked onto `release/1.x`; new features
+stay on 2.x. Tag the 1.x release from that branch: a tag push runs the workflow file as it exists at
+the tag, which on `release/1.x` still sets up .NET 9, so nothing on `main` has to build for 10.11.
+Its manifest entries carry `targetAbi` `10.11.0.0`.
+
+Why it was unfrozen (2026-09-23): the 1.x line had been declared frozen at 1.55.0.0, but download
+counts showed 10.11 was still the majority. Stable had no 2.x entry at all, so its ~1,000 installs
+were all on 1.x, and even on beta 1.55.0.0 drew about a quarter of the downloads. Re-check those
+counts before retiring the branch; they are the only measurement of how many users are still on
+10.11, since the plugin has no telemetry.
 
 ## Key Dependencies
 - Jellyfin.Controller 12.0.0
