@@ -134,6 +134,39 @@ public class RequestGateTests
         GapsBetween(starts).Should().OnlyContain(gap => gap >= 50 - Slack);
     }
 
+    // CI caught this one: timers fire late on a loaded machine, and when every waiter wakes at
+    // the same moment the gate must still let only one through per gap. The first version
+    // reserved start times in advance, and all waiters whose time had passed sent at once
+    // (two starts 0.03 ms apart). Here every sleep is held until the "machine" frees up at
+    // 300 ms, so all waiters wake together.
+    [Fact]
+    public async Task WaitersWokenTogetherByLateTimers_StillStartTheDelayApart()
+    {
+        var host = UniqueHost();
+        var starts = new ConcurrentBag<double>();
+        var clock = Stopwatch.StartNew();
+        var client = XtreamClientRecording(starts, clock, _ => HttpStatusCode.OK);
+        client.RequestDelayMs = 50;
+        var stalled = Task.Delay(300);
+        RequestGate.SleepOverride.Value = async (wait, ct) =>
+        {
+            await Task.Delay(wait, ct).ConfigureAwait(false);
+            await stalled.ConfigureAwait(false);
+        };
+
+        try
+        {
+            await Task.WhenAll(Enumerable.Range(1, 6).Select(id =>
+                client.GetVodInfoAsync(new ConnectionInfo(host, "u", "p"), id, CancellationToken.None)));
+        }
+        finally
+        {
+            RequestGate.SleepOverride.Value = null;
+        }
+
+        GapsBetween(starts).Should().OnlyContain(gap => gap >= 50 - Slack);
+    }
+
     private static string UniqueHost() => $"http://gate-{Guid.NewGuid():N}.test";
 
     private static IEnumerable<double> GapsBetween(IEnumerable<double> starts)
