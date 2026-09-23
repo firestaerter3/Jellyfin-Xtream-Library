@@ -39,25 +39,46 @@ internal static class RequestGate
     private static readonly ConcurrentDictionary<string, Slot> Slots = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Gets how a wait is slept, for tests only. A test replaces it to make timers fire late, the
+    /// way they do on a loaded machine, which is the condition that exposed the burst. Async-local
+    /// so a replacement reaches only the calls started from that test.
+    /// </summary>
+    internal static AsyncLocal<Func<TimeSpan, CancellationToken, Task>?> SleepOverride { get; } = new();
+
+    /// <summary>
     /// Waits until a request to <paramref name="uri"/>'s host may start, and reserves that start.
     /// </summary>
     /// <param name="uri">The request address; only its host and port are used.</param>
     /// <param name="delayMs">Minimum gap between request starts to this host.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A task that completes when the request may be sent.</returns>
-    public static Task WaitTurnAsync(Uri uri, int delayMs, CancellationToken cancellationToken)
+    public static async Task WaitTurnAsync(Uri uri, int delayMs, CancellationToken cancellationToken)
     {
         var slot = Slots.GetOrAdd(uri.Authority, _ => new Slot());
-        TimeSpan wait;
-        lock (slot)
-        {
-            var now = DateTime.UtcNow;
-            var start = slot.NextStartUtc > now ? slot.NextStartUtc : now;
-            slot.NextStartUtc = start.AddMilliseconds(Math.Max(delayMs, 0));
-            wait = start - now;
-        }
 
-        return wait > TimeSpan.Zero ? Task.Delay(wait, cancellationToken) : Task.CompletedTask;
+        // The turn is claimed on waking, against the clock, not reserved in advance. Reserving
+        // start times up front and sleeping until them looked equivalent, but timers fire late
+        // on a busy machine, and every sleeper whose slot had passed then woke together and sent
+        // at once: CI measured two starts 0.03 ms apart. Claiming on waking turns a late timer
+        // into a later start instead of a burst.
+        while (true)
+        {
+            TimeSpan wait;
+            lock (slot)
+            {
+                var now = DateTime.UtcNow;
+                if (slot.NextStartUtc <= now)
+                {
+                    slot.NextStartUtc = now.AddMilliseconds(Math.Max(delayMs, 0));
+                    return;
+                }
+
+                wait = slot.NextStartUtc - now;
+            }
+
+            var sleep = SleepOverride.Value ?? Task.Delay;
+            await sleep(wait, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>
