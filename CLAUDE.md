@@ -174,6 +174,22 @@ landing somewhere it should not:
 - **Always check `git diff --stat` before committing a manifest.** The expected result is roughly 8
   insertions and 0 deletions. Anything larger means the formatting drifted.
 
+## Reporting bugs upstream to Jellyfin
+
+Jellyfin has a written LLM policy (jellyfin.org, Contributing, "LLM/AI Policies") that applies to
+every official Jellyfin repo and community space. Read it before anything goes to `jellyfin/*`.
+
+- **No LLM-written text in issues, comments, PR bodies or forum posts.** It must be the poster's
+  own words; violations are closed or deleted. So do not draft issue or PR prose for the user to
+  post there. Hand over the facts as notes (file, method, line, cause, repro) and let them write it.
+- **LLM-assisted code is allowed** if it is small, focused, tested, and the submitter can explain it
+  and handle review themselves. The PR template's "Code assistance" section must say honestly how
+  an LLM helped. That disclosure overrides the usual rule of keeping AI out of public text.
+
+Learned on #112 (2026-09-24): a Jellyfin `GuideManager.GetChannel` bug was found here, an issue was
+drafted, and only then was the policy checked. The report went to dillardblom to file in their own
+words, since they could reproduce it and we could not.
+
 ## Related Repositories
 
 | Repository | Purpose | URL |
