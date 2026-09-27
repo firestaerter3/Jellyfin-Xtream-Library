@@ -335,4 +335,29 @@ public class LiveTvControllerTests : IDisposable
 
         result.Should().BeOfType<BadRequestObjectResult>();
     }
+
+    [Fact]
+    public async System.Threading.Tasks.Task GetM3UPlaylist_ListWithOnlyComments_IsNotRestricted()
+    {
+        // Commenting every line out is how you switch a list off; it must not deny everyone.
+        Plugin.Instance.Configuration.LiveTvEndpointAllowedIps = "# 10.0.0.0/8\n# 192.168.0.0/16";
+        Plugin.Instance.Configuration.EnableLiveTv = false;
+        SetRemoteIp(IPAddress.Parse("203.0.113.5"));
+
+        var result = await _controller.GetM3UPlaylist(System.Threading.CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>("the request got past the allow-list to the Live TV check");
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task GetEpgXml_AllowListConfigured_NonMatchingIp_ReturnsNotFound()
+    {
+        Plugin.Instance.Configuration.LiveTvEndpointAllowedIps = "10.0.0.0/8";
+        Plugin.Instance.Configuration.EnableLiveTv = true;
+        SetRemoteIp(IPAddress.Parse("203.0.113.5"));
+
+        var result = await _controller.GetEpgXml(System.Threading.CancellationToken.None);
+
+        result.Should().BeOfType<NotFoundResult>();
+    }
 }

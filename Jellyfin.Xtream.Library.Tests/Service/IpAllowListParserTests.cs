@@ -215,5 +215,42 @@ public class IpAllowListParserTests
         result.Should().BeFalse();
     }
 
+    // Found in the code review of #127.
+
+    [Theory]
+    [InlineData("192.168.1")]
+    [InlineData("10")]
+    [InlineData("10.0/8")]
+    public void Parse_ShortenedIPv4_IsRejectedNotReadAsAnotherHost(string entry)
+    {
+        // IPAddress.TryParse reads "192.168.1" as 192.168.0.1 and "10" as 0.0.0.10.
+        IpAllowListParser.Parse(entry).Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("::ffff:192.168.1.20", "192.168.1.20", true)]
+    [InlineData("::ffff:10.0.0.0/104", "10.1.2.3", true)]
+    [InlineData("::ffff:10.0.0.0/104", "11.1.2.3", false)]
+    public void Parse_EntryInMappedForm_MatchesTheCallerItNames(string entry, string caller, bool expected)
+    {
+        // A rejected caller used to be logged as ::ffff:a.b.c.d; pasting that into the list
+        // never matched, because callers are compared as IPv4.
+        var allowList = IpAllowListParser.Parse(entry);
+
+        IpAllowListParser.IsAllowed(IPAddress.Parse("::ffff:" + caller), allowList).Should().Be(expected);
+        IpAllowListParser.IsAllowed(IPAddress.Parse(caller), allowList).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("# 10.0.0.0/8\n  # 192.168.0.0/16\n", false)]
+    [InlineData("not-an-ip", true)]
+    [InlineData("# note\n10.0.0.0/8", true)]
+    public void HasEntries_CountsEveryNonCommentLine(string? text, bool expected)
+    {
+        IpAllowListParser.HasEntries(text).Should().Be(expected);
+    }
+
     #endregion
 }

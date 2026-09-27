@@ -1272,7 +1272,9 @@
                                     <br /><br />
                                     Both playlists contain your Xtream username and password in every stream line.
                                     With <strong>Dispatcharr mode</strong> on, channels Dispatcharr knows are served
-                                    through its own URLs instead, which carry no credentials.
+                                    through its own URLs instead, which carry no credentials, unless "Put the
+                                    catch-up template in the playlist" above is on: that template still contains your
+                                    password.
                                 </div>
                             </div>
                             <div class="inputContainer">
@@ -1284,12 +1286,21 @@
                                     anyone, which is how they have always worked. Fill it in and everything else gets a
                                     404, indistinguishable from a URL that does not exist.
                                     <br /><br />
-                                    <strong>Your own server has to be on the list too.</strong> The URLs above are built
-                                    from the address you are looking at Jellyfin on right now, so if you paste a public
-                                    one into the tuner, Jellyfin's own request arrives from your reverse proxy and not
-                                    from <code>127.0.0.1</code>. Add the proxy's address, or point the tuner at
-                                    <code>http://localhost:8096/XtreamLibrary/...</code> instead. Get this wrong and the
-                                    guide goes empty with no other symptom, so change it while you can watch the result.
+                                    <strong>Your own server has to be on the list too.</strong> Jellyfin fetches channel
+                                    logos itself from <code>127.0.0.1</code>, so always include <code>127.0.0.1</code>
+                                    and <code>::1</code>. For the tuner and the guide, the simplest setup is to point them
+                                    at <code>http://localhost:8096/XtreamLibrary/...</code> rather than the URLs shown on this page,
+                                    which use the address you are browsing on. With a public URL there instead,
+                                    Jellyfin's request goes out and comes back in through your reverse proxy: it arrives
+                                    from the proxy's address, or, if the proxy is listed under Known Proxies in
+                                    Jellyfin's networking settings, from your server's own public address. Get this
+                                    wrong and the guide goes empty with no other symptom, so change it while you can
+                                    watch the result.
+                                    <br /><br />
+                                    Write IPv4 addresses in full (<code>192.168.1.0/24</code>, not
+                                    <code>192.168.1</code>). Lines starting with <code>#</code> are ignored, so a list
+                                    with only comments restricts nothing. A list whose entries are all invalid blocks
+                                    everyone, rather than silently opening up.
                                 </div>
                             </div>
                             <div class="inputContainer">

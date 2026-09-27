@@ -33,6 +33,10 @@ namespace Jellyfin.Xtream.Library.Api;
 [Route("XtreamLibrary")]
 public class LiveTvController : ControllerBase
 {
+    // The last allow-list parsed, with the text it came from. Shared across requests (a
+    // controller instance lives for one request); a stale read only means one extra parse.
+    private static ParsedAllowList? _parsedAllowList;
+
     private readonly LiveTvService _liveTvService;
     private readonly IXtreamClient _client;
     private readonly ILogger<LiveTvController> _logger;
@@ -383,35 +387,49 @@ public class LiveTvController : ControllerBase
     {
         var rawAllowList = config.LiveTvEndpointAllowedIps;
 
-        if (string.IsNullOrWhiteSpace(rawAllowList))
+        // Blank, or only '#' comments: no restriction. Commenting every line out is the obvious
+        // way to switch a list off, and it must not lock everyone out.
+        if (!IpAllowListParser.HasEntries(rawAllowList))
         {
             return true;
         }
 
-        var allowList = IpAllowListParser.Parse(rawAllowList);
-
-        if (allowList.Count == 0)
+        // Parsed once per distinct setting, not on every request: a guide refresh fetches a
+        // channel logo per overridden channel.
+        var cached = _parsedAllowList;
+        if (cached == null || !string.Equals(cached.Raw, rawAllowList, System.StringComparison.Ordinal))
         {
-            // The setting is configured but none of it parsed, almost certainly a typo.
-            // Deny everyone rather than silently falling back to the "unset" open
-            // behaviour, which would defeat the restriction the operator intended.
-            _logger.LogWarning(
-                "LiveTvEndpointAllowedIps is set but contains no valid IP/CIDR entries, denying all Live TV endpoint requests until this is corrected");
+            cached = new ParsedAllowList(rawAllowList, IpAllowListParser.Parse(rawAllowList));
+            _parsedAllowList = cached;
+            if (cached.Networks.Count == 0)
+            {
+                // Entries were written but none parsed, almost certainly a typo. Deny everyone
+                // rather than falling back to open, which would defeat the restriction the
+                // operator intended. Logged once per setting value, not per request.
+                _logger.LogWarning(
+                    "LiveTvEndpointAllowedIps is set but contains no valid IP/CIDR entries, denying all Live TV endpoint requests until this is corrected");
+            }
+        }
+
+        if (cached.Networks.Count == 0)
+        {
             return false;
         }
 
         // HttpContext is null when a controller action is invoked directly, outside the
         // ASP.NET Core pipeline (this project's own controller tests do exactly that).
-        // IpAllowListParser.IsAllowed treats a null address as "unknown caller", which is
-        // only actually reachable when a non-empty allow-list is configured.
+        // IpAllowListParser.IsAllowed treats a null address as "unknown caller" and denies it.
         var remoteIp = HttpContext?.Connection?.RemoteIpAddress;
-        var allowed = IpAllowListParser.IsAllowed(remoteIp, allowList);
+        var allowed = IpAllowListParser.IsAllowed(remoteIp, cached.Networks);
 
         if (!allowed)
         {
-            _logger.LogWarning(
+            // Debug, not Warning: an anonymous caller decides how often this happens, and a
+            // louder level would let anyone fill the log. Logged in the form it is matched in,
+            // so the address can be copied into the list as it stands.
+            _logger.LogDebug(
                 "Rejected Live TV endpoint request from {RemoteIp}, does not match the configured allow-list",
-                remoteIp);
+                remoteIp == null ? null : IpAllowListParser.Canonical(remoteIp));
         }
 
         return allowed;
@@ -424,6 +442,8 @@ public class LiveTvController : ControllerBase
             && !string.IsNullOrEmpty(provider.BaseUrl)
             && !string.IsNullOrEmpty(provider.Username);
     }
+
+    private sealed record ParsedAllowList(string Raw, IReadOnlyList<System.Net.IPNetwork> Networks);
 }
 
 /// <summary>

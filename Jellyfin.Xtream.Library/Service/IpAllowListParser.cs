@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 
@@ -54,11 +55,22 @@ public static class IpAllowListParser
                 continue;
             }
 
-            if (entry.Contains('/', StringComparison.Ordinal))
+            var slash = entry.IndexOf('/', StringComparison.Ordinal);
+            var addressPart = slash >= 0 ? entry[..slash] : entry;
+
+            // IPAddress.TryParse accepts shortened IPv4 ("192.168.1" is 192.168.0.1, "10" is
+            // 0.0.0.10), so a half-typed LAN entry would quietly allow some other host instead of
+            // being rejected. IPv4 has to be written out in full.
+            if (!addressPart.Contains(':', StringComparison.Ordinal) && addressPart.Split('.').Length != 4)
+            {
+                continue;
+            }
+
+            if (slash >= 0)
             {
                 if (IPNetwork.TryParse(entry, out var network))
                 {
-                    result.Add(network);
+                    result.Add(Normalize(network));
                 }
 
                 continue;
@@ -68,12 +80,41 @@ public static class IpAllowListParser
             if (IPAddress.TryParse(entry, out var address))
             {
                 var prefixLength = address.AddressFamily == AddressFamily.InterNetworkV6 ? 128 : 32;
-                result.Add(new IPNetwork(address, prefixLength));
+                result.Add(Normalize(new IPNetwork(address, prefixLength)));
             }
         }
 
         return result;
     }
+
+    /// <summary>
+    /// Whether the text holds any entry at all, valid or not: a line that is neither blank nor a
+    /// '#' comment. A list with only comments is not restricting anything, while one whose
+    /// entries all fail to parse is a typo and has to deny everyone.
+    /// </summary>
+    /// <param name="allowListText">The allow-list text.</param>
+    /// <returns>True when at least one non-comment line is present.</returns>
+    public static bool HasEntries(string? allowListText)
+        => !string.IsNullOrWhiteSpace(allowListText) &&
+           allowListText.Split(LineSeparators, StringSplitOptions.RemoveEmptyEntries)
+               .Select(l => l.Trim())
+               .Any(l => l.Length > 0 && !l.StartsWith('#'));
+
+    /// <summary>
+    /// The address a caller is matched as: an IPv4-mapped IPv6 address (::ffff:a.b.c.d, how
+    /// Kestrel reports IPv4 callers on a dual-stack socket) as plain IPv4.
+    /// </summary>
+    /// <param name="address">The address.</param>
+    /// <returns>The address used for matching and logging.</returns>
+    public static IPAddress Canonical(IPAddress address)
+        => address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
+
+    // An entry copied from a log line in mapped form (::ffff:a.b.c.d) has to match the IPv4 form
+    // callers are compared in.
+    private static IPNetwork Normalize(IPNetwork network)
+        => network.BaseAddress.IsIPv4MappedToIPv6 && network.PrefixLength >= 96
+            ? new IPNetwork(network.BaseAddress.MapToIPv4(), network.PrefixLength - 96)
+            : network;
 
     /// <summary>
     /// Decides whether a request from <paramref name="remoteAddress"/> is allowed.
@@ -100,7 +141,7 @@ public static class IpAllowListParser
         // Kestrel commonly reports loopback/IPv4 callers as IPv4-mapped IPv6
         // addresses (::ffff:127.0.0.1) on dual-stack sockets. Normalise so a plain
         // "127.0.0.1" or "10.0.0.0/8" entry still matches.
-        var candidate = remoteAddress.IsIPv4MappedToIPv6 ? remoteAddress.MapToIPv4() : remoteAddress;
+        var candidate = Canonical(remoteAddress);
 
         foreach (var network in allowList)
         {
