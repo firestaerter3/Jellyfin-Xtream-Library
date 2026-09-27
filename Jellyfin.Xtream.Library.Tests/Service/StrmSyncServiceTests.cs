@@ -702,6 +702,9 @@ public class StrmSyncServiceTests
     [InlineData(null, null)]
     [InlineData("0000-00-00", null)]
     [InlineData("12345678", null)]
+    [InlineData("1970-01-01", null)]
+    [InlineData("1900-01-01", null)]
+    [InlineData("1970-06-12", 1970)]
     public void ExtractYearFromReleaseDate_ReadsTheYear(string? releaseDate, int? expected)
     {
         StrmSyncService.ExtractYearFromReleaseDate(releaseDate).Should().Be(expected);
@@ -740,6 +743,19 @@ public class StrmSyncServiceTests
         {
             Directory.Delete(dir, true);
         }
+    }
+
+    [Theory]
+    [InlineData("Face/Off", "Face/Off")]
+    [InlineData("Léon: The Professional (1994)", "Léon: The Professional")]
+    [InlineData("Alarum - 2025", "Alarum")]
+    [InlineData("-", null)]
+    [InlineData("[]", null)]
+    [InlineData("   ", null)]
+    [InlineData(null, null)]
+    public void CleanOriginalTitleForSearch_KeepsTheTitleSearchable(string? input, string? expected)
+    {
+        StrmSyncService.CleanOriginalTitleForSearch(input).Should().Be(expected);
     }
 
     #endregion

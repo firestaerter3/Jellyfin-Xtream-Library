@@ -99,11 +99,17 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
         {
             for (int i = 0; i < attempts.Count; i++)
             {
-                var (attemptTitle, attemptYear) = attempts[i];
+                var (attemptTitle, attemptYear, checkYear) = attempts[i];
 
                 // Each attempt has its own cache entry, so a miss cached for the first one
-                // does not hide a match an earlier run found with a later one.
+                // does not hide a match an earlier run found with a later one. A year-free search
+                // checked against a release year is cached per year: its answer depends on it.
                 var cacheKey = MetadataCache.GetMovieKey(attemptTitle, attemptYear);
+                if (!attemptYear.HasValue && checkYear.HasValue)
+                {
+                    cacheKey += string.Create(CultureInfo.InvariantCulture, $":check{checkYear}");
+                }
+
                 if (_cache.TryGet(cacheKey, out var cached, config.MetadataCacheAgeDays))
                 {
                     _logger.LogDebug("Cache hit for movie: {Title} ({Year}) -> TMDb {Id}", attemptTitle, attemptYear, cached?.TmdbId);
@@ -136,7 +142,7 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
                 await _rateLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    tmdbId = await SearchMovieTmdbIdAsync(attemptTitle, attemptYear, cancellationToken).ConfigureAwait(false);
+                    tmdbId = await SearchMovieTmdbIdAsync(attemptTitle, attemptYear, checkYear, cancellationToken).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -158,18 +164,26 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
 
             return null;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            // A timeout or a cancelled sync propagates, so the caller can tell it from a miss.
             _logger.LogWarning(ex, "Failed to lookup TMDb ID for movie: {Title} ({Year})", title, year);
             return null;
         }
     }
 
     /// <summary>
-    /// Lists the title and year combinations a movie lookup tries, in order. Only the first is
-    /// tried unless the year-free fallback is enabled. The fallbacks cover a provider putting the
-    /// wrong year in the title (the year of its release date) and a title in another language
-    /// than the metadata provider knows it by (the original title).
+    /// Lists the searches a movie lookup tries, in order. Only the first is tried unless the
+    /// year-free fallback is enabled. The fallbacks cover a provider putting the wrong year in the
+    /// title (the year of its release date) and a title in another language than the metadata
+    /// provider knows it by (the original title).
+    /// <para>
+    /// Each attempt carries the year its result is checked against. A search without a year still
+    /// checks against the release-date year when there is one, so it cannot accept a remake or an
+    /// older film of the same name. And when the title has no year, the release-date year is
+    /// searched before the title alone, since the year-free search takes whichever version comes
+    /// first.
+    /// </para>
     /// </summary>
     /// <param name="title">The cleaned movie title.</param>
     /// <param name="year">The year taken from the stream title, if any.</param>
@@ -177,45 +191,51 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
     /// <param name="originalTitle">The provider's original title, cleaned, if any.</param>
     /// <param name="fallbackEnabled">Whether the year-free fallback setting is on.</param>
     /// <returns>The attempts, without duplicates.</returns>
-    internal static IReadOnlyList<(string Title, int? Year)> GetMovieLookupAttempts(
+    internal static IReadOnlyList<(string Title, int? Year, int? CheckYear)> GetMovieLookupAttempts(
         string title,
         int? year,
         int? releaseDateYear,
         string? originalTitle,
         bool fallbackEnabled)
     {
-        var attempts = new List<(string Title, int? Year)>();
-        void Add(string t, int? y)
+        var attempts = new List<(string Title, int? Year, int? CheckYear)>();
+        void Add(string t, int? y, int? check)
         {
             if (!attempts.Any(a => a.Year == y && string.Equals(a.Title, t, StringComparison.OrdinalIgnoreCase)))
             {
-                attempts.Add((t, y));
+                attempts.Add((t, y, check));
             }
         }
 
-        Add(title, year);
         if (!fallbackEnabled)
         {
+            Add(title, year, year);
             return attempts;
         }
 
-        if (releaseDateYear.HasValue)
+        if (!year.HasValue && releaseDateYear.HasValue)
         {
-            Add(title, releaseDateYear);
+            Add(title, releaseDateYear, releaseDateYear);
         }
 
-        Add(title, null);
+        Add(title, year, year ?? releaseDateYear);
+        if (releaseDateYear.HasValue)
+        {
+            Add(title, releaseDateYear, releaseDateYear);
+        }
+
+        Add(title, null, releaseDateYear);
 
         if (!string.IsNullOrWhiteSpace(originalTitle))
         {
-            Add(originalTitle, releaseDateYear ?? year);
-            Add(originalTitle, null);
+            Add(originalTitle, releaseDateYear ?? year, releaseDateYear ?? year);
+            Add(originalTitle, null, releaseDateYear);
         }
 
         return attempts;
     }
 
-    private async Task<int?> SearchMovieTmdbIdAsync(string title, int? year, CancellationToken cancellationToken)
+    private async Task<int?> SearchMovieTmdbIdAsync(string title, int? year, int? checkYear, CancellationToken cancellationToken)
     {
         var results = await _providerManager.GetRemoteSearchResults<Movie, MovieInfo>(
             new RemoteSearchQuery<MovieInfo> { SearchInfo = new MovieInfo { Name = title, Year = year } },
@@ -231,7 +251,7 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
         }
 
         // Validate the match to reject obvious false positives
-        if (IsLikelyFalsePositive(title, firstResult.Name, year, firstResult.ProductionYear))
+        if (IsLikelyFalsePositive(title, firstResult.Name, checkYear, firstResult.ProductionYear))
         {
             _logger.LogDebug(
                 "Rejected TMDb match for movie: '{SearchTitle}' -> '{ResultName}' ({ResultYear})",
@@ -256,119 +276,106 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
 
         await InitializeAsync().ConfigureAwait(false);
 
-        var cacheKey = MetadataCache.GetSeriesKey(title, year);
-        if (_cache.TryGet(cacheKey, out var cached, config.MetadataCacheAgeDays))
+        // Same shape as the movie lookup, and for the same reason: each attempt has its own cache
+        // entry, so a miss cached for the year-qualified search does not hide a match the
+        // year-free retry found on an earlier run.
+        var attempts = new List<int?> { year };
+        if (year.HasValue && config.FallbackToYearlessLookup)
         {
-            _logger.LogDebug("Cache hit for series: {Title} ({Year}) -> TVDb {Id}", title, year, cached?.TvdbId);
-            return cached?.TvdbId;
+            attempts.Add(null);
         }
 
-        if (_rateLimiter == null)
-        {
-            throw new InvalidOperationException("MetadataLookupService not initialized. Call InitializeAsync first.");
-        }
-
-        await _rateLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var searchInfo = new SeriesInfo
+            for (int i = 0; i < attempts.Count; i++)
             {
-                Name = title,
-                Year = year,
-            };
-
-            var results = await _providerManager.GetRemoteSearchResults<Series, SeriesInfo>(
-                new RemoteSearchQuery<SeriesInfo> { SearchInfo = searchInfo },
-                cancellationToken).ConfigureAwait(false);
-
-            var firstResult = results.FirstOrDefault();
-            int? tvdbId = null;
-
-            if (firstResult?.ProviderIds != null &&
-                firstResult.ProviderIds.TryGetValue(MetadataProvider.Tvdb.ToString(), out var tvdbIdStr) &&
-                int.TryParse(tvdbIdStr, out var parsedId))
-            {
-                // Validate the match to reject obvious false positives
-                if (IsLikelyFalsePositive(title, firstResult.Name, year, firstResult.ProductionYear))
+                var attemptYear = attempts[i];
+                var cacheKey = MetadataCache.GetSeriesKey(title, attemptYear);
+                if (_cache.TryGet(cacheKey, out var cached, config.MetadataCacheAgeDays))
                 {
-                    _logger.LogDebug(
-                        "Rejected TVDb match for series: '{SearchTitle}' -> '{ResultName}' ({ResultYear})",
+                    _logger.LogDebug("Cache hit for series: {Title} ({Year}) -> TVDb {Id}", title, attemptYear, cached?.TvdbId);
+                    if (cached?.TvdbId is int cachedId)
+                    {
+                        return cachedId;
+                    }
+
+                    continue;
+                }
+
+                if (i > 0)
+                {
+                    _logger.LogInformation(
+                        "Retrying TVDb lookup without year for: '{Title}' (extracted year={Year})",
                         title,
-                        firstResult.Name,
-                        firstResult.ProductionYear);
+                        year);
                 }
-                else
+
+                if (_rateLimiter == null)
                 {
-                    tvdbId = parsedId;
-                    _logger.LogDebug("Found TVDb ID for series: {Title} ({Year}) -> {Id}", title, year, tvdbId);
+                    throw new InvalidOperationException("MetadataLookupService not initialized. Call InitializeAsync first.");
                 }
-            }
-            else
-            {
-                _logger.LogDebug("No TVDb ID found for series: {Title} ({Year})", title, year);
-            }
 
-            // Cache the primary result (even if null, to avoid repeated lookups)
-            _cache.Set(cacheKey, new MetadataCacheEntry
-            {
-                TvdbId = tvdbId,
-                Confidence = firstResult != null && tvdbId.HasValue ? 100 : 0,
-            });
-
-            // Fallback: retry without year if primary failed and feature is enabled.
-            if (tvdbId == null && year.HasValue && config.FallbackToYearlessLookup)
-            {
-                _logger.LogInformation(
-                    "Retrying TVDb lookup without year for: '{Title}' (extracted year={Year})",
-                    title,
-                    year);
-
-                var fallbackKey = MetadataCache.GetSeriesKey(title, null);
-                if (_cache.TryGet(fallbackKey, out var fallbackCached, config.MetadataCacheAgeDays))
+                int? tvdbId;
+                await _rateLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
                 {
-                    tvdbId = fallbackCached?.TvdbId;
-                    _logger.LogDebug("Fallback cache hit for series: {Title} -> TVDb {Id}", title, tvdbId);
+                    tvdbId = await SearchSeriesTvdbIdAsync(title, attemptYear, cancellationToken).ConfigureAwait(false);
                 }
-                else
+                finally
                 {
-                    var fallbackInfo = new SeriesInfo { Name = title, Year = null };
-                    var fallbackResults = await _providerManager.GetRemoteSearchResults<Series, SeriesInfo>(
-                        new RemoteSearchQuery<SeriesInfo> { SearchInfo = fallbackInfo },
-                        cancellationToken).ConfigureAwait(false);
+                    _rateLimiter.Release();
+                }
 
-                    var fallbackFirst = fallbackResults.FirstOrDefault();
-                    if (fallbackFirst?.ProviderIds != null &&
-                        fallbackFirst.ProviderIds.TryGetValue(MetadataProvider.Tvdb.ToString(), out var fbStr) &&
-                        int.TryParse(fbStr, out var fbId) &&
-                        !IsLikelyFalsePositive(title, fallbackFirst.Name, null, fallbackFirst.ProductionYear))
-                    {
-                        tvdbId = fbId;
-                        _logger.LogDebug("Fallback found TVDb ID for series: {Title} -> {Id}", title, tvdbId);
-                    }
-                    else
-                    {
-                        _logger.LogDebug("Fallback found no TVDb ID for series: {Title}", title);
-                    }
+                // Cache even a miss, to avoid repeating the search
+                _cache.Set(cacheKey, new MetadataCacheEntry
+                {
+                    TvdbId = tvdbId,
+                    Confidence = tvdbId.HasValue ? 100 : 0,
+                });
 
-                    _cache.Set(fallbackKey, new MetadataCacheEntry
-                    {
-                        TvdbId = tvdbId,
-                        Confidence = tvdbId.HasValue ? 100 : 0,
-                    });
+                if (tvdbId.HasValue)
+                {
+                    return tvdbId;
                 }
             }
 
-            return tvdbId;
+            return null;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Failed to lookup TVDb ID for series: {Title} ({Year})", title, year);
             return null;
         }
-        finally
+    }
+
+    private async Task<int?> SearchSeriesTvdbIdAsync(string title, int? year, CancellationToken cancellationToken)
+    {
+        var results = await _providerManager.GetRemoteSearchResults<Series, SeriesInfo>(
+            new RemoteSearchQuery<SeriesInfo> { SearchInfo = new SeriesInfo { Name = title, Year = year } },
+            cancellationToken).ConfigureAwait(false);
+
+        var firstResult = results.FirstOrDefault();
+        if (firstResult?.ProviderIds == null ||
+            !firstResult.ProviderIds.TryGetValue(MetadataProvider.Tvdb.ToString(), out var tvdbIdStr) ||
+            !int.TryParse(tvdbIdStr, out var parsedId))
         {
-            _rateLimiter.Release();
+            _logger.LogDebug("No TVDb ID found for series: {Title} ({Year})", title, year);
+            return null;
         }
+
+        // Validate the match to reject obvious false positives
+        if (IsLikelyFalsePositive(title, firstResult.Name, year, firstResult.ProductionYear))
+        {
+            _logger.LogDebug(
+                "Rejected TVDb match for series: '{SearchTitle}' -> '{ResultName}' ({ResultYear})",
+                title,
+                firstResult.Name,
+                firstResult.ProductionYear);
+            return null;
+        }
+
+        _logger.LogDebug("Found TVDb ID for series: {Title} ({Year}) -> {Id}", title, year, parsedId);
+        return parsedId;
     }
 
     /// <inheritdoc />

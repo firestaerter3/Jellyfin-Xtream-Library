@@ -415,8 +415,73 @@ public class MetadataLookupServiceTests
     public void GetMovieLookupAttempts_SkipsDuplicates()
     {
         MetadataLookupService.GetMovieLookupAttempts("Movie", 2001, 2001, "movie", fallbackEnabled: true)
-            .Should().Equal(("Movie", (int?)2001), ("Movie", (int?)null));
+            .Select(a => (a.Title, a.Year)).Should().Equal(("Movie", (int?)2001), ("Movie", (int?)null));
     }
+
+    // === Follow-ups from the code review of #126 ===
+
+    [Fact]
+    public void GetMovieLookupAttempts_NoYearInTitle_SearchesTheReleaseYearFirst()
+    {
+        // "Dune" with release date 1984: the year-free search takes whichever Dune comes first.
+        MetadataLookupService.GetMovieLookupAttempts("Dune", null, 1984, null, fallbackEnabled: true)
+            .Should().Equal(("Dune", (int?)1984, (int?)1984), ("Dune", (int?)null, (int?)1984));
+    }
+
+    [Fact]
+    public async Task LookupMovieTmdbIdAsync_YearFreeSearch_IsCheckedAgainstTheReleaseYear()
+    {
+        InitPlugin(new PluginConfiguration { EnableMetadataLookup = true, FallbackToYearlessLookup = true, LibraryPath = string.Empty });
+
+        // Only the year-free search answers, with the 2011 remake of a 1982 film.
+        var (provider, _) = MovieProvider(q => q.Year == null ? TmdbResult("The Thing", 2011, 60935) : null);
+        var svc = new MetadataLookupService(provider.Object, new MetadataCache(NullLogger<MetadataCache>.Instance), NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupMovieTmdbIdAsync("Das Ding aus einer anderen Welt", 1982, 1982, "The Thing", CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task LookupMovieTmdbIdAsync_Cancellation_IsNotSwallowedAsAMiss()
+    {
+        InitPlugin(new PluginConfiguration { EnableMetadataLookup = true, FallbackToYearlessLookup = true, LibraryPath = string.Empty });
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .Setup(pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(It.IsAny<RemoteSearchQuery<MovieInfo>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+        var svc = new MetadataLookupService(mockProvider.Object, new MetadataCache(NullLogger<MetadataCache>.Instance), NullLogger<MetadataLookupService>.Instance);
+
+        var act = () => svc.LookupMovieTmdbIdAsync("Movie", 2001, null, null, CancellationToken.None);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task LookupSeriesTvdbIdAsync_MatchFoundByFallback_IsReusedFromCacheOnNextRun()
+    {
+        InitPlugin(new PluginConfiguration { EnableMetadataLookup = true, FallbackToYearlessLookup = true, LibraryPath = string.Empty });
+        var calls = 0;
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .Setup(pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(It.IsAny<RemoteSearchQuery<SeriesInfo>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((RemoteSearchQuery<SeriesInfo> q, CancellationToken _) =>
+            {
+                calls++;
+                return q.SearchInfo.Year == null
+                    ? new[] { new RemoteSearchResult { Name = "Foo", ProductionYear = 2018, ProviderIds = new Dictionary<string, string> { ["Tvdb"] = "12345" } } }
+                    : Array.Empty<RemoteSearchResult>();
+            });
+        var svc = new MetadataLookupService(mockProvider.Object, new MetadataCache(NullLogger<MetadataCache>.Instance), NullLogger<MetadataLookupService>.Instance);
+
+        var first = await svc.LookupSeriesTvdbIdAsync("Foo", 2019, CancellationToken.None);
+        var second = await svc.LookupSeriesTvdbIdAsync("Foo", 2019, CancellationToken.None);
+
+        first.Should().Be(12345);
+        second.Should().Be(12345);
+        calls.Should().Be(2);
+    }
+
 
     // === FallbackToYearlessLookup: series ===
 

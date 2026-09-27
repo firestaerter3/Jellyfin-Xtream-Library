@@ -2270,10 +2270,9 @@ public partial class StrmSyncService
                             // date catches a wrong year in the title, its original title catches a
                             // title in another language. Either adds searches, so allow more time.
                             int? releaseDateYear = ExtractYearFromReleaseDate(vodInfo?.Info?.ReleaseDate);
-                            string? originalTitle = string.IsNullOrWhiteSpace(vodInfo?.Info?.OriginalName)
-                                ? null
-                                : SanitizeFileName(vodInfo.Info.OriginalName, provider.CustomTitleRemoveTerms);
-                            bool hasLookupHints = releaseDateYear.HasValue || originalTitle != null;
+                            string? originalTitle = CleanOriginalTitleForSearch(vodInfo?.Info?.OriginalName);
+                            bool hasLookupHints = Plugin.Instance.Configuration.FallbackToYearlessLookup &&
+                                                  (releaseDateYear.HasValue || originalTitle != null);
 
                             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                             timeoutCts.CancelAfter(TimeSpan.FromSeconds(hasLookupHints ? 15 : 5));
@@ -4071,6 +4070,15 @@ public partial class StrmSyncService
             return null;
         }
 
+        // Placeholders some panels put in for a missing date. Searching them as a year only
+        // finds an unrelated film of that year.
+        var trimmed = releaseDate.Trim();
+        if (trimmed.StartsWith("1970-01-01", StringComparison.Ordinal) ||
+            trimmed.StartsWith("1900-01-01", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
         var match = ReleaseDateYearPattern().Match(releaseDate);
         if (match.Success &&
             int.TryParse(match.Value, NumberStyles.None, CultureInfo.InvariantCulture, out int year) &&
@@ -4080,6 +4088,25 @@ public partial class StrmSyncService
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Cleans the provider's original title for use as a search term. Not
+    /// <see cref="SanitizeFileName(string?, string?)"/>: that one is for file names, turns "Face/Off"
+    /// into "Face_Off" and a colon into " - ", and returns "Unknown" for a placeholder, which
+    /// would then be searched as a title. Only a trailing year is removed here.
+    /// </summary>
+    /// <param name="originalName">The original title as the provider sent it.</param>
+    /// <returns>The search term, or null when there is nothing to search for.</returns>
+    internal static string? CleanOriginalTitleForSearch(string? originalName)
+    {
+        if (string.IsNullOrWhiteSpace(originalName))
+        {
+            return null;
+        }
+
+        var cleaned = DashYearSuffixPattern().Replace(YearPattern().Replace(originalName, string.Empty), string.Empty).Trim();
+        return cleaned.Any(char.IsLetterOrDigit) ? cleaned : null;
     }
 
     internal static int? ExtractYear(string? name)
