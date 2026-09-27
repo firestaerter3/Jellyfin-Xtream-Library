@@ -25,6 +25,7 @@ public class Episode
     [JsonProperty("id")]
     public int EpisodeId { get; set; }
 
+    [JsonConverter(typeof(StringOrIntConverter))]
     [JsonProperty("episode_num")]
     public int EpisodeNum { get; set; }
 
@@ -45,6 +46,7 @@ public class Episode
     [JsonProperty("added")]
     public DateTime? Added { get; set; }
 
+    [JsonConverter(typeof(StringOrIntConverter))]
     [JsonProperty("season")]
     public int Season { get; set; }
 

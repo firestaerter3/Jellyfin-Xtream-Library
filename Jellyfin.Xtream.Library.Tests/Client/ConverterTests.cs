@@ -529,5 +529,65 @@ public class ConverterTests
         episode.Info!.ReleaseDate.Should().Be("2024-01-15");
     }
 
+    // foXaCe's fork (PR #24) reported providers sending "" for numeric fields. The nullable
+    // handler only forgives nullable properties; a failure in any other field bubbles up to the
+    // parent property, which it does forgive, so the whole info block or every episode of the
+    // series was dropped without an error. These go through the same settings QueryApi uses.
+    [Theory]
+    [InlineData("rating", "\"\"")]
+    [InlineData("rating_5based", "\"\"")]
+    [InlineData("episode_run_time", "\"\"")]
+    [InlineData("category_id", "\"\"")]
+    [InlineData("rating", "\"N/A\"")]
+    [InlineData("last_modified", "\"\"")]
+    [InlineData("last_modified", "null")]
+    public void SeriesInfo_UnparseableNumericField_KeepsRestOfInfo(string field, string value)
+    {
+        var json = $$"""
+            {
+                "info": { "name": "Test Series", "plot": "A plot", "tmdb": "1234", "{{field}}": {{value}} },
+                "episodes": { "1": [ { "id": "1", "episode_num": 1, "season": 1, "title": "Pilot" } ] }
+            }
+            """;
+
+        var result = JsonConvert.DeserializeObject<SeriesStreamInfo>(json, ProductionSettings());
+
+        result!.Info.Name.Should().Be("Test Series");
+        result.Info.Plot.Should().Be("A plot");
+        result.Info.Tmdb.Should().Be("1234");
+    }
+
+    [Theory]
+    [InlineData("episode_num", "\"\"")]
+    [InlineData("season", "\"\"")]
+    [InlineData("episode_num", "\"N/A\"")]
+    public void Episode_UnparseableNumericField_KeepsEveryEpisode(string field, string value)
+    {
+        var first = field == "season"
+            ? $$"""{ "id": "1", "episode_num": 1, "season": {{value}}, "title": "Pilot" }"""
+            : $$"""{ "id": "1", "episode_num": {{value}}, "season": 1, "title": "Pilot" }""";
+        var json = $$"""
+            {
+                "info": { "name": "Test Series" },
+                "episodes": {
+                    "1": [ {{first}}, { "id": "2", "episode_num": 2, "season": 1, "title": "Second" } ],
+                    "2": [ { "id": "3", "episode_num": 1, "season": 2, "title": "Third" } ]
+                }
+            }
+            """;
+
+        var result = JsonConvert.DeserializeObject<SeriesStreamInfo>(json, ProductionSettings());
+
+        result!.Episodes.Should().HaveCount(2);
+        result.Episodes![1].Select(e => e.Title).Should().Equal("Pilot", "Second");
+        result.Episodes[1].Last().EpisodeNum.Should().Be(2);
+        result.Episodes[2].Single().Title.Should().Be("Third");
+    }
+
+    private static JsonSerializerSettings ProductionSettings() => new()
+    {
+        Error = XtreamClient.NullableEventHandler(new Mock<ILogger<XtreamClient>>().Object),
+    };
+
     #endregion
 }
