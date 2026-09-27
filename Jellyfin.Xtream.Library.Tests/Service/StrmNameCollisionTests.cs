@@ -715,14 +715,14 @@ public class StrmNameCollisionTests : IDisposable
         _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 2, It.IsAny<CancellationToken>())).ReturnsAsync(Films(other, 2));
     }
 
-    private Task<SyncResult> RunLayoutSyncAsync(string mode, string mappings, bool syncMovies = true, bool syncSeries = false)
+    private Task<SyncResult> RunLayoutSyncAsync(string mode, string mappings, bool syncMovies = true, bool syncSeries = false, string? seriesMode = null, string? seriesMappings = null)
     {
         _configure = p =>
         {
             p.MovieFolderMode = mode;
             p.MovieFolderMappings = mappings;
-            p.SeriesFolderMode = mode;
-            p.SeriesFolderMappings = mappings;
+            p.SeriesFolderMode = seriesMode ?? mode;
+            p.SeriesFolderMappings = seriesMappings ?? mappings;
         };
         return RunSyncAsync(syncMovies, syncSeries, useShippedDefaults: true, providerCount: 1, proactiveMediaInfo: false, groupByTmdbId: false, cleanupOrphans: true);
     }
@@ -761,6 +761,56 @@ public class StrmNameCollisionTests : IDisposable
         files.Where(f => f.StartsWith("Other", StringComparison.Ordinal)).Should().HaveCount(10, "the ten lost films stay behind the threshold");
         result.OrphanCleanupBlockedByThreshold.Should().BeTrue();
         result.MovieOrphansSkipped.Should().Be(10);
+    }
+
+    [Fact]
+    public async Task AProviderRenamingEveryTitle_IsStillHeldBackByTheThreshold()
+    {
+        // Review of #128: moves were matched on the stream URL alone, so a provider renaming its
+        // titles made every original a "copy" and the whole library was deleted past the limit.
+        MovieCatalogue(Enumerable.Range(1, 30), Enumerable.Empty<int>());
+        await RunLayoutSyncAsync("Single", string.Empty).ConfigureAwait(true);
+
+        _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Enumerable.Range(1, 30)
+                .Select(i => new StreamInfo { StreamId = 700 + i, Name = $"NEW Film {i} (2001)", ContainerExtension = "mp4", CategoryId = 1 })
+                .ToList());
+        var result = await RunLayoutSyncAsync("Single", string.Empty).ConfigureAwait(true);
+
+        StrmFiles("Movies").Where(f => f.StartsWith("Film ", StringComparison.Ordinal)).Should().HaveCount(30, "the originals keep their watched status");
+        result.OrphanCleanupBlockedByThreshold.Should().BeTrue();
+        result.OrphansRelocated.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task AnEmptySeriesSelection_DoesNotStopMovieCopiesBeingRemoved()
+    {
+        // Review of #128: the empty-selection guard covered both types at once.
+        MovieCatalogue(Enumerable.Range(1, 20), Enumerable.Range(21, 10));
+        SeriesCatalogue(12);
+        await RunLayoutSyncAsync("Multiple", KidsAndOther, syncSeries: true, seriesMode: "Multiple", seriesMappings: "Kids=1").ConfigureAwait(true);
+
+        // Movies switch to Single; the series mapping is cleared, so series select nothing.
+        var result = await RunLayoutSyncAsync("Single", string.Empty, syncSeries: true, seriesMode: "Multiple", seriesMappings: string.Empty).ConfigureAwait(true);
+
+        StrmFiles("Movies").Should().HaveCount(30).And.NotContain(f => f.StartsWith("Kids", StringComparison.Ordinal) || f.StartsWith("Other", StringComparison.Ordinal));
+        StrmFiles("Series").Should().HaveCount(12, "an empty selection still protects the series");
+        result.OrphansRelocated.Should().Be(30);
+    }
+
+    private void SeriesCatalogue(int episodeCount)
+    {
+        var episodes = Enumerable.Range(1, episodeCount).Select(i => new Episode { EpisodeId = 900 + i, EpisodeNum = i, Title = $"Ep {i}", ContainerExtension = "mkv" }).ToList();
+        _client.Setup(c => c.GetSeriesCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Category> { new() { CategoryId = 1, CategoryName = "Kids" } });
+        _client.Setup(c => c.GetSeriesByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Series> { new() { SeriesId = 7, Name = "Moving Show (2024)", CategoryId = 1 } });
+        _client.Setup(c => c.GetSeriesStreamsBySeriesAsync(It.IsAny<ConnectionInfo>(), 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SeriesStreamInfo
+            {
+                Seasons = new List<Season> { new() { SeasonNumber = 1 } },
+                Episodes = new Dictionary<int, ICollection<Episode>> { [1] = episodes },
+            });
     }
 
     [Fact]

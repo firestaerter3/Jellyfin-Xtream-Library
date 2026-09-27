@@ -50,6 +50,11 @@ public partial class StrmSyncService
     /// </summary>
     internal const int MaxFileNameBytes = 255;
 
+    // How many trailing path parts identify an item regardless of the category folder above it:
+    // "<movie folder>/<file>.strm" and "<show folder>/<season folder>/<file>.strm".
+    private const int MovieItemPathDepth = 2;
+    private const int EpisodeItemPathDepth = 3;
+
     // Static HttpClient is intentional for connection pooling and efficient socket usage.
     // For image downloads, we don't need per-request configuration, and a shared client
     // improves performance by reusing TCP connections. A default User-Agent is set below.
@@ -1190,35 +1195,31 @@ public partial class StrmSyncService
             // A folder layout change (Multiple to Single, or a mapping removed) writes every moved
             // item to its new place and leaves the old file behind as an orphan. On any real
             // library that is far over the threshold, so the cleanup refused, every item stayed in
-            // the library twice, and the ratio never came down again. An orphan whose stream this
-            // run wrote somewhere else is a copy, not a loss: remove those regardless of the
-            // threshold, and hold only the rest to it. Checked only when the threshold would
-            // otherwise block, because it reads every file this run wrote.
-            var relocatedOrphans = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (existingMovieCount > 10 && movieDeletionRatio > safetyThreshold)
-            {
-                relocatedOrphans.UnionWith(FindRelocatedOrphans(
+            // the library twice, and the ratio never came down again. Such an orphan is a copy,
+            // not a loss: same folder and file name, only the category folder above it changed,
+            // and this run wrote the same stream there. Remove those regardless of the threshold
+            // and hold only the rest to it. A provider renaming titles also moves every item, but
+            // to a new folder name, so the threshold still guards the originals then. Checked only
+            // when the threshold would otherwise block.
+            var relocatedMovies = existingMovieCount > 10 && movieDeletionRatio > safetyThreshold
+                ? FindRelocatedOrphans(
                     orphanedFiles.Where(f => f.StartsWith(moviesPath, StringComparison.OrdinalIgnoreCase)),
-                    syncedFiles.Keys.Where(f => f.StartsWith(moviesPath, StringComparison.OrdinalIgnoreCase))));
-            }
-
-            if (existingEpisodeCount > 10 && episodeDeletionRatio > safetyThreshold)
-            {
-                relocatedOrphans.UnionWith(FindRelocatedOrphans(
+                    syncedFiles.Keys.Where(f => f.StartsWith(moviesPath, StringComparison.OrdinalIgnoreCase)),
+                    MovieItemPathDepth,
+                    cancellationToken)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var relocatedEpisodes = existingEpisodeCount > 10 && episodeDeletionRatio > safetyThreshold
+                ? FindRelocatedOrphans(
                     orphanedFiles.Where(f => f.StartsWith(seriesPath, StringComparison.OrdinalIgnoreCase)),
-                    syncedFiles.Keys.Where(f => f.StartsWith(seriesPath, StringComparison.OrdinalIgnoreCase))));
-            }
+                    syncedFiles.Keys.Where(f => f.StartsWith(seriesPath, StringComparison.OrdinalIgnoreCase)),
+                    EpisodeItemPathDepth,
+                    cancellationToken)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            if (relocatedOrphans.Count > 0)
-            {
-                _logger.LogInformation(
-                    "{Count} orphaned STRM files are copies of items this sync wrote to a new folder (folder layout change); removing them regardless of the safety threshold",
-                    relocatedOrphans.Count);
-                orphanedMovies = orphanedFiles.Count(f => f.StartsWith(moviesPath, StringComparison.OrdinalIgnoreCase) && !relocatedOrphans.Contains(f));
-                orphanedEpisodes = orphanedFiles.Count(f => f.StartsWith(seriesPath, StringComparison.OrdinalIgnoreCase) && !relocatedOrphans.Contains(f));
-                movieDeletionRatio = existingMovieCount > 0 ? (double)orphanedMovies / existingMovieCount : 0;
-                episodeDeletionRatio = existingEpisodeCount > 0 ? (double)orphanedEpisodes / existingEpisodeCount : 0;
-            }
+            orphanedMovies -= relocatedMovies.Count;
+            orphanedEpisodes -= relocatedEpisodes.Count;
+            movieDeletionRatio = existingMovieCount > 0 ? (double)orphanedMovies / existingMovieCount : 0;
+            episodeDeletionRatio = existingEpisodeCount > 0 ? (double)orphanedEpisodes / existingEpisodeCount : 0;
 
             // Protection: a selection that resolves to nothing syncs no files, which would make
             // the entire existing library an orphan. That is a misconfiguration to be corrected,
@@ -1227,12 +1228,12 @@ public partial class StrmSyncService
             // above would normally catch it, but not for a provider set to 100%.
             // The "> 0" conjuncts matter: with nothing on disk yet there is nothing to protect and
             // the warning would be noise on every sync.
-            bool skipMovieForEmptySelection = orphanedMovies > 0 && ResolveCategorySelection(
+            bool skipMovieForEmptySelection = orphanedMovies + relocatedMovies.Count > 0 && ResolveCategorySelection(
                 provider.MovieFolderMode,
                 provider.MovieFolderMappings,
                 provider.SelectedVodCategoryIds,
                 provider.MovieCategoriesMode).SyncsNothing;
-            bool skipEpisodeForEmptySelection = orphanedEpisodes > 0 && ResolveCategorySelection(
+            bool skipEpisodeForEmptySelection = orphanedEpisodes + relocatedEpisodes.Count > 0 && ResolveCategorySelection(
                 provider.SeriesFolderMode,
                 provider.SeriesFolderMappings,
                 provider.SelectedSeriesCategoryIds,
@@ -1310,9 +1311,22 @@ public partial class StrmSyncService
             }
 
             // Filter orphans based on safety checks
+            // A relocated copy is removed past the threshold, but not past an empty selection of
+            // its own type: that one means the configuration is broken, not that items moved.
+            int relocatedRemoved = (skipMovieForEmptySelection ? 0 : relocatedMovies.Count) +
+                                   (skipEpisodeForEmptySelection ? 0 : relocatedEpisodes.Count);
+            if (relocatedRemoved > 0)
+            {
+                result.OrphansRelocated += relocatedRemoved;
+                _logger.LogInformation(
+                    "Removing {Count} STRM files left in their old folder by a folder layout change, regardless of the safety threshold: this sync wrote the same streams under the new layout",
+                    relocatedRemoved);
+            }
+
             var safeOrphans = orphanedFiles
                 .Where(f =>
-                    (relocatedOrphans.Contains(f) && !skipMovieForEmptySelection && !skipEpisodeForEmptySelection) ||
+                    (relocatedMovies.Contains(f) && !skipMovieForEmptySelection) ||
+                    (relocatedEpisodes.Contains(f) && !skipEpisodeForEmptySelection) ||
                     (!(skipMovieCleanup && f.StartsWith(moviesPath, StringComparison.OrdinalIgnoreCase)) &&
                      !(skipEpisodeCleanup && f.StartsWith(seriesPath, StringComparison.OrdinalIgnoreCase))))
                 .ToList();
@@ -1432,6 +1446,7 @@ public partial class StrmSyncService
         globalResult.EpisodeNameCollisions += providerResult.EpisodeNameCollisions;
         globalResult.FilesDeleted += providerResult.FilesDeleted;
         globalResult.MovieOrphansSkipped += providerResult.MovieOrphansSkipped;
+        globalResult.OrphansRelocated += providerResult.OrphansRelocated;
         globalResult.MovieOrphansExamined += providerResult.MovieOrphansExamined;
         globalResult.EpisodeOrphansSkipped += providerResult.EpisodeOrphansSkipped;
         globalResult.EpisodeOrphansExamined += providerResult.EpisodeOrphansExamined;
@@ -4493,16 +4508,7 @@ public partial class StrmSyncService
     }
 
     private static bool StrmContentMatches(string strmPath, string expectedUrl)
-    {
-        try
-        {
-            return string.Equals(File.ReadAllText(strmPath).TrimEnd(), expectedUrl, StringComparison.Ordinal);
-        }
-        catch (IOException)
-        {
-            return false;
-        }
-    }
+        => string.Equals(ReadStrmUrl(strmPath), expectedUrl, StringComparison.Ordinal);
 
     private static void CollectExistingStrmFiles(string basePath, HashSet<string> files)
     {
@@ -4603,14 +4609,21 @@ public partial class StrmSyncService
     }
 
     /// <summary>
-    /// Finds the orphans whose stream this run wrote to another file: same STRM content, so the
-    /// item is still in the library and the orphan is only the copy a folder layout change left.
-    /// A file that cannot be read is never counted as relocated.
+    /// Finds the orphans that a folder layout change left behind: this run wrote a file with the
+    /// same trailing folder and file names (only the category folder above differs) and the same
+    /// STRM content. Anything else, including an item whose folder was renamed, is not counted.
+    /// A file that cannot be read is never counted.
     /// </summary>
     /// <param name="orphans">Orphaned STRM paths.</param>
     /// <param name="writtenFiles">STRM paths this run wrote or kept.</param>
+    /// <param name="itemPathDepth">Trailing path parts that must match.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The orphans that are copies.</returns>
-    internal static HashSet<string> FindRelocatedOrphans(IEnumerable<string> orphans, IEnumerable<string> writtenFiles)
+    internal static HashSet<string> FindRelocatedOrphans(
+        IEnumerable<string> orphans,
+        IEnumerable<string> writtenFiles,
+        int itemPathDepth,
+        CancellationToken cancellationToken)
     {
         var relocated = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var orphanList = orphans.ToList();
@@ -4619,18 +4632,22 @@ public partial class StrmSyncService
             return relocated;
         }
 
-        var writtenUrls = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var file in writtenFiles)
-        {
-            if (TryReadStrmUrl(file) is string url)
-            {
-                writtenUrls.Add(url);
-            }
-        }
+        // Only paths here; files are read only for an orphan that has a same-named candidate.
+        var writtenByTail = writtenFiles
+            .GroupBy(f => ItemPathTail(f, itemPathDepth), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
 
         foreach (var orphan in orphanList)
         {
-            if (TryReadStrmUrl(orphan) is string url && writtenUrls.Contains(url))
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!writtenByTail.TryGetValue(ItemPathTail(orphan, itemPathDepth), out var candidates) ||
+                ReadStrmUrl(orphan) is not string url)
+            {
+                continue;
+            }
+
+            if (candidates.Any(c => !string.Equals(c, orphan, StringComparison.OrdinalIgnoreCase) &&
+                                    string.Equals(ReadStrmUrl(c), url, StringComparison.Ordinal)))
             {
                 relocated.Add(orphan);
             }
@@ -4639,11 +4656,21 @@ public partial class StrmSyncService
         return relocated;
     }
 
-    private static string? TryReadStrmUrl(string path)
+    private static string ItemPathTail(string path, int depth)
+    {
+        var parts = path.Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries);
+        return string.Join('/', parts.Skip(Math.Max(0, parts.Length - depth)));
+    }
+
+    /// <summary>
+    /// Reads the URL from a STRM file, without trailing whitespace. Null when the file cannot be
+    /// read or is empty.
+    /// </summary>
+    private static string? ReadStrmUrl(string path)
     {
         try
         {
-            var url = File.ReadAllText(path).Trim();
+            var url = File.ReadAllText(path).TrimEnd();
             return url.Length == 0 ? null : url;
         }
         catch (IOException)
@@ -5364,6 +5391,14 @@ public class SyncResult
     /// will keep holding them until the threshold is raised or the provider recovers.
     /// </summary>
     public int MovieOrphansSkipped { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of STRM files removed past the orphan safety threshold because a
+    /// folder layout change had left them behind: the same item was written under the new layout
+    /// in the same run. Recorded so a run that deleted many files while the threshold blocked the
+    /// rest can be told apart from one that went around the threshold for no reason.
+    /// </summary>
+    public int OrphansRelocated { get; set; }
 
     /// <summary>
     /// Gets or sets the number of existing movie STRM files that <see cref="MovieOrphansSkipped"/>

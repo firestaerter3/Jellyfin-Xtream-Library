@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Threading;
 using FluentAssertions;
 using Jellyfin.Xtream.Library.Client.Models;
 using Jellyfin.Xtream.Library.Service;
@@ -712,33 +713,43 @@ public class StrmSyncServiceTests
     #region FindRelocatedOrphans Tests
 
     [Fact]
-    public void FindRelocatedOrphans_MatchesOnContent_AndIgnoresEmptyOrMissingFiles()
+    public void FindRelocatedOrphans_NeedsSameItemPathAndContent()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "xtream_reloc_" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
+        var root = Path.Combine(Path.GetTempPath(), "xtream_reloc_" + Guid.NewGuid().ToString("N"));
         try
         {
-            string Write(string name, string content)
+            string Write(string relative, string content)
             {
-                var path = Path.Combine(dir, name);
+                var path = Path.Combine(root, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 File.WriteAllText(path, content);
                 return path;
             }
 
-            var moved = Write("old-a.strm", "http://p/movie/u/p/1.mp4\n");
-            var lost = Write("old-b.strm", "http://p/movie/u/p/2.mp4");
-            var empty = Write("old-c.strm", string.Empty);
-            var missing = Path.Combine(dir, "gone.strm");
-            var written = Write("new-a.strm", "http://p/movie/u/p/1.mp4");
-            var writtenEmpty = Write("new-c.strm", string.Empty);
+            var moved = Write("Movies/Kids/Film (2001)/Film (2001).strm", "http://p/movie/u/p/1.mp4\n");
+            var renamed = Write("Movies/Kids/Film Two (2002)/Film Two (2002).strm", "http://p/movie/u/p/2.mp4");
+            var lost = Write("Movies/Kids/Gone (2003)/Gone (2003).strm", "http://p/movie/u/p/3.mp4");
+            var sameNameOtherStream = Write("Movies/Kids/Same (2004)/Same (2004).strm", "http://p/movie/u/p/4.mp4");
+            var empty = Write("Movies/Kids/Empty (2005)/Empty (2005).strm", string.Empty);
 
-            var result = StrmSyncService.FindRelocatedOrphans(new[] { moved, lost, empty, missing }, new[] { written, writtenEmpty });
+            var written = new[]
+            {
+                Write("Movies/Film (2001)/Film (2001).strm", "http://p/movie/u/p/1.mp4"),
+                Write("Movies/PREFIX Film Two (2002)/PREFIX Film Two (2002).strm", "http://p/movie/u/p/2.mp4"),
+                Write("Movies/Same (2004)/Same (2004).strm", "http://p/movie/u/p/99.mp4"),
+                Write("Movies/Empty (2005)/Empty (2005).strm", string.Empty),
+            };
 
+            var result = StrmSyncService.FindRelocatedOrphans(
+                new[] { moved, renamed, lost, sameNameOtherStream, empty }, written, 2, CancellationToken.None);
+
+            // Only the plain move counts. A renamed folder is what a provider-side rename looks
+            // like, and the threshold has to keep guarding that.
             result.Should().BeEquivalentTo(new[] { moved });
         }
         finally
         {
-            Directory.Delete(dir, true);
+            Directory.Delete(root, true);
         }
     }
 
