@@ -229,9 +229,9 @@ Once enabled, go to **Dashboard → Live TV** in Jellyfin — the Xtream Library
 | `/XtreamLibrary/CleanSeries` | POST | Delete all Series library content |
 | `/XtreamLibrary/ClearMetadataCache` | POST | Clear metadata lookup cache |
 | `/XtreamLibrary/LiveTv/RefreshCache` | POST | Refresh Live TV M3U/EPG cache |
-| `/XtreamLibrary/LiveTv.m3u` | GET | M3U playlist (no auth) |
+| `/XtreamLibrary/LiveTv.m3u` | GET | M3U playlist (no auth; only with Publish Playlists on) |
 | `/XtreamLibrary/Epg.xml` | GET | XMLTV EPG data (no auth) |
-| `/XtreamLibrary/Catchup.m3u` | GET | Catch-up channels M3U (no auth) |
+| `/XtreamLibrary/Catchup.m3u` | GET | Catch-up channels M3U (no auth; only with Publish Playlists on) |
 | `/XtreamLibrary/ChannelLogo/{streamId}` | GET | Serve a local-path channel override logo (no auth) |
 
 ## Scheduled Task
@@ -318,14 +318,20 @@ Xtream password.**
 - **Prefer the native tuner over the M3U tuner.** With Enable Native Tuner the plugin hands
   channels to Jellyfin internally and never publishes a playlist, so no credential-bearing URL is
   served to an anonymous caller.
+- **Leave Publish Playlists off unless something reads the playlists.** `LiveTv.m3u` and
+  `Catchup.m3u` are only served while it is on; otherwise they answer 404. Only Jellyfin's M3U
+  tuner and external players such as TiviMate need them. It is off when you enable Live TV on a new
+  install, and stays on after upgrading if Live TV was already enabled. `Epg.xml` and the channel
+  logo endpoint carry no credentials and are not affected.
+- **Restrict the endpoints to known addresses.** "Restrict These URLs To" on the Live TV tab takes
+  one IP or CIDR range per line; anything else gets a 404.
 - **Restrict filesystem permissions.** Make sure the library path is not readable by other users or
   containers on the host.
 - **Use a dedicated provider account.** If your provider supports multiple credential sets per
   subscription, use a separate one for Jellyfin so it can be rotated on its own.
 
-Dispatcharr's credential-free proxy URLs currently cover multi-provider VOD movies in this plugin,
-but **not** Live TV, so enabling Dispatcharr does not keep credentials out of the M3U today.
-Extending that routing to Live TV is tracked separately.
+With Dispatcharr mode on, channels Dispatcharr knows are written to the playlist as Dispatcharr's own
+proxy URLs, which carry no credentials. Channels it does not know still carry the Xtream ones.
 
 ---
 

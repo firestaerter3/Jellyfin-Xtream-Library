@@ -327,4 +327,66 @@ public class PluginTests : IDisposable
         // Rename failed, so the original orphan stayed on disk (user data not lost).
         File.Exists(Path.Combine(_tempDir, "Jellyfin.Xtream.xml")).Should().BeTrue();
     }
+
+    // === Publish Playlists switch, first start (GitHub #109) ===
+
+    private (Plugin Plugin, Mock<IXmlSerializer> Serializer) StartWith(PluginConfiguration config)
+    {
+        var serializer = new Mock<IXmlSerializer>();
+        serializer.Setup(s => s.DeserializeFromFile(It.IsAny<Type>(), It.IsAny<string>())).Returns(config);
+        return (new Plugin(_appPaths.Object, serializer.Object), serializer);
+    }
+
+    [Fact]
+    public void PlaylistSwitch_FreshInstall_StartsOffAndIsSaved()
+    {
+        var (plugin, serializer) = StartWith(new PluginConfiguration());
+
+        plugin.Configuration.PublishLiveTvPlaylists.Should().BeFalse();
+        plugin.Configuration.LiveTvPlaylistSwitchInitialized.Should().BeTrue();
+
+        // Saved even though nothing visible changed, or the next start would decide again.
+        serializer.Verify(s => s.SerializeToFile(It.IsAny<object>(), It.IsAny<string>()), Times.AtLeastOnce());
+    }
+
+    [Fact]
+    public void PlaylistSwitch_UpgradeWithLiveTvOn_StaysOn()
+    {
+        var (plugin, _) = StartWith(new PluginConfiguration { EnableLiveTv = true });
+
+        plugin.Configuration.PublishLiveTvPlaylists.Should().BeTrue();
+    }
+
+    [Fact]
+    public void PlaylistSwitch_UpgradeWithLiveTvOff_StartsOff()
+    {
+        var (plugin, _) = StartWith(new PluginConfiguration { EnableLiveTv = false });
+
+        plugin.Configuration.PublishLiveTvPlaylists.Should().BeFalse();
+    }
+
+    [Fact]
+    public void PlaylistSwitch_LiveTvEnabledAfterFirstStart_StaysOffAfterRestart()
+    {
+        var config = new PluginConfiguration();
+        StartWith(config);
+
+        config.EnableLiveTv = true; // the user turns Live TV on from the config page
+        var (restarted, _) = StartWith(config);
+
+        restarted.Configuration.PublishLiveTvPlaylists.Should().BeFalse();
+    }
+
+    [Fact]
+    public void PlaylistSwitch_TurnedOffByUser_StaysOffAfterRestart()
+    {
+        var config = new PluginConfiguration { EnableLiveTv = true };
+        StartWith(config);
+        config.PublishLiveTvPlaylists.Should().BeTrue();
+
+        config.PublishLiveTvPlaylists = false;
+        var (restarted, _) = StartWith(config);
+
+        restarted.Configuration.PublishLiveTvPlaylists.Should().BeFalse();
+    }
 }

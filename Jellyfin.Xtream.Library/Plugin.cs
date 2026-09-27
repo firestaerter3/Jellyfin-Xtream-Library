@@ -59,6 +59,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         ImportOrphanedLegacyConfigIfNeeded();
         MigrateProvidersIfNeeded();
         MigrateLiveChannelModeIfNeeded();
+        InitializeLiveTvPlaylistSwitchIfNeeded();
     }
 
     /// <inheritdoc />
@@ -143,6 +144,23 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             MaxRetries = config.MaxRetries,
             RetryDelayMs = config.RetryDelayMs,
         });
+        SaveConfiguration();
+    }
+
+    // GitHub #109. Runs last, so it sees EnableLiveTv after the legacy import and the provider
+    // migration have had their say. Saves even when the switch stays off: an unsaved flag would
+    // let a user who enables Live TV on a fresh install get the playlists opened by this same
+    // code on the next restart, which is exactly what the default-off switch is meant to stop.
+    private void InitializeLiveTvPlaylistSwitchIfNeeded()
+    {
+        var config = Configuration;
+        if (config.LiveTvPlaylistSwitchInitialized)
+        {
+            return;
+        }
+
+        config.PublishLiveTvPlaylists = config.EnableLiveTv;
+        config.LiveTvPlaylistSwitchInitialized = true;
         SaveConfiguration();
     }
 

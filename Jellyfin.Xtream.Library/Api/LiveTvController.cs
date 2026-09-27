@@ -74,6 +74,14 @@ public class LiveTvController : ControllerBase
             return NotFound();
         }
 
+        if (!config.PublishLiveTvPlaylists)
+        {
+            // Same answer as a route that does not exist. Debug only: this is what an anonymous
+            // probe gets, and logging each one louder would let anyone fill the log.
+            _logger.LogDebug("{Path} requested but Publish Playlists is off", Request?.Path.Value);
+            return NotFound();
+        }
+
         if (!config.EnableLiveTv)
         {
             return BadRequest(new { Error = "Live TV is not enabled in plugin settings." });
@@ -163,6 +171,14 @@ public class LiveTvController : ControllerBase
 
         if (!IsCallerAllowed(config))
         {
+            return NotFound();
+        }
+
+        if (!config.PublishLiveTvPlaylists)
+        {
+            // Same answer as a route that does not exist. Debug only: this is what an anonymous
+            // probe gets, and logging each one louder would let anyone fill the log.
+            _logger.LogDebug("{Path} requested but Publish Playlists is off", Request?.Path.Value);
             return NotFound();
         }
 

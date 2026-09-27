@@ -1232,11 +1232,11 @@
                             <div class="fieldDescription">
                                 Each URL below belongs in a different place. Jellyfin does not have a single screen that takes all three.
                                 <br><br>
-                                <strong>M3U Playlist URL</strong>: Dashboard &rarr; Live TV &rarr; Tuner Devices &rarr; Add Tuner Device, type <strong>M3U Tuner</strong>. Use this when you want the remux path (no transcoding, less CPU, but slower channel switch than the native tuner above).
+                                <strong>M3U Playlist URL</strong>: Dashboard &rarr; Live TV &rarr; Tuner Devices &rarr; Add Tuner Device, type <strong>M3U Tuner</strong>. Use this when you want the remux path (no transcoding, less CPU, but slower channel switch than the native tuner above). Only served while <strong>Publish Playlists</strong> below is on.
                                 <br>
                                 <strong>EPG (XMLTV) URL</strong>: Dashboard &rarr; Live TV &rarr; TV Guide Data Providers &rarr; Add &rarr; XMLTV. This is a separate screen, not part of the tuner dialog.
                                 <br>
-                                <strong>Catch-up M3U URL</strong>: not consumed by Jellyfin itself. Jellyfin's Live TV has no catch-up / timeshift concept. This URL is for catch-up-aware IPTV clients (e.g. Tivimate, XC-VM clients); the main M3U above already inlines the catch-up attributes (<code>catchup</code>, <code>catchup-days</code>, <code>catchup-source</code>) on each channel that supports archive.
+                                <strong>Catch-up M3U URL</strong>: not consumed by Jellyfin itself. Jellyfin's Live TV has no catch-up / timeshift concept. This URL is for catch-up-aware IPTV clients (e.g. Tivimate, XC-VM clients), and is only served while <strong>Publish Playlists</strong> below is on; the main M3U above already inlines the catch-up attributes (<code>catchup</code>, <code>catchup-days</code>, <code>catchup-source</code>) on each channel that supports archive.
                                 <br><br>
                                 <strong>Do not also enable the Native Tuner option above</strong>. Adding the M3U URL here as a manual tuner while the native tuner is active causes every channel to appear twice in the Live TV Guide.
                                 <br /><br />
@@ -1250,7 +1250,24 @@
                                 reverse proxy to the addresses that need it. The Native Tuner above avoids this entirely:
                                 it hands channels to Jellyfin internally and never publishes a playlist.
                             </div>
-                            <div class="inputContainer" style="margin-top: 15px;">
+                            <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkPublishLiveTvPlaylists" name="PublishLiveTvPlaylists" />
+                                    <span>Publish Playlists (M3U and Catch-up M3U)</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Serve the M3U Playlist and Catch-up M3U URLs below. Turn this on only if you use
+                                    Jellyfin's <strong>M3U Tuner</strong> or an external player such as TiviMate. The
+                                    Native Tuner does not need it, and neither does the guide: the EPG URL and channel
+                                    logos stay available either way. While it is off, both playlist URLs answer
+                                    404.
+                                    <br /><br />
+                                    Both playlists contain your Xtream username and password in every stream line.
+                                    With <strong>Dispatcharr mode</strong> on, channels Dispatcharr knows are served
+                                    through its own URLs instead, which carry no credentials.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="txtLiveTvEndpointAllowedIps">Restrict These URLs To (one IP or CIDR per line)</label>
                                 <textarea is="emby-textarea" id="txtLiveTvEndpointAllowedIps" rows="4"
                                     placeholder="127.0.0.1&#10;::1&#10;10.0.0.0/8&#10;192.168.0.0/16" style="width: 100%; font-family: monospace;"></textarea>

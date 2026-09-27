@@ -248,6 +248,33 @@ public class PluginConfiguration : BasePluginConfiguration
     public string LiveTvEndpointAllowedIps { get; set; } = string.Empty;
 
     /// <summary>
+    /// Gets or sets a value indicating whether <c>LiveTv.m3u</c> and <c>Catchup.m3u</c> are served
+    /// (GitHub #109). Both carry the Xtream username and password in every stream line, and both
+    /// are reachable without a Jellyfin login.
+    /// <para>
+    /// Only Jellyfin's M3U tuner and external players read them. The native tuner hands channels
+    /// to Jellyfin internally and never fetches either, so anyone using it has no reason to
+    /// publish them. <c>Epg.xml</c> and <c>ChannelLogo</c> are not covered: they carry no
+    /// credentials, and a native tuner user needs <c>Epg.xml</c> for the guide.
+    /// </para>
+    /// <para>
+    /// Off by default, so enabling Live TV no longer publishes the playlists on its own. An install
+    /// that already had Live TV on keeps them on after upgrading; see
+    /// <see cref="LiveTvPlaylistSwitchInitialized"/>.
+    /// </para>
+    /// </summary>
+    public bool PublishLiveTvPlaylists { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether <see cref="PublishLiveTvPlaylists"/> has been given
+    /// its first value. Set once, on the first start of a version that has the switch: the switch
+    /// is turned on then if Live TV was already enabled, because there is no telling whether that
+    /// install feeds an M3U tuner or an external player, and switching either off silently would
+    /// break it. After that the switch is only ever changed by the user.
+    /// </summary>
+    public bool LiveTvPlaylistSwitchInitialized { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether catch-up/timeshift is enabled.
     /// </summary>
     public bool EnableCatchup { get; set; }

@@ -72,6 +72,11 @@ public class LiveTvControllerTests : IDisposable
         // endpoints answering (GitHub #109).
         Plugin.Instance.Configuration.LiveTvEndpointAllowedIps = string.Empty;
 
+        // A bare PluginConfiguration counts as a fresh install, which leaves the playlists
+        // switched off. Switch them on so the allow-list tests below test the allow-list and not
+        // the switch; the switch has its own tests.
+        Plugin.Instance.Configuration.PublishLiveTvPlaylists = true;
+
         var mockClient = new Mock<IXtreamClient>();
         var serverAppPaths = new Mock<IServerApplicationPaths>();
         serverAppPaths.Setup(p => p.DataPath).Returns(tempPath);
@@ -281,5 +286,53 @@ public class LiveTvControllerTests : IDisposable
                 Connection = { RemoteIpAddress = address },
             },
         };
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task GetM3UPlaylist_PublishOff_ReturnsNotFound()
+    {
+        // GitHub #109. With the switch off the playlist answers like a route that does not exist,
+        // before the Live TV and credential checks could tell a caller anything.
+        Plugin.Instance.Configuration.PublishLiveTvPlaylists = false;
+        Plugin.Instance.Configuration.EnableLiveTv = true;
+
+        var result = await _controller.GetM3UPlaylist(System.Threading.CancellationToken.None);
+
+        result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task GetCatchupM3UPlaylist_PublishOff_ReturnsNotFound()
+    {
+        Plugin.Instance.Configuration.PublishLiveTvPlaylists = false;
+        Plugin.Instance.Configuration.EnableLiveTv = true;
+        Plugin.Instance.Configuration.EnableCatchup = true;
+
+        var result = await _controller.GetCatchupM3UPlaylist(System.Threading.CancellationToken.None);
+
+        result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task GetM3UPlaylist_PublishOn_ReachesTheLiveTvCheck()
+    {
+        Plugin.Instance.Configuration.PublishLiveTvPlaylists = true;
+        Plugin.Instance.Configuration.EnableLiveTv = false;
+
+        var result = await _controller.GetM3UPlaylist(System.Threading.CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task GetEpgXml_IsNotCoveredByTheSwitch()
+    {
+        // The guide carries no credentials and native tuner users need it.
+        Plugin.Instance.Configuration.PublishLiveTvPlaylists = false;
+        Plugin.Instance.Configuration.EnableLiveTv = false;
+
+        var result = await _controller.GetEpgXml(System.Threading.CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>();
     }
 }
