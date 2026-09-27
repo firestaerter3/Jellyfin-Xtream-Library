@@ -709,6 +709,41 @@ public class StrmSyncServiceTests
 
     #endregion
 
+    #region FindRelocatedOrphans Tests
+
+    [Fact]
+    public void FindRelocatedOrphans_MatchesOnContent_AndIgnoresEmptyOrMissingFiles()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "xtream_reloc_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string Write(string name, string content)
+            {
+                var path = Path.Combine(dir, name);
+                File.WriteAllText(path, content);
+                return path;
+            }
+
+            var moved = Write("old-a.strm", "http://p/movie/u/p/1.mp4\n");
+            var lost = Write("old-b.strm", "http://p/movie/u/p/2.mp4");
+            var empty = Write("old-c.strm", string.Empty);
+            var missing = Path.Combine(dir, "gone.strm");
+            var written = Write("new-a.strm", "http://p/movie/u/p/1.mp4");
+            var writtenEmpty = Write("new-c.strm", string.Empty);
+
+            var result = StrmSyncService.FindRelocatedOrphans(new[] { moved, lost, empty, missing }, new[] { written, writtenEmpty });
+
+            result.Should().BeEquivalentTo(new[] { moved });
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
+    #endregion
+
     #region CleanupEmptyDirectories Tests
 
     /// <summary>

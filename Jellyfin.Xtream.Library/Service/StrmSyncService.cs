@@ -1187,6 +1187,39 @@ public partial class StrmSyncService
             double movieDeletionRatio = existingMovieCount > 0 ? (double)orphanedMovies / existingMovieCount : 0;
             double episodeDeletionRatio = existingEpisodeCount > 0 ? (double)orphanedEpisodes / existingEpisodeCount : 0;
 
+            // A folder layout change (Multiple to Single, or a mapping removed) writes every moved
+            // item to its new place and leaves the old file behind as an orphan. On any real
+            // library that is far over the threshold, so the cleanup refused, every item stayed in
+            // the library twice, and the ratio never came down again. An orphan whose stream this
+            // run wrote somewhere else is a copy, not a loss: remove those regardless of the
+            // threshold, and hold only the rest to it. Checked only when the threshold would
+            // otherwise block, because it reads every file this run wrote.
+            var relocatedOrphans = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (existingMovieCount > 10 && movieDeletionRatio > safetyThreshold)
+            {
+                relocatedOrphans.UnionWith(FindRelocatedOrphans(
+                    orphanedFiles.Where(f => f.StartsWith(moviesPath, StringComparison.OrdinalIgnoreCase)),
+                    syncedFiles.Keys.Where(f => f.StartsWith(moviesPath, StringComparison.OrdinalIgnoreCase))));
+            }
+
+            if (existingEpisodeCount > 10 && episodeDeletionRatio > safetyThreshold)
+            {
+                relocatedOrphans.UnionWith(FindRelocatedOrphans(
+                    orphanedFiles.Where(f => f.StartsWith(seriesPath, StringComparison.OrdinalIgnoreCase)),
+                    syncedFiles.Keys.Where(f => f.StartsWith(seriesPath, StringComparison.OrdinalIgnoreCase))));
+            }
+
+            if (relocatedOrphans.Count > 0)
+            {
+                _logger.LogInformation(
+                    "{Count} orphaned STRM files are copies of items this sync wrote to a new folder (folder layout change); removing them regardless of the safety threshold",
+                    relocatedOrphans.Count);
+                orphanedMovies = orphanedFiles.Count(f => f.StartsWith(moviesPath, StringComparison.OrdinalIgnoreCase) && !relocatedOrphans.Contains(f));
+                orphanedEpisodes = orphanedFiles.Count(f => f.StartsWith(seriesPath, StringComparison.OrdinalIgnoreCase) && !relocatedOrphans.Contains(f));
+                movieDeletionRatio = existingMovieCount > 0 ? (double)orphanedMovies / existingMovieCount : 0;
+                episodeDeletionRatio = existingEpisodeCount > 0 ? (double)orphanedEpisodes / existingEpisodeCount : 0;
+            }
+
             // Protection: a selection that resolves to nothing syncs no files, which would make
             // the entire existing library an orphan. That is a misconfiguration to be corrected,
             // not a deletion to be carried out - and it is reachable by upgrading into the #78 fix
@@ -1279,8 +1312,9 @@ public partial class StrmSyncService
             // Filter orphans based on safety checks
             var safeOrphans = orphanedFiles
                 .Where(f =>
-                    !(skipMovieCleanup && f.StartsWith(moviesPath, StringComparison.OrdinalIgnoreCase)) &&
-                    !(skipEpisodeCleanup && f.StartsWith(seriesPath, StringComparison.OrdinalIgnoreCase)))
+                    (relocatedOrphans.Contains(f) && !skipMovieForEmptySelection && !skipEpisodeForEmptySelection) ||
+                    (!(skipMovieCleanup && f.StartsWith(moviesPath, StringComparison.OrdinalIgnoreCase)) &&
+                     !(skipEpisodeCleanup && f.StartsWith(seriesPath, StringComparison.OrdinalIgnoreCase))))
                 .ToList();
 
             CurrentProgress.TotalItems = safeOrphans.Count;
@@ -4565,6 +4599,60 @@ public partial class StrmSyncService
         catch (UnauthorizedAccessException)
         {
             // Same.
+        }
+    }
+
+    /// <summary>
+    /// Finds the orphans whose stream this run wrote to another file: same STRM content, so the
+    /// item is still in the library and the orphan is only the copy a folder layout change left.
+    /// A file that cannot be read is never counted as relocated.
+    /// </summary>
+    /// <param name="orphans">Orphaned STRM paths.</param>
+    /// <param name="writtenFiles">STRM paths this run wrote or kept.</param>
+    /// <returns>The orphans that are copies.</returns>
+    internal static HashSet<string> FindRelocatedOrphans(IEnumerable<string> orphans, IEnumerable<string> writtenFiles)
+    {
+        var relocated = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var orphanList = orphans.ToList();
+        if (orphanList.Count == 0)
+        {
+            return relocated;
+        }
+
+        var writtenUrls = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var file in writtenFiles)
+        {
+            if (TryReadStrmUrl(file) is string url)
+            {
+                writtenUrls.Add(url);
+            }
+        }
+
+        foreach (var orphan in orphanList)
+        {
+            if (TryReadStrmUrl(orphan) is string url && writtenUrls.Contains(url))
+            {
+                relocated.Add(orphan);
+            }
+        }
+
+        return relocated;
+    }
+
+    private static string? TryReadStrmUrl(string path)
+    {
+        try
+        {
+            var url = File.ReadAllText(path).Trim();
+            return url.Length == 0 ? null : url;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
         }
     }
 

@@ -40,6 +40,7 @@ public class StrmNameCollisionTests : IDisposable
     private readonly List<string> _log = [];
     private readonly Mock<IMetadataLookupService> _lookup = new();
     private bool _metadataLookup;
+    private Action<ProviderConfig>? _configure;
     private StrmSyncService? _lastService;
 
     private sealed class ListLogger(List<string> sink) : Microsoft.Extensions.Logging.ILogger<StrmSyncService>
@@ -699,6 +700,93 @@ public class StrmNameCollisionTests : IDisposable
         MovieFolders().Select(Path.GetFileName).Should().ContainSingle().Which.Should().Contain("tmdbid-9378");
     }
 
+    // === Folder layout change (the idea from andreadegiovine's feat-db branch) ===
+
+    private const string KidsAndOther = "Kids=1\nOther=2";
+
+    private void MovieCatalogue(IEnumerable<int> kids, IEnumerable<int> other)
+    {
+        static List<StreamInfo> Films(IEnumerable<int> ids, int category) => ids
+            .Select(i => new StreamInfo { StreamId = 700 + i, Name = $"Film {i} (2001)", ContainerExtension = "mp4", CategoryId = category })
+            .ToList();
+        _client.Setup(c => c.GetVodCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Category> { new() { CategoryId = 1, CategoryName = "Kids" }, new() { CategoryId = 2, CategoryName = "Other" } });
+        _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>())).ReturnsAsync(Films(kids, 1));
+        _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 2, It.IsAny<CancellationToken>())).ReturnsAsync(Films(other, 2));
+    }
+
+    private Task<SyncResult> RunLayoutSyncAsync(string mode, string mappings, bool syncMovies = true, bool syncSeries = false)
+    {
+        _configure = p =>
+        {
+            p.MovieFolderMode = mode;
+            p.MovieFolderMappings = mappings;
+            p.SeriesFolderMode = mode;
+            p.SeriesFolderMappings = mappings;
+        };
+        return RunSyncAsync(syncMovies, syncSeries, useShippedDefaults: true, providerCount: 1, proactiveMediaInfo: false, groupByTmdbId: false, cleanupOrphans: true);
+    }
+
+    private string[] StrmFiles(string root)
+        => Directory.GetFiles(Path.Combine(_libraryPath, root), "*.strm", SearchOption.AllDirectories)
+            .Select(f => Path.GetRelativePath(Path.Combine(_libraryPath, root), f))
+            .ToArray();
+
+    [Fact]
+    public async Task SwitchingMultipleToSingle_RemovesTheOldCopiesInsteadOfDuplicatingTheLibrary()
+    {
+        MovieCatalogue(Enumerable.Range(1, 20), Enumerable.Range(21, 10));
+        await RunLayoutSyncAsync("Multiple", KidsAndOther).ConfigureAwait(true);
+        StrmFiles("Movies").Should().HaveCount(30).And.OnlyContain(f => f.StartsWith("Kids", StringComparison.Ordinal) || f.StartsWith("Other", StringComparison.Ordinal));
+
+        var result = await RunLayoutSyncAsync("Single", string.Empty).ConfigureAwait(true);
+
+        StrmFiles("Movies").Should().HaveCount(30).And.NotContain(f => f.StartsWith("Kids", StringComparison.Ordinal) || f.StartsWith("Other", StringComparison.Ordinal));
+        result.OrphanCleanupBlockedByThreshold.Should().BeFalse();
+        Directory.Exists(Path.Combine(_libraryPath, "Movies", "Kids")).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ALayoutChangeDoesNotLetRealLossesPastTheThreshold()
+    {
+        MovieCatalogue(Enumerable.Range(1, 20), Enumerable.Range(21, 10));
+        await RunLayoutSyncAsync("Multiple", KidsAndOther).ConfigureAwait(true);
+
+        // Same switch, but the provider also dropped ten films: 10 of 30 is over the 20% limit.
+        MovieCatalogue(Enumerable.Range(1, 20), Enumerable.Empty<int>());
+        var result = await RunLayoutSyncAsync("Single", string.Empty).ConfigureAwait(true);
+
+        var files = StrmFiles("Movies");
+        files.Where(f => f.StartsWith("Kids", StringComparison.Ordinal)).Should().BeEmpty("the twenty moved films are copies");
+        files.Where(f => f.StartsWith("Other", StringComparison.Ordinal)).Should().HaveCount(10, "the ten lost films stay behind the threshold");
+        result.OrphanCleanupBlockedByThreshold.Should().BeTrue();
+        result.MovieOrphansSkipped.Should().Be(10);
+    }
+
+    [Fact]
+    public async Task SwitchingSeriesLayout_RemovesTheOldEpisodeCopies()
+    {
+        var episodes = Enumerable.Range(1, 12).Select(i => new Episode { EpisodeId = 900 + i, EpisodeNum = i, Title = $"Ep {i}", ContainerExtension = "mkv" }).ToList();
+        _client.Setup(c => c.GetSeriesCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Category> { new() { CategoryId = 1, CategoryName = "Kids" } });
+        _client.Setup(c => c.GetSeriesByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Series> { new() { SeriesId = 7, Name = "Moving Show (2024)", CategoryId = 1 } });
+        _client.Setup(c => c.GetSeriesStreamsBySeriesAsync(It.IsAny<ConnectionInfo>(), 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SeriesStreamInfo
+            {
+                Seasons = new List<Season> { new() { SeasonNumber = 1 } },
+                Episodes = new Dictionary<int, ICollection<Episode>> { [1] = episodes },
+            });
+
+        await RunLayoutSyncAsync("Multiple", "Kids=1", syncMovies: false, syncSeries: true).ConfigureAwait(true);
+        StrmFiles("Series").Should().HaveCount(12).And.OnlyContain(f => f.StartsWith("Kids", StringComparison.Ordinal));
+
+        var result = await RunLayoutSyncAsync("Single", string.Empty, syncMovies: false, syncSeries: true).ConfigureAwait(true);
+
+        StrmFiles("Series").Should().HaveCount(12).And.NotContain(f => f.StartsWith("Kids", StringComparison.Ordinal));
+        result.OrphanCleanupBlockedByThreshold.Should().BeFalse();
+    }
+
     private string[] MovieFolders()
         => Directory.GetDirectories(Path.Combine(_libraryPath, "Movies")).Select(d => Path.GetFileName(d)!).OrderBy(n => n, StringComparer.Ordinal).ToArray();
 
@@ -777,6 +865,11 @@ public class StrmNameCollisionTests : IDisposable
             GroupMoviesByTmdbId = groupByTmdbId,
             SyncParallelism = 1,
         }).ToList();
+        foreach (var p in plugin.Configuration.Providers)
+        {
+            _configure?.Invoke(p);
+        }
+
         plugin.Configuration.EnableLiveTv = false;
         plugin.Configuration.EnableMetadataLookup = _metadataLookup;
 
