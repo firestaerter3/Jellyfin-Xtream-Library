@@ -34,6 +34,14 @@ public class StringOrIntConverter : JsonConverter
     /// <inheritdoc />
     public override object ReadJson(JsonReader reader, Type objectType, object? existingValue, JsonSerializer serializer)
     {
+        // An object or array has to be read to its end before returning, or the reader is left
+        // inside it and its contents are read as the next properties of the parent object.
+        if (reader.TokenType is JsonToken.StartObject or JsonToken.StartArray)
+        {
+            reader.Skip();
+            return 0;
+        }
+
         if (reader.Value == null)
         {
             return 0;

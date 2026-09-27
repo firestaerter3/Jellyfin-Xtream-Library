@@ -683,6 +683,33 @@ public class ConverterTests
         act.Should().Throw<JsonException>();
     }
 
+    // Found by the Codex review of #125: the converter returned 0 without reading past the object
+    // or array, so its contents were read as properties of the episode.
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{ \"x\": 1, \"title\": \"Wrong\" }")]
+    [InlineData("[]")]
+    [InlineData("[1, 2]")]
+    public void Episode_ObjectOrArrayAsEpisodeNumber_ReadsAsZeroAndKeepsTheRest(string value)
+    {
+        var json = $$"""
+            {
+                "info": { "name": "Test Series" },
+                "episodes": { "1": [
+                    { "id": "1", "episode_num": {{value}}, "season": 1, "title": "Pilot" },
+                    { "id": "2", "episode_num": 2, "season": 1, "title": "Second" }
+                ] }
+            }
+            """;
+
+        var result = JsonConvert.DeserializeObject<SeriesStreamInfo>(json, ProductionSettings());
+
+        var episodes = result!.Episodes![1].ToList();
+        episodes.Select(e => e.Title).Should().Equal("Pilot", "Second");
+        episodes[0].EpisodeNum.Should().Be(0);
+        episodes[0].Season.Should().Be(1);
+    }
+
     private static JsonSerializerSettings ProductionSettings() => new()
     {
         Error = XtreamClient.NullableEventHandler(new Mock<ILogger<XtreamClient>>().Object),
