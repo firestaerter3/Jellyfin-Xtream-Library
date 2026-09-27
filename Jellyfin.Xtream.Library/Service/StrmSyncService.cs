@@ -4569,9 +4569,11 @@ public partial class StrmSyncService
     }
 
     /// <summary>
-    /// Once a folder holds no STRM file and no subfolder, deletes the files the sync wrote there
-    /// (NFO files, <c>poster</c>, <c>fanart</c> and <c>-thumb</c> images). Any other file, such as
-    /// a subtitle the user added, is left alone and keeps the folder from being removed.
+    /// Once a folder holds no STRM file and no subfolder, deletes the files the sync writes at
+    /// folder level: the movie NFO named after the folder, <c>tvshow.nfo</c>, and the
+    /// <c>poster</c> and <c>fanart</c> images. Only those exact names: a matching extension says
+    /// nothing about who wrote a file, so any other file, such as a <c>metadata.nfo</c> or a
+    /// subtitle the user added, is left alone and keeps the folder from being removed.
     /// </summary>
     /// <param name="directory">Folder to clean.</param>
     internal static void DeleteLeftoverSidecars(string directory)
@@ -4586,7 +4588,7 @@ public partial class StrmSyncService
 
             foreach (var file in Directory.GetFiles(directory))
             {
-                if (SidecarFilePattern().IsMatch(Path.GetFileName(file)))
+                if (IsFolderSidecarWrittenBySync(Path.GetFileName(file), Path.GetFileName(directory)))
                 {
                     File.Delete(file);
                 }
@@ -4654,6 +4656,32 @@ public partial class StrmSyncService
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Whether a file is one the sync writes at folder level: <c>&lt;folder name&gt;.nfo</c> for a
+    /// movie, <c>tvshow.nfo</c> for a series, and <c>poster</c> or <c>fanart</c> with an extension
+    /// <see cref="GetImageExtension"/> produces.
+    /// </summary>
+    /// <param name="fileName">File name to check.</param>
+    /// <param name="folderName">Name of the folder it is in.</param>
+    /// <returns>True when the sync writes a file of that name there.</returns>
+    internal static bool IsFolderSidecarWrittenBySync(string fileName, string folderName)
+    {
+        if (string.Equals(fileName, folderName + ".nfo", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(fileName, "tvshow.nfo", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        string stem = Path.GetFileNameWithoutExtension(fileName);
+        string extension = Path.GetExtension(fileName);
+        return (string.Equals(stem, "poster", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(stem, "fanart", StringComparison.OrdinalIgnoreCase)) &&
+               (string.Equals(extension, ".jpg", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(extension, ".png", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(extension, ".webp", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(extension, ".gif", StringComparison.OrdinalIgnoreCase));
     }
 
     internal static void CleanupEmptyDirectories(string directory, string stopAt, string seriesPath, SyncResult result)
@@ -4786,10 +4814,6 @@ public partial class StrmSyncService
     // A four-digit year not inside a longer number: the first one in "2001-10-26" or "26/10/2001".
     [GeneratedRegex(@"(?<!\d)(?:19|20)\d{2}(?!\d)")]
     private static partial Regex ReleaseDateYearPattern();
-
-    // Files the sync writes next to STRM files: NFOs, and the images named by GetImageExtension.
-    [GeneratedRegex(@"^(?:.+\.nfo|(?:poster|fanart|.+-thumb)\.(?:jpg|png|webp|gif))$", RegexOptions.IgnoreCase)]
-    private static partial Regex SidecarFilePattern();
 
     // Matches bare year suffix appended with a dash, e.g. "Alarum - 2025" or "Movie – 2025"
     [GeneratedRegex(@"\s*[-–]\s*(\d{4})\s*$")]

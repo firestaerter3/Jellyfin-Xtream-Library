@@ -939,6 +939,45 @@ public class StrmSyncServiceTests
         Directory.Delete(tempDir, true);
     }
 
+    // A matching extension does not say who wrote a file. Found by the Codex and CodeRabbit
+    // reviews of #124: the first version deleted any .nfo and any -thumb image.
+    [Theory]
+    [InlineData("metadata.nfo")]
+    [InlineData("Other Movie (1999).nfo")]
+    [InlineData("custom-thumb.jpg")]
+    [InlineData("backdrop.jpg")]
+    public void CleanupEmptyDirectories_FileTheSyncDoesNotWrite_KeepsFolderAndFile(string userFile)
+    {
+        var tempDir = GetResolvedTempPath();
+        var movieDir = Path.Combine(tempDir, "Movie (2000)");
+        Directory.CreateDirectory(movieDir);
+        File.WriteAllText(Path.Combine(movieDir, "Movie (2000).nfo"), "<movie></movie>");
+        File.WriteAllText(Path.Combine(movieDir, "poster.jpg"), "img");
+        File.WriteAllText(Path.Combine(movieDir, userFile), "mine");
+        var result = new SyncResult();
+
+        StrmSyncService.CleanupEmptyDirectories(movieDir, tempDir, tempDir, result);
+
+        File.Exists(Path.Combine(movieDir, userFile)).Should().BeTrue();
+        Directory.Exists(movieDir).Should().BeTrue();
+
+        Directory.Delete(tempDir, true);
+    }
+
+    [Theory]
+    [InlineData("Movie (2000).nfo", "Movie (2000)", true)]
+    [InlineData("MOVIE (2000).NFO", "Movie (2000)", true)]
+    [InlineData("tvshow.nfo", "Show (2024)", true)]
+    [InlineData("poster.webp", "Season 1", true)]
+    [InlineData("fanart.png", "Show (2024)", true)]
+    [InlineData("metadata.nfo", "Movie (2000)", false)]
+    [InlineData("poster.bmp", "Movie (2000)", false)]
+    [InlineData("Show - S01E01-thumb.jpg", "Season 1", false)]
+    public void IsFolderSidecarWrittenBySync_OnlyTheNamesTheSyncWrites(string file, string folder, bool expected)
+    {
+        StrmSyncService.IsFolderSidecarWrittenBySync(file, folder).Should().Be(expected);
+    }
+
     [Fact]
     public void CleanupEmptyDirectories_FolderWithSubfolder_KeepsSidecars()
     {
