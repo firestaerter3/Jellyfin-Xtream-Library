@@ -95,21 +95,11 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
         await InitializeAsync().ConfigureAwait(false);
 
         var attempts = GetMovieLookupAttempts(title, year, releaseDateYear, originalTitle, config.FallbackToYearlessLookup);
-        bool holdsRateLimiter = false;
         try
         {
             for (int i = 0; i < attempts.Count; i++)
             {
                 var (attemptTitle, attemptYear) = attempts[i];
-                if (i > 0)
-                {
-                    _logger.LogInformation(
-                        "Retrying TMDb lookup for '{Title}' ({Year}) as '{AttemptTitle}' ({AttemptYear})",
-                        title,
-                        year,
-                        attemptTitle,
-                        attemptYear);
-                }
 
                 // Each attempt has its own cache entry, so a miss cached for the first one
                 // does not hide a match an earlier run found with a later one.
@@ -125,18 +115,33 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
                     continue;
                 }
 
-                if (!holdsRateLimiter)
+                if (i > 0)
                 {
-                    if (_rateLimiter == null)
-                    {
-                        throw new InvalidOperationException("MetadataLookupService not initialized. Call InitializeAsync first.");
-                    }
-
-                    await _rateLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
-                    holdsRateLimiter = true;
+                    _logger.LogInformation(
+                        "Retrying TMDb lookup for '{Title}' ({Year}) as '{AttemptTitle}' ({AttemptYear})",
+                        title,
+                        year,
+                        attemptTitle,
+                        attemptYear);
                 }
 
-                int? tmdbId = await SearchMovieTmdbIdAsync(attemptTitle, attemptYear, cancellationToken).ConfigureAwait(false);
+                if (_rateLimiter == null)
+                {
+                    throw new InvalidOperationException("MetadataLookupService not initialized. Call InitializeAsync first.");
+                }
+
+                // Held for one search at a time, so a movie working through its fallbacks does
+                // not keep other lookups waiting until their timeout runs out.
+                int? tmdbId;
+                await _rateLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    tmdbId = await SearchMovieTmdbIdAsync(attemptTitle, attemptYear, cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _rateLimiter.Release();
+                }
 
                 // Cache even a miss, to avoid repeating the search
                 _cache.Set(cacheKey, new MetadataCacheEntry
@@ -157,13 +162,6 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
         {
             _logger.LogWarning(ex, "Failed to lookup TMDb ID for movie: {Title} ({Year})", title, year);
             return null;
-        }
-        finally
-        {
-            if (holdsRateLimiter)
-            {
-                _rateLimiter!.Release();
-            }
         }
     }
 
