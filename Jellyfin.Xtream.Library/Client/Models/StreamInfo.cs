@@ -20,6 +20,7 @@ namespace Jellyfin.Xtream.Library.Client.Models;
 
 public class StreamInfo
 {
+    [JsonConverter(typeof(StringOrIntConverter))]
     [JsonProperty("num")]
     public int Num { get; set; }
 
@@ -56,6 +57,7 @@ public class StreamInfo
     [JsonProperty("direct_source")]
     public string DirectSource { get; set; } = string.Empty;
 
+    [JsonConverter(typeof(StringOrIntConverter))]
     [JsonProperty("tv_archive_duration")]
     public int TvArchiveDuration { get; set; }
 }

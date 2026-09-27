@@ -17,6 +17,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
@@ -195,7 +196,8 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
     }
 
     /// <summary>
-    /// Ignores error events if the target property is nullable.
+    /// Ignores error events if the target property is nullable, and skips a list item that
+    /// cannot be read instead of failing the whole list.
     /// </summary>
     /// <param name="logger">Instance of the <see cref="ILogger"/> interface.</param>
     /// <returns>An event handler using the given logger.</returns>
@@ -203,6 +205,22 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
     {
         return (object? sender, ErrorEventArgs args) =>
         {
+            // An error inside a list item is raised again at each enclosing level, and when it
+            // reaches the list, CurrentObject is that list (the error context keeps describing
+            // the failing field). Handling it there drops that one item; left alone, one bad
+            // value (such as "" for a series_id) failed the whole category. Malformed JSON
+            // (JsonReaderException) is not a bad item: a cut-off response must still fail, or
+            // the items it lost would be deleted as orphans.
+            if (args.CurrentObject is IList && args.ErrorContext.Error is not JsonReaderException)
+            {
+                logger.LogWarning(
+                    "Skipping an item the provider sent that could not be read ({Path}): {Error}",
+                    args.ErrorContext.Path,
+                    args.ErrorContext.Error.Message);
+                args.ErrorContext.Handled = true;
+                return;
+            }
+
             if (args.ErrorContext.OriginalObject?.GetType() is Type type && args.ErrorContext.Member is string jsonName)
             {
                 PropertyInfo[] properties = PropertyCache.GetOrAdd(type, t => t.GetProperties());

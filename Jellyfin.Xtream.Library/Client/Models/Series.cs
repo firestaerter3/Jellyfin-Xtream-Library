@@ -23,6 +23,7 @@ namespace Jellyfin.Xtream.Library.Client.Models;
 
 public class Series
 {
+    [JsonConverter(typeof(StringOrIntConverter))]
     [JsonProperty("num")]
     public int Num { get; set; }
 

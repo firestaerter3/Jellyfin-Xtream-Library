@@ -24,6 +24,7 @@ public class Season
     [JsonProperty("air_date")]
     public DateTime? AirDate { get; set; }
 
+    [JsonConverter(typeof(StringOrIntConverter))]
     [JsonProperty("episode_count")]
     public int EpisodeCount { get; set; }
 
@@ -36,6 +37,7 @@ public class Season
     [JsonProperty("overview")]
     public string Overview { get; set; } = string.Empty;
 
+    [JsonConverter(typeof(StringOrIntConverter))]
     [JsonProperty("season_number")]
     public int SeasonNumber { get; set; }
 

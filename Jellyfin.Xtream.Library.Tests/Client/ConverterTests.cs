@@ -584,6 +584,105 @@ public class ConverterTests
         result.Episodes[2].Single().Title.Should().Be("Third");
     }
 
+    // In a list, a bad value used to throw and QueryApi failed the whole category (the case
+    // foXaCe actually reported).
+    [Theory]
+    [InlineData("num")]
+    [InlineData("category_id")]
+    public void SeriesList_BadNonIdField_KeepsEveryItem(string field)
+    {
+        var json = $$"""[ { "name": "A", "series_id": 1, "{{field}}": "" }, { "name": "B", "series_id": 2, "num": 2 } ]""";
+
+        var result = JsonConvert.DeserializeObject<List<Series>>(json, ProductionSettings());
+
+        result!.Select(x => x.SeriesId).Should().Equal(1, 2);
+    }
+
+    [Fact]
+    public void SeriesList_BadSeriesId_SkipsOnlyThatItem()
+    {
+        var json = """[ { "name": "A", "series_id": "" }, { "name": "B", "series_id": 2 }, { "name": "C", "series_id": 3 } ]""";
+
+        var result = JsonConvert.DeserializeObject<List<Series>>(json, ProductionSettings());
+
+        result!.Select(x => x.Name).Should().Equal("B", "C");
+    }
+
+    [Theory]
+    [InlineData("num")]
+    [InlineData("tv_archive_duration")]
+    public void VodList_BadNonIdField_KeepsEveryItem(string field)
+    {
+        var json = $$"""[ { "name": "A", "stream_id": 1, "{{field}}": "" }, { "name": "B", "stream_id": 2 } ]""";
+
+        var result = JsonConvert.DeserializeObject<List<StreamInfo>>(json, ProductionSettings());
+
+        result!.Select(x => x.StreamId).Should().Equal(1, 2);
+    }
+
+    [Fact]
+    public void VodList_BadStreamId_SkipsOnlyThatItem()
+    {
+        var json = """[ { "name": "A", "stream_id": "" }, { "name": "B", "stream_id": 2 } ]""";
+
+        var result = JsonConvert.DeserializeObject<List<StreamInfo>>(json, ProductionSettings());
+
+        result!.Select(x => x.Name).Should().Equal("B");
+    }
+
+    [Theory]
+    [InlineData("num")]
+    [InlineData("tv_archive_duration")]
+    public void LiveList_BadNonIdField_KeepsEveryItem(string field)
+    {
+        var json = $$"""[ { "name": "A", "stream_id": 1, "{{field}}": "" }, { "name": "B", "stream_id": 2 } ]""";
+
+        var result = JsonConvert.DeserializeObject<List<LiveStreamInfo>>(json, ProductionSettings());
+
+        result!.Select(x => x.StreamId).Should().Equal(1, 2);
+    }
+
+    [Fact]
+    public void SeriesInfo_BadSeasonEpisodeCount_KeepsSeasons()
+    {
+        var json = """
+            {
+                "seasons": [ { "id": 10, "season_number": 1, "episode_count": "" }, { "id": 11, "season_number": 2, "episode_count": 3 } ],
+                "info": { "name": "X" },
+                "episodes": {}
+            }
+            """;
+
+        var result = JsonConvert.DeserializeObject<SeriesStreamInfo>(json, ProductionSettings());
+
+        result!.Seasons.Select(x => x.SeasonNumber).Should().Equal(1, 2);
+    }
+
+    [Fact]
+    public void Episode_BadEpisodeId_SkipsOnlyThatEpisode()
+    {
+        var json = """
+            {
+                "info": { "name": "X" },
+                "episodes": { "1": [ { "id": "", "episode_num": 1, "season": 1, "title": "Bad" }, { "id": "2", "episode_num": 2, "season": 1, "title": "Good" } ] }
+            }
+            """;
+
+        var result = JsonConvert.DeserializeObject<SeriesStreamInfo>(json, ProductionSettings());
+
+        result!.Episodes![1].Select(e => e.Title).Should().Equal("Good");
+    }
+
+    [Fact]
+    public void SeriesList_TruncatedResponse_StillThrows()
+    {
+        var json = """[ { "name": "A", "series_id": 1 }, { "name": "B", "ser""";
+
+        var act = () => JsonConvert.DeserializeObject<List<Series>>(json, ProductionSettings());
+
+        act.Should().Throw<JsonException>();
+    }
+
     private static JsonSerializerSettings ProductionSettings() => new()
     {
         Error = XtreamClient.NullableEventHandler(new Mock<ILogger<XtreamClient>>().Object),
