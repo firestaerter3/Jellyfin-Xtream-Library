@@ -19,6 +19,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -2231,11 +2232,20 @@ public partial class StrmSyncService
                         // Only do metadata lookup if provider doesn't have TMDB ID
                         if (!providerTmdbId.HasValue && enableMetadataLookup && !tmdbOverrides.ContainsKey(baseName))
                         {
+                            // Used only when the year-free fallback is on: the provider's release
+                            // date catches a wrong year in the title, its original title catches a
+                            // title in another language. Either adds searches, so allow more time.
+                            int? releaseDateYear = ExtractYearFromReleaseDate(vodInfo?.Info?.ReleaseDate);
+                            string? originalTitle = string.IsNullOrWhiteSpace(vodInfo?.Info?.OriginalName)
+                                ? null
+                                : SanitizeFileName(vodInfo.Info.OriginalName, provider.CustomTitleRemoveTerms);
+                            bool hasLookupHints = releaseDateYear.HasValue || originalTitle != null;
+
                             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                            timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
+                            timeoutCts.CancelAfter(TimeSpan.FromSeconds(hasLookupHints ? 15 : 5));
                             try
                             {
-                                autoLookupTmdbId = await _metadataLookup.LookupMovieTmdbIdAsync(movieName, year, timeoutCts.Token).ConfigureAwait(false);
+                                autoLookupTmdbId = await _metadataLookup.LookupMovieTmdbIdAsync(movieName, year, releaseDateYear, originalTitle, timeoutCts.Token).ConfigureAwait(false);
                                 if (!autoLookupTmdbId.HasValue)
                                 {
                                     Interlocked.Increment(ref unmatchedCount);
@@ -4015,6 +4025,29 @@ public partial class StrmSyncService
         return System.Text.Encoding.UTF8.GetString(bytes, 0, cut);
     }
 
+    /// <summary>
+    /// Reads the year from a provider release date such as "2001-10-26", "2001" or "26/10/2001".
+    /// </summary>
+    /// <param name="releaseDate">The release date as the provider sent it.</param>
+    /// <returns>The year, or null when none is found or it is outside 1900 to five years from now.</returns>
+    internal static int? ExtractYearFromReleaseDate(string? releaseDate)
+    {
+        if (string.IsNullOrWhiteSpace(releaseDate))
+        {
+            return null;
+        }
+
+        var match = ReleaseDateYearPattern().Match(releaseDate);
+        if (match.Success &&
+            int.TryParse(match.Value, NumberStyles.None, CultureInfo.InvariantCulture, out int year) &&
+            year >= 1900 && year <= DateTime.Now.Year + 5)
+        {
+            return year;
+        }
+
+        return null;
+    }
+
     internal static int? ExtractYear(string? name)
     {
         if (string.IsNullOrEmpty(name))
@@ -4661,6 +4694,10 @@ public partial class StrmSyncService
 
     [GeneratedRegex(@"\s*\((\d{4})\)\s*$")]
     private static partial Regex YearPattern();
+
+    // A four-digit year not inside a longer number: the first one in "2001-10-26" or "26/10/2001".
+    [GeneratedRegex(@"(?<!\d)(?:19|20)\d{2}(?!\d)")]
+    private static partial Regex ReleaseDateYearPattern();
 
     // Files the sync writes next to STRM files: NFOs, and the images named by GetImageExtension.
     [GeneratedRegex(@"^(?:.+\.nfo|(?:poster|fanart|.+-thumb)\.(?:jpg|png|webp|gif))$", RegexOptions.IgnoreCase)]

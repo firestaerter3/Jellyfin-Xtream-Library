@@ -16,7 +16,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
+using System.Globalization;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Jellyfin.Xtream.Library.Service;
@@ -216,7 +218,7 @@ public class MetadataLookupServiceTests
         var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
         var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
 
-        var result = await svc.LookupMovieTmdbIdAsync("The Notebook", 2009, CancellationToken.None);
+        var result = await svc.LookupMovieTmdbIdAsync("The Notebook", 2009, null, null, CancellationToken.None);
 
         result.Should().Be(11036);
         mockProvider.Verify(
@@ -245,7 +247,7 @@ public class MetadataLookupServiceTests
         var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
         var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
 
-        var result = await svc.LookupMovieTmdbIdAsync("The Notebook", 2009, CancellationToken.None);
+        var result = await svc.LookupMovieTmdbIdAsync("The Notebook", 2009, null, null, CancellationToken.None);
 
         result.Should().BeNull();
         mockProvider.Verify(
@@ -275,7 +277,7 @@ public class MetadataLookupServiceTests
         var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
         var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
 
-        var result = await svc.LookupMovieTmdbIdAsync("The Notebook", null, CancellationToken.None);
+        var result = await svc.LookupMovieTmdbIdAsync("The Notebook", null, null, null, CancellationToken.None);
 
         result.Should().BeNull();
         mockProvider.Verify(
@@ -307,14 +309,113 @@ public class MetadataLookupServiceTests
         var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
 
         // First call: primary (year) + fallback (no year) = 2 provider calls
-        await svc.LookupMovieTmdbIdAsync("Unknown Movie", 2020, CancellationToken.None);
+        await svc.LookupMovieTmdbIdAsync("Unknown Movie", 2020, null, null, CancellationToken.None);
         // Second call with same title, no year: should hit fallback cache, 0 new provider calls
-        await svc.LookupMovieTmdbIdAsync("Unknown Movie", null, CancellationToken.None);
+        await svc.LookupMovieTmdbIdAsync("Unknown Movie", null, null, null, CancellationToken.None);
 
         mockProvider.Verify(
             pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
                 It.IsAny<RemoteSearchQuery<MovieInfo>>(), It.IsAny<CancellationToken>()),
             Times.Exactly(2)); // primary + fallback on first call; cache hit on second
+    }
+
+    // === Release-date year and original title (from philx17's fork) ===
+
+    private static (Mock<IProviderManager> Provider, List<MovieInfo> Queries) MovieProvider(
+        Func<MovieInfo, RemoteSearchResult?> answer)
+    {
+        var queries = new List<MovieInfo>();
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .Setup(pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(
+                It.IsAny<RemoteSearchQuery<MovieInfo>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((RemoteSearchQuery<MovieInfo> q, CancellationToken _) =>
+            {
+                queries.Add(q.SearchInfo);
+                var r = answer(q.SearchInfo);
+                return r == null ? Array.Empty<RemoteSearchResult>() : new[] { r };
+            });
+        return (mockProvider, queries);
+    }
+
+    private static RemoteSearchResult TmdbResult(string name, int year, int id) => new()
+    {
+        Name = name,
+        ProductionYear = year,
+        ProviderIds = new Dictionary<string, string> { ["Tmdb"] = id.ToString(CultureInfo.InvariantCulture) },
+    };
+
+    [Fact]
+    public async Task LookupMovieTmdbIdAsync_WrongYearInTitle_FindsMatchWithReleaseDateYear()
+    {
+        InitPlugin(new PluginConfiguration { EnableMetadataLookup = true, FallbackToYearlessLookup = true, LibraryPath = string.Empty });
+
+        // "13 Geister (2025)" is a 2001 film. Nothing matches it as a 2025 film; the
+        // release-date year finds it.
+        var (provider, queries) = MovieProvider(q => q.Year == 2001 ? TmdbResult("13 Ghosts", 2001, 9378) : null);
+        var svc = new MetadataLookupService(provider.Object, new MetadataCache(NullLogger<MetadataCache>.Instance), NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupMovieTmdbIdAsync("13 Geister", 2025, 2001, null, CancellationToken.None);
+
+        result.Should().Be(9378);
+        queries.Select(q => (q.Name, q.Year)).Should().Equal(("13 Geister", (int?)2025), ("13 Geister", (int?)2001));
+    }
+
+    [Fact]
+    public async Task LookupMovieTmdbIdAsync_TitleInOtherLanguage_FindsMatchWithOriginalTitle()
+    {
+        InitPlugin(new PluginConfiguration { EnableMetadataLookup = true, FallbackToYearlessLookup = true, LibraryPath = string.Empty });
+
+        var (provider, queries) = MovieProvider(q => q.Name == "Thirteen Ghosts" ? TmdbResult("Thir13en Ghosts", 2001, 9378) : null);
+        var svc = new MetadataLookupService(provider.Object, new MetadataCache(NullLogger<MetadataCache>.Instance), NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupMovieTmdbIdAsync("13 Geister", 2001, 2001, "Thirteen Ghosts", CancellationToken.None);
+
+        result.Should().Be(9378);
+        queries.Select(q => (q.Name, q.Year)).Should().Equal(
+            ("13 Geister", (int?)2001),
+            ("13 Geister", (int?)null),
+            ("Thirteen Ghosts", (int?)2001));
+    }
+
+    [Fact]
+    public async Task LookupMovieTmdbIdAsync_FallbackDisabled_IgnoresReleaseYearAndOriginalTitle()
+    {
+        InitPlugin(new PluginConfiguration { EnableMetadataLookup = true, FallbackToYearlessLookup = false, LibraryPath = string.Empty });
+
+        var (provider, queries) = MovieProvider(_ => null);
+        var svc = new MetadataLookupService(provider.Object, new MetadataCache(NullLogger<MetadataCache>.Instance), NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupMovieTmdbIdAsync("13 Geister", 2025, 2001, "Thirteen Ghosts", CancellationToken.None);
+
+        result.Should().BeNull();
+        queries.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task LookupMovieTmdbIdAsync_MatchFoundByFallback_IsReusedFromCacheOnNextRun()
+    {
+        // The first attempt's cached miss used to return straight away, so a later run never
+        // reached the fallback's cached match.
+        InitPlugin(new PluginConfiguration { EnableMetadataLookup = true, FallbackToYearlessLookup = true, LibraryPath = string.Empty });
+
+        var (provider, queries) = MovieProvider(q => q.Year == null ? TmdbResult("The Notebook", 2004, 11036) : null);
+        var svc = new MetadataLookupService(provider.Object, new MetadataCache(NullLogger<MetadataCache>.Instance), NullLogger<MetadataLookupService>.Instance);
+
+        var first = await svc.LookupMovieTmdbIdAsync("The Notebook", 2009, null, null, CancellationToken.None);
+        var second = await svc.LookupMovieTmdbIdAsync("The Notebook", 2009, null, null, CancellationToken.None);
+
+        first.Should().Be(11036);
+        second.Should().Be(11036);
+        queries.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void GetMovieLookupAttempts_SkipsDuplicates()
+    {
+        MetadataLookupService.GetMovieLookupAttempts("Movie", 2001, 2001, "movie", fallbackEnabled: true)
+            .Should().Equal(("Movie", (int?)2001), ("Movie", (int?)null));
     }
 
     // === FallbackToYearlessLookup: series ===

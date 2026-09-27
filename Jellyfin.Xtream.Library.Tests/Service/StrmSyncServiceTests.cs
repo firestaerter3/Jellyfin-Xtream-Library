@@ -691,6 +691,24 @@ public class StrmSyncServiceTests
     }
     #endregion
 
+    #region ExtractYearFromReleaseDate Tests
+
+    [Theory]
+    [InlineData("2001-10-26", 2001)]
+    [InlineData("2001", 2001)]
+    [InlineData("26/10/2001", 2001)]
+    [InlineData("October 26, 2001", 2001)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    [InlineData("0000-00-00", null)]
+    [InlineData("12345678", null)]
+    public void ExtractYearFromReleaseDate_ReadsTheYear(string? releaseDate, int? expected)
+    {
+        StrmSyncService.ExtractYearFromReleaseDate(releaseDate).Should().Be(expected);
+    }
+
+    #endregion
+
     #region CleanupEmptyDirectories Tests
 
     /// <summary>

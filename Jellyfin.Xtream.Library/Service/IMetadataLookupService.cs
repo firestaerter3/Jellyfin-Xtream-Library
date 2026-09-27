@@ -28,9 +28,11 @@ public interface IMetadataLookupService
     /// </summary>
     /// <param name="title">The movie title.</param>
     /// <param name="year">The release year.</param>
+    /// <param name="releaseDateYear">The year of the provider's release date, tried when the year-free fallback is on.</param>
+    /// <param name="originalTitle">The provider's original title, tried when the year-free fallback is on.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The TMDb ID if found, null otherwise.</returns>
-    Task<int?> LookupMovieTmdbIdAsync(string title, int? year, CancellationToken cancellationToken);
+    Task<int?> LookupMovieTmdbIdAsync(string title, int? year, int? releaseDateYear, string? originalTitle, CancellationToken cancellationToken);
 
     /// <summary>
     /// Looks up a TVDb ID for a series.

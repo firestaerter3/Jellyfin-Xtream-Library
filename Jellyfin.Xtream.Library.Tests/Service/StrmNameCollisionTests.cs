@@ -654,6 +654,18 @@ public class StrmNameCollisionTests : IDisposable
         MovieFolders().Should().Equal("La bella addormentata nel bosco (1959) [tmdbid-10882]");
     }
 
+    [Fact]
+    public async Task TitleSearch_IsGivenTheProvidersReleaseYearAndOriginalTitle()
+    {
+        _client.Setup(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), 501, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VodInfoResponse { Info = new VodInfoDetails { ReleaseDate = "2001-10-26", OriginalName = "Thirteen Ghosts" } });
+        TitleSearchFinds(9378);
+
+        await RunMovieSyncAsync(new StreamInfo { StreamId = 501, Name = "13 Geister (2025)", ContainerExtension = "mp4" }).ConfigureAwait(true);
+
+        _lookup.Verify(l => l.LookupMovieTmdbIdAsync("13 Geister", 2025, 2001, "Thirteen Ghosts", It.IsAny<CancellationToken>()), Times.Once());
+    }
+
     private string[] MovieFolders()
         => Directory.GetDirectories(Path.Combine(_libraryPath, "Movies")).Select(d => Path.GetFileName(d)!).OrderBy(n => n, StringComparer.Ordinal).ToArray();
 
@@ -664,7 +676,7 @@ public class StrmNameCollisionTests : IDisposable
     private void TitleSearchFinds(int tmdbId)
     {
         _metadataLookup = true;
-        _lookup.Setup(l => l.LookupMovieTmdbIdAsync(It.IsAny<string>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()))
+        _lookup.Setup(l => l.LookupMovieTmdbIdAsync(It.IsAny<string>(), It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(tmdbId);
     }
 
