@@ -825,6 +825,141 @@ public class StrmSyncServiceTests
         Directory.Delete(tempDir, true);
     }
 
+    [Fact]
+    public void CleanupEmptyDirectories_MovieFolderWithOnlyNfoAndArtwork_DeletesIt()
+    {
+        var tempDir = GetResolvedTempPath();
+        var movieDir = Path.Combine(tempDir, "Movies", "Movie (2000)");
+        Directory.CreateDirectory(movieDir);
+        File.WriteAllText(Path.Combine(movieDir, "Movie (2000).nfo"), "<movie></movie>");
+        File.WriteAllText(Path.Combine(movieDir, "poster.jpg"), "img");
+        var result = new SyncResult();
+
+        StrmSyncService.CleanupEmptyDirectories(movieDir, tempDir, Path.Combine(tempDir, "Series"), result);
+
+        Directory.Exists(movieDir).Should().BeFalse();
+        Directory.Exists(tempDir).Should().BeTrue();
+
+        Directory.Delete(tempDir, true);
+    }
+
+    [Fact]
+    public void CleanupEmptyDirectories_SeriesWithOnlyShowMetadata_DeletesShowAndCountsIt()
+    {
+        var tempDir = GetResolvedTempPath();
+        var seriesDir = Path.Combine(tempDir, "Series");
+        var showDir = Path.Combine(seriesDir, "Test Show (2024)");
+        var seasonDir = Path.Combine(showDir, "Season 1");
+        Directory.CreateDirectory(seasonDir);
+        File.WriteAllText(Path.Combine(seasonDir, "poster.png"), "img");
+        File.WriteAllText(Path.Combine(showDir, "tvshow.nfo"), "<tvshow></tvshow>");
+        File.WriteAllText(Path.Combine(showDir, "poster.jpg"), "img");
+        File.WriteAllText(Path.Combine(showDir, "fanart.webp"), "img");
+        File.WriteAllText(Path.Combine(seriesDir, ".keep"), string.Empty);
+        var result = new SyncResult();
+
+        StrmSyncService.CleanupEmptyDirectories(seasonDir, tempDir, seriesDir, result);
+
+        Directory.Exists(showDir).Should().BeFalse();
+        Directory.Exists(seriesDir).Should().BeTrue();
+        result.SeasonsDeleted.Should().Be(1);
+        result.SeriesDeleted.Should().Be(1);
+
+        Directory.Delete(tempDir, true);
+    }
+
+    [Fact]
+    public void CleanupEmptyDirectories_UserFileAlongsideSidecars_KeepsFolderAndUserFile()
+    {
+        var tempDir = GetResolvedTempPath();
+        var movieDir = Path.Combine(tempDir, "Movie (2000)");
+        Directory.CreateDirectory(movieDir);
+        File.WriteAllText(Path.Combine(movieDir, "Movie (2000).nfo"), "<movie></movie>");
+        File.WriteAllText(Path.Combine(movieDir, "Movie (2000).en.srt"), "subs");
+        var result = new SyncResult();
+
+        StrmSyncService.CleanupEmptyDirectories(movieDir, tempDir, tempDir, result);
+
+        Directory.Exists(movieDir).Should().BeTrue();
+        File.Exists(Path.Combine(movieDir, "Movie (2000).en.srt")).Should().BeTrue();
+
+        Directory.Delete(tempDir, true);
+    }
+
+    [Fact]
+    public void CleanupEmptyDirectories_FolderWithSubfolder_KeepsSidecars()
+    {
+        var tempDir = GetResolvedTempPath();
+        var showDir = Path.Combine(tempDir, "Test Show (2024)");
+        Directory.CreateDirectory(Path.Combine(showDir, "extras"));
+        File.WriteAllText(Path.Combine(showDir, "tvshow.nfo"), "<tvshow></tvshow>");
+        var result = new SyncResult();
+
+        StrmSyncService.CleanupEmptyDirectories(showDir, tempDir, tempDir, result);
+
+        File.Exists(Path.Combine(showDir, "tvshow.nfo")).Should().BeTrue();
+
+        Directory.Delete(tempDir, true);
+    }
+
+    [Fact]
+    public void CleanupEmptyDirectories_OtherMovieVersionRemains_KeepsSharedNfo()
+    {
+        var tempDir = GetResolvedTempPath();
+        var movieDir = Path.Combine(tempDir, "Movie (2000)");
+        Directory.CreateDirectory(movieDir);
+        File.WriteAllText(Path.Combine(movieDir, "Movie (2000) - Version 2.strm"), "url");
+        File.WriteAllText(Path.Combine(movieDir, "Movie (2000).nfo"), "<movie></movie>");
+        File.WriteAllText(Path.Combine(movieDir, "poster.jpg"), "img");
+        var result = new SyncResult();
+
+        // "Movie (2000).strm" was the orphan and is already gone.
+        StrmSyncService.CleanupEmptyDirectories(movieDir, tempDir, tempDir, result);
+
+        File.Exists(Path.Combine(movieDir, "Movie (2000).nfo")).Should().BeTrue();
+        File.Exists(Path.Combine(movieDir, "poster.jpg")).Should().BeTrue();
+
+        Directory.Delete(tempDir, true);
+    }
+
+    [Fact]
+    public void CleanupEmptyDirectories_NeverTouchesStopAtFolder()
+    {
+        var tempDir = GetResolvedTempPath();
+        File.WriteAllText(Path.Combine(tempDir, "library.nfo"), "x");
+        var result = new SyncResult();
+
+        StrmSyncService.CleanupEmptyDirectories(tempDir, tempDir, tempDir, result);
+
+        File.Exists(Path.Combine(tempDir, "library.nfo")).Should().BeTrue();
+
+        Directory.Delete(tempDir, true);
+    }
+
+    [Fact]
+    public void DeleteEpisodeSidecars_RemovesOnlyThatEpisodesFiles()
+    {
+        var tempDir = GetResolvedTempPath();
+        var seasonDir = Path.Combine(tempDir, "Season 1");
+        Directory.CreateDirectory(seasonDir);
+        File.WriteAllText(Path.Combine(seasonDir, "Show - S01E01.nfo"), "x");
+        File.WriteAllText(Path.Combine(seasonDir, "Show - S01E01-thumb.jpg"), "x");
+        File.WriteAllText(Path.Combine(seasonDir, "Show - S01E02.strm"), "url");
+        File.WriteAllText(Path.Combine(seasonDir, "Show - S01E02.nfo"), "x");
+        File.WriteAllText(Path.Combine(seasonDir, "Show - S01E02-thumb.jpg"), "x");
+
+        // The orphan "Show - S01E01.strm" was already deleted.
+        StrmSyncService.DeleteEpisodeSidecars(Path.Combine(seasonDir, "Show - S01E01.strm"));
+
+        File.Exists(Path.Combine(seasonDir, "Show - S01E01.nfo")).Should().BeFalse();
+        File.Exists(Path.Combine(seasonDir, "Show - S01E01-thumb.jpg")).Should().BeFalse();
+        File.Exists(Path.Combine(seasonDir, "Show - S01E02.strm")).Should().BeTrue();
+        File.Exists(Path.Combine(seasonDir, "Show - S01E02.nfo")).Should().BeTrue();
+        File.Exists(Path.Combine(seasonDir, "Show - S01E02-thumb.jpg")).Should().BeTrue();
+
+        Directory.Delete(tempDir, true);
+    }
+
     #endregion
 
     #region ParseFolderMappings Tests

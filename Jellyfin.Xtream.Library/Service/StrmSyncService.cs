@@ -1307,6 +1307,13 @@ public partial class StrmSyncService
 
                     _logger.LogDebug("Deleted orphaned file: {FilePath}", orphan);
 
+                    // An episode's NFO and thumbnail belong to that one file. A movie's NFO is
+                    // shared by all of its versions, so it is left to the folder check below.
+                    if (orphan.StartsWith(seriesPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        DeleteEpisodeSidecars(orphan);
+                    }
+
                     // Try to clean up empty parent directories
                     CleanupEmptyDirectories(Path.GetDirectoryName(orphan)!, provider.LibraryPath, seriesPath, result);
                 }
@@ -4454,12 +4461,88 @@ public partial class StrmSyncService
         }
     }
 
+    /// <summary>
+    /// Deletes the NFO and thumbnail the sync writes next to an episode STRM file
+    /// (<c>&lt;name&gt;.nfo</c> and <c>&lt;name&gt;-thumb.&lt;ext&gt;</c>). Missing files are ignored.
+    /// </summary>
+    /// <param name="strmPath">Path of the episode STRM file that was deleted.</param>
+    internal static void DeleteEpisodeSidecars(string strmPath)
+    {
+        string? directory = Path.GetDirectoryName(strmPath);
+        if (string.IsNullOrEmpty(directory))
+        {
+            return;
+        }
+
+        string stem = Path.GetFileNameWithoutExtension(strmPath);
+        string[] sidecars =
+        [
+            $"{stem}.nfo",
+            $"{stem}-thumb.jpg",
+            $"{stem}-thumb.png",
+            $"{stem}-thumb.webp",
+            $"{stem}-thumb.gif",
+        ];
+
+        foreach (var sidecar in sidecars)
+        {
+            try
+            {
+                File.Delete(Path.Combine(directory, sidecar));
+            }
+            catch (IOException)
+            {
+                // Leave it; the folder check will keep the folder instead.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Same.
+            }
+        }
+    }
+
+    /// <summary>
+    /// Once a folder holds no STRM file and no subfolder, deletes the files the sync wrote there
+    /// (NFO files, <c>poster</c>, <c>fanart</c> and <c>-thumb</c> images). Any other file, such as
+    /// a subtitle the user added, is left alone and keeps the folder from being removed.
+    /// </summary>
+    /// <param name="directory">Folder to clean.</param>
+    internal static void DeleteLeftoverSidecars(string directory)
+    {
+        try
+        {
+            if (Directory.EnumerateDirectories(directory).Any() ||
+                Directory.EnumerateFiles(directory, "*.strm").Any())
+            {
+                return;
+            }
+
+            foreach (var file in Directory.GetFiles(directory))
+            {
+                if (SidecarFilePattern().IsMatch(Path.GetFileName(file)))
+                {
+                    File.Delete(file);
+                }
+            }
+        }
+        catch (IOException)
+        {
+            // Whatever is left keeps the folder, which is the safe outcome.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Same.
+        }
+    }
+
     internal static void CleanupEmptyDirectories(string directory, string stopAt, string seriesPath, SyncResult result)
     {
         while (!string.IsNullOrEmpty(directory) &&
                !directory.Equals(stopAt, StringComparison.OrdinalIgnoreCase) &&
                Directory.Exists(directory))
         {
+            DeleteLeftoverSidecars(directory);
+
             if (Directory.GetFileSystemEntries(directory).Length == 0)
             {
                 try
@@ -4578,6 +4661,10 @@ public partial class StrmSyncService
 
     [GeneratedRegex(@"\s*\((\d{4})\)\s*$")]
     private static partial Regex YearPattern();
+
+    // Files the sync writes next to STRM files: NFOs, and the images named by GetImageExtension.
+    [GeneratedRegex(@"^(?:.+\.nfo|(?:poster|fanart|.+-thumb)\.(?:jpg|png|webp|gif))$", RegexOptions.IgnoreCase)]
+    private static partial Regex SidecarFilePattern();
 
     // Matches bare year suffix appended with a dash, e.g. "Alarum - 2025" or "Movie – 2025"
     [GeneratedRegex(@"\s*[-–]\s*(\d{4})\s*$")]
