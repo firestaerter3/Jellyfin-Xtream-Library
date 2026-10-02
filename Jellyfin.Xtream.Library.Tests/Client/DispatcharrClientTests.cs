@@ -625,6 +625,79 @@ public class DispatcharrClientTests : IDisposable
     /// <summary>
     /// Simple mock HTTP handler that matches URLs to responses.
     /// </summary>
+    // GitHub #122: ten sync workers found no token at once, all logged in, and Dispatcharr's login
+    // throttle answered 429. One login has to serve them all.
+    [Fact]
+    public async Task ConcurrentCalls_WithoutAToken_LogInOnce()
+    {
+        var logins = 0;
+        var handler = new FuncHttpMessageHandler(async (request, ct) =>
+        {
+            var url = request.RequestUri!.ToString();
+            string json;
+            if (url.Contains("/api/accounts/token/", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref logins);
+                await Task.Delay(100, ct).ConfigureAwait(false);
+                json = JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" });
+            }
+            else
+            {
+                json = JsonConvert.SerializeObject(new { id = 42, uuid = "abc-123", name = "Test" });
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+        });
+        var client = new DispatcharrClient(new HttpClient(handler), _mockLogger.Object);
+        client.Configure("admin", "secret");
+        var baseUrl = $"http://login-once-{Guid.NewGuid():N}.example.com";
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 10)
+            .Select(_ => client.GetMovieDetailAsync(baseUrl, 42, CancellationToken.None)));
+
+        results.Should().OnlyContain(r => r != null);
+        logins.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ConcurrentCalls_RejectedTogether_RenewOnce()
+    {
+        var renewals = 0;
+        var currentToken = "old-token";
+        var handler = new FuncHttpMessageHandler(async (request, ct) =>
+        {
+            var url = request.RequestUri!.ToString();
+            if (url.Contains("/api/accounts/token/", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref renewals);
+                await Task.Delay(100, ct).ConfigureAwait(false);
+                var issued = renewals == 1 ? "old-token" : "new-token";
+                currentToken = issued;
+                var body = JsonConvert.SerializeObject(new { access = issued, refresh = "refresh-token" });
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+            }
+
+            if (request.Headers.Authorization?.Parameter != "new-token")
+            {
+                return new HttpResponseMessage(HttpStatusCode.Unauthorized);
+            }
+
+            var json = JsonConvert.SerializeObject(new { id = 42, uuid = "abc-123", name = "Test" });
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+        });
+        var client = new DispatcharrClient(new HttpClient(handler), _mockLogger.Object);
+        client.Configure("admin", "secret");
+        var baseUrl = $"http://renew-once-{Guid.NewGuid():N}.example.com";
+
+        // First call logs in and gets "old-token", which every data call then rejects.
+        var results = await Task.WhenAll(Enumerable.Range(0, 10)
+            .Select(_ => client.GetMovieDetailAsync(baseUrl, 42, CancellationToken.None)));
+
+        results.Should().OnlyContain(r => r != null);
+        renewals.Should().Be(2, "one login, then one renewal shared by all ten rejected calls");
+        currentToken.Should().Be("new-token");
+    }
+
     private class MockHttpMessageHandler : HttpMessageHandler
     {
         private readonly (string UrlContains, HttpStatusCode Status, string ResponseJson)[] _responses;

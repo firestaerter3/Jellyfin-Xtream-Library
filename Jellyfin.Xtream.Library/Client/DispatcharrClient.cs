@@ -40,11 +40,18 @@ public class DispatcharrClient : IDispatcharrClient
     private readonly HttpClient _httpClient;
     private readonly ILogger<DispatcharrClient> _logger;
 
+    // One login or refresh at a time, shared by every caller (GitHub #122). Without it, ten sync
+    // workers that found the token missing or expired all logged in at once, Dispatcharr's login
+    // throttle answered 429, and those workers fell back to the Xtream API.
+    private readonly object _authSync = new();
+
     private string _username = string.Empty;
     private string _password = string.Empty;
     private string? _accessToken;
     private string? _refreshToken;
     private DateTime _tokenExpiry = DateTime.MinValue;
+
+    private Task? _pendingAuth;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DispatcharrClient"/> class.
@@ -335,7 +342,7 @@ public class DispatcharrClient : IDispatcharrClient
         // The base URL is passed in rather than derived from the request URL. Deriving it as
         // scheme://authority dropped any path, so a Dispatcharr behind a reverse proxy on a subpath
         // had its data calls sent to the right place and its login sent to the wrong one (#83).
-        await EnsureTokenAsync(baseUrl, cancellationToken).ConfigureAwait(false);
+        await EnsureTokenAsync(baseUrl, null, cancellationToken).ConfigureAwait(false);
 
         if (_accessToken == null)
         {
@@ -368,17 +375,14 @@ public class DispatcharrClient : IDispatcharrClient
 
                 if (response.StatusCode == HttpStatusCode.Unauthorized)
                 {
-                    // Token expired, try refresh
-                    _logger.LogDebug("Dispatcharr token expired, refreshing...");
-                    var refreshed = await RefreshTokenAsync(baseUrl, cancellationToken).ConfigureAwait(false);
-                    if (!refreshed)
+                    // Token rejected: renew it through the same shared path, so workers that hit
+                    // this together still cause one refresh or login between them.
+                    _logger.LogDebug("Dispatcharr token rejected, renewing...");
+                    var rejectedToken = request.Headers.Authorization?.Parameter;
+                    await EnsureTokenAsync(baseUrl, rejectedToken, cancellationToken).ConfigureAwait(false);
+                    if (_accessToken == null)
                     {
-                        // Full re-login
-                        var token = await LoginAsync(baseUrl, cancellationToken).ConfigureAwait(false);
-                        if (token == null)
-                        {
-                            return null;
-                        }
+                        return null;
                     }
 
                     // Retry with new token
@@ -412,25 +416,78 @@ public class DispatcharrClient : IDispatcharrClient
         }
     }
 
-    private async Task EnsureTokenAsync(string baseUrl, CancellationToken cancellationToken)
+    /// <summary>
+    /// Makes sure there is a usable token, starting one refresh or login when there is not and
+    /// letting every other caller wait for that same one.
+    /// </summary>
+    /// <param name="baseUrl">Dispatcharr base URL.</param>
+    /// <param name="rejectedToken">A token Dispatcharr just answered 401 to, or null. If it is
+    /// still the current one it is treated as expired; if another caller already replaced it,
+    /// nothing more is done.</param>
+    /// <param name="cancellationToken">Stops this caller waiting, not the shared login.</param>
+    private Task EnsureTokenAsync(string baseUrl, string? rejectedToken, CancellationToken cancellationToken)
     {
-        if (_accessToken != null && DateTime.UtcNow < _tokenExpiry)
+        lock (_authSync)
+        {
+            if (rejectedToken != null && string.Equals(_accessToken, rejectedToken, StringComparison.Ordinal))
+            {
+                _tokenExpiry = DateTime.MinValue;
+            }
+
+            if (_accessToken != null && DateTime.UtcNow < _tokenExpiry)
+            {
+                return Task.CompletedTask;
+            }
+
+            if (_pendingAuth == null || _pendingAuth.IsCompleted)
+            {
+                // Not tied to any one caller's token: one cancelled worker must not cancel the
+                // login the others are waiting for. The HttpClient timeout still bounds it.
+                _pendingAuth = AuthenticateAsync(baseUrl);
+            }
+
+            return _pendingAuth.WaitAsync(cancellationToken);
+        }
+    }
+
+    private async Task AuthenticateAsync(string baseUrl)
+    {
+        // Try refresh first if we have a refresh token
+        if (_refreshToken != null && await RefreshTokenAsync(baseUrl, CancellationToken.None).ConfigureAwait(false))
         {
             return;
         }
 
-        // Try refresh first if we have a refresh token
-        if (_refreshToken != null)
+        await LoginAsync(baseUrl, CancellationToken.None).ConfigureAwait(false);
+    }
+
+    // Login and refresh go through the request gate like every other call, so they wait their turn
+    // and a throttled answer pauses the host instead of being retried at once.
+    private async Task<HttpResponseMessage> PostAuthAsync(string url, string payload, CancellationToken cancellationToken)
+    {
+        var uri = new Uri(url);
+        await RequestGate.WaitTurnAsync(uri, RequestDelayMs, cancellationToken).ConfigureAwait(false);
+        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+        var response = await _httpClient.PostAsync(uri, content, cancellationToken).ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.TooManyRequests)
         {
-            var refreshed = await RefreshTokenAsync(baseUrl, cancellationToken).ConfigureAwait(false);
-            if (refreshed)
-            {
-                return;
-            }
+            RequestGate.Pause(uri, AuthRetryDelayMs());
         }
 
-        // Full login
-        await LoginAsync(baseUrl, cancellationToken).ConfigureAwait(false);
+        return response;
+    }
+
+    private static int AuthRetryDelayMs()
+    {
+        try
+        {
+            return Plugin.Instance.Configuration.RetryDelayMs;
+        }
+        catch (Exception)
+        {
+            // Plugin not initialized (e.g. in tests)
+            return 1000;
+        }
     }
 
     private async Task<DispatcharrTokenResponse?> LoginAsync(string baseUrl, CancellationToken cancellationToken)
@@ -438,8 +495,7 @@ public class DispatcharrClient : IDispatcharrClient
         try
         {
             var payload = JsonConvert.SerializeObject(new { username = _username, password = _password });
-            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-            using var response = await _httpClient.PostAsync($"{baseUrl}/api/accounts/token/", content, cancellationToken).ConfigureAwait(false);
+            using var response = await PostAuthAsync($"{baseUrl}/api/accounts/token/", payload, cancellationToken).ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -481,8 +537,7 @@ public class DispatcharrClient : IDispatcharrClient
         try
         {
             var payload = JsonConvert.SerializeObject(new { refresh = _refreshToken });
-            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-            using var response = await _httpClient.PostAsync($"{baseUrl}/api/accounts/token/refresh/", content, cancellationToken).ConfigureAwait(false);
+            using var response = await PostAuthAsync($"{baseUrl}/api/accounts/token/refresh/", payload, cancellationToken).ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode)
             {
