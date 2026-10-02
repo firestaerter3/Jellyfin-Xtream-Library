@@ -1301,6 +1301,14 @@
                                     <code>192.168.1</code>). Lines starting with <code>#</code> are ignored, so a list
                                     with only comments restricts nothing. A list whose entries are all invalid blocks
                                     everyone, rather than silently opening up.
+                                    <br /><br />
+                                    <strong>Behind a reverse proxy, add it to Known Proxies first.</strong> Without that
+                                    (Dashboard &rarr; Networking), every request through the proxy counts as coming from
+                                    the proxy's own address. If that address is on this list, for example inside a
+                                    private range you added, anyone on the internet gets through. With the proxy listed,
+                                    Jellyfin uses the client address the proxy passes on, and a forged one sent through
+                                    the proxy does not get past it. A proxy on the Jellyfin host itself counts as known
+                                    without any setting.
                                 </div>
                             </div>
                             <div class="inputContainer">

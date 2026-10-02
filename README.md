@@ -324,7 +324,10 @@ Xtream password.**
   install, and stays on after upgrading if Live TV was already enabled. `Epg.xml` and the channel
   logo endpoint carry no credentials and are not affected.
 - **Restrict the endpoints to known addresses.** "Restrict These URLs To" on the Live TV tab takes
-  one IP or CIDR range per line; anything else gets a 404.
+  one IP or CIDR range per line; anything else gets a 404. Behind a reverse proxy, add the proxy to Jellyfin's Known
+  Proxies (Dashboard, Networking) first. Otherwise every request through it counts as coming from
+  the proxy's own address, and if that address is on the list (a private range, say), the whole
+  internet gets through.
 - **Restrict filesystem permissions.** Make sure the library path is not readable by other users or
   containers on the host.
 - **Use a dedicated provider account.** If your provider supports multiple credential sets per
