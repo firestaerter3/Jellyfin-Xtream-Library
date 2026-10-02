@@ -1202,6 +1202,11 @@
                                     Adds an <strong>Xtream Catch-up</strong> entry under Channels, separate from Live TV,
                                     where you can browse a channel by day and play a programme that has already aired.
                                     <br /><br />
+                                    Providers send little or no guide for days that have passed, so the plugin keeps the
+                                    guide it has already fetched for these channels, as far back as each channel's archive
+                                    goes. It asks the provider for nothing extra. Titles build up from the moment this is
+                                    on: the first days show only what the provider still had.
+                                    <br /><br />
                                     This is separate from the setting above because Jellyfin's own Live TV cannot play a
                                     programme once it has ended, whatever the guide shows. The entry above only puts
                                     catch-up information in the M3U for other apps to use; this one is what makes it
@@ -1212,14 +1217,14 @@
                                 </div>
                             </div>
                             <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtCatchupBlockMinutes">Block Length When There Is No Guide (minutes)</label>
+                                <label class="inputLabel inputLabelUnfocused" for="txtCatchupBlockMinutes">Block Length Where There Is No Guide (minutes)</label>
                                 <input is="emby-input" type="number" id="txtCatchupBlockMinutes" name="CatchupBlockMinutes"
                                        min="0" max="240" step="5" />
                                 <div class="fieldDescription">
                                     Some providers only publish what is coming, never what has been, so a day that has
-                                    passed has nothing to list even though its recording plays fine. For those channels
-                                    the day is offered in blocks instead, and you pick a time rather than a programme.
-                                    Set to 0 to leave such days empty.
+                                    passed can have nothing to list even though its recording plays fine. The parts of a
+                                    day without a programme, or the whole day, are offered in blocks instead, and you
+                                    pick a time rather than a programme. Set to 0 to show programmes only.
                                 </div>
                             </div>
                             <div class="inputContainer">

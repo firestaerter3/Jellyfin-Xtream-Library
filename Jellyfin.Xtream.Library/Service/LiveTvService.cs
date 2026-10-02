@@ -58,6 +58,7 @@ public class LiveTvService : IDisposable
     private DateTime _epgCacheTime = DateTime.MinValue;
     private int _refreshInFlight;
     private bool _disposed;
+    private CatchupHistoryStore? _catchupHistory;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LiveTvService"/> class.
@@ -92,6 +93,14 @@ public class LiveTvService : IDisposable
         /// <summary>Fetch channels from the selected categories only.</summary>
         BySelectedCategories,
     }
+
+    /// <summary>
+    /// Gets the recorded guide of catch-up channels (GitHub #108). Created on first use, next to
+    /// the channel snapshot.
+    /// </summary>
+    internal CatchupHistoryStore CatchupHistory => LazyInitializer.EnsureInitialized(
+        ref _catchupHistory,
+        () => new CatchupHistoryStore(Path.Combine(_appPaths.DataPath, "xtream-library", "catchup-history"), _logger));
 
     /// <summary>
     /// Resolves a channel logo value for output: local filesystem paths are rewritten to the
@@ -1271,6 +1280,8 @@ public class LiveTvService : IDisposable
                 }
             }
 
+            var history = new CatchupHistoryCollector(channels, config);
+
             // Prefer upstream XMLTV (preserves category, rating, credits, icon, etc.).
             // Fall back to JSON-based fetch only if the upstream file is unavailable.
             var passthroughCount = 0;
@@ -1279,7 +1290,7 @@ public class LiveTvService : IDisposable
                 var upstreamXml = await GetMergedXmltvAsync(channels, cancellationToken).ConfigureAwait(false);
                 if (!string.IsNullOrEmpty(upstreamXml))
                 {
-                    passthroughCount = AppendUpstreamProgrammes(sb, upstreamXml, idMap, config, cancellationToken);
+                    passthroughCount = AppendUpstreamProgrammes(sb, upstreamXml, idMap, history, config, cancellationToken);
                     _logger.LogInformation("Passed through {Count} programmes from upstream XMLTV", passthroughCount);
                 }
             }
@@ -1287,7 +1298,11 @@ public class LiveTvService : IDisposable
             if (passthroughCount == 0)
             {
                 _logger.LogInformation("Upstream XMLTV unavailable or empty; falling back to per-channel JSON EPG");
-                var epgData = await FetchEpgDataAsync(channels, config, cancellationToken).ConfigureAwait(false);
+
+                // Start over: a parse that failed half way collected half a guide, and recording a
+                // partial pull would let it replace stored programmes it simply did not reach.
+                history = new CatchupHistoryCollector(channels, config);
+                var epgData = await FetchEpgDataAsync(channels, history, config, cancellationToken).ConfigureAwait(false);
 
                 foreach (var program in epgData.OrderBy(p => p.StartTimestamp))
                 {
@@ -1306,10 +1321,43 @@ public class LiveTvService : IDisposable
                     sb.AppendLine("  </programme>");
                 }
             }
+
+            await RecordCatchupHistoryAsync(history, cancellationToken).ConfigureAwait(false);
         }
 
         sb.AppendLine("</tv>");
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Stores what this EPG build saw of the catch-up channels (GitHub #108).
+    /// <para>
+    /// Never fails the EPG: the recorded guide is an extra for catch-up browsing, and Jellyfin's
+    /// own guide must not go missing because a file could not be written.
+    /// </para>
+    /// </summary>
+    /// <param name="history">What the build collected.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task.</returns>
+    private async Task RecordCatchupHistoryAsync(CatchupHistoryCollector history, CancellationToken cancellationToken)
+    {
+        if (!history.IsEnabled)
+        {
+            return;
+        }
+
+        try
+        {
+            await CatchupHistory.RecordAsync(history.ToPulls(), DateTimeOffset.UtcNow, sweepStaleFiles: true, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not record the catch-up guide history; the EPG itself is unaffected");
+        }
     }
 
     /// <summary>
@@ -1324,6 +1372,7 @@ public class LiveTvService : IDisposable
         StringBuilder sb,
         string upstreamXml,
         Dictionary<string, string> idMap,
+        CatchupHistoryCollector history,
         PluginConfiguration config,
         CancellationToken cancellationToken)
     {
@@ -1365,15 +1414,15 @@ public class LiveTvService : IDisposable
                 }
 
                 // Optional time-window filter to keep the EPG file proportional to EpgDaysToFetch.
+                // A catch-up channel's programme outside the window is still read, for the
+                // recorded guide, just not written: the past is exactly what that guide is for.
                 var startAttr = reader.GetAttribute("start");
                 var stopAttr = reader.GetAttribute("stop");
-                if (TryParseXmltvTime(stopAttr, out var stopUnix) && stopUnix < pastGraceUnix)
-                {
-                    reader.Skip();
-                    continue;
-                }
-
-                if (TryParseXmltvTime(startAttr, out var startUnix) && startUnix > endUnix)
+                bool hasStart = TryParseXmltvTime(startAttr, out var startUnix);
+                bool hasStop = TryParseXmltvTime(stopAttr, out var stopUnix);
+                bool outsideWindow = (hasStop && stopUnix < pastGraceUnix) || (hasStart && startUnix > endUnix);
+                bool recorded = hasStart && hasStop && history.Records(upstreamCh);
+                if (outsideWindow && !recorded)
                 {
                     reader.Skip();
                     continue;
@@ -1387,6 +1436,22 @@ public class LiveTvService : IDisposable
                 catch (XmlException ex) when (reader.ReadState != ReadState.Error)
                 {
                     _logger.LogDebug(ex, "Skipping malformed <programme> in upstream XMLTV");
+                    continue;
+                }
+
+                if (recorded)
+                {
+                    history.Add(
+                        upstreamCh,
+                        new CatchupHistoryEntry(
+                            startUnix,
+                            stopUnix,
+                            element.Element("title")?.Value ?? string.Empty,
+                            element.Element("desc")?.Value ?? string.Empty));
+                }
+
+                if (outsideWindow)
+                {
                     continue;
                 }
 
@@ -1470,6 +1535,7 @@ public class LiveTvService : IDisposable
 
     private async Task<List<EpgProgram>> FetchEpgDataAsync(
         List<LiveStreamInfo> channels,
+        CatchupHistoryCollector history,
         PluginConfiguration config,
         CancellationToken cancellationToken)
     {
@@ -1503,6 +1569,10 @@ public class LiveTvService : IDisposable
                 {
                     program.ChannelId = channelId;
                 }
+
+                // Before the window filter below: what has already aired is what the recorded
+                // catch-up guide is for.
+                history.Add(channel, epgListings.Listings);
 
                 // Filter to our time range
                 return epgListings.Listings
@@ -1608,6 +1678,7 @@ public class LiveTvService : IDisposable
                 _m3uLock.Dispose();
                 _epgLock.Dispose();
                 _snapshotLock.Dispose();
+                _catchupHistory?.Dispose();
             }
 
             _disposed = true;
