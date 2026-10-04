@@ -66,6 +66,22 @@ unticked, look at the data being passed to the render, not at the component.
 
 Releases go to the **beta channel first**, then are promoted to stable. Never publish directly to stable.
 
+### Before merging a PR
+
+Read the review comments on the PR, not only the CI result. Codex and CodeRabbit post findings as
+review comments, and a green CI says nothing about them. On 2026-09-27 two real bugs (user NFO files
+deleted, a parser desync) were merged and released because only CI was checked. With `gh` broken
+here, list them with:
+
+```bash
+curl -s -H "Authorization: Bearer $(gh auth token)" \
+  "https://api.github.com/repos/firestaerter3/Jellyfin-Xtream-Library/pulls/<N>/comments" \
+  | python3 -c "import json,sys;[print(c['user']['login'],c['path'],c.get('line'),c['body'][:300]) for c in json.load(sys.stdin)]"
+```
+
+When a bot says it hit its review limit, the PR has had no review; say so rather than treating it as
+clean.
+
 ### 1. Update Version
 Edit `Jellyfin.Xtream.Library/Jellyfin.Xtream.Library.csproj`:
 ```xml
@@ -133,6 +149,11 @@ git commit -m "Beta: Xtream Library vX.Y.Z.0: Description"
 git push
 ```
 
+Then update `BUGS.md` (local, gitignored) for every bug this release fixes, and run
+`python3 scripts/check-bugs-status.py`. It prints nothing when `BUGS.md` matches what has shipped and
+one line per stale entry otherwise. Nothing else checks that file, which is how fifteen entries were
+still listed as open or "not on stable" in October although most had been on stable for weeks.
+
 ### 6. Promote to Stable (separate step, on user request)
 Edit `../jellyfin-plugin-repo/manifest.json`:
 - Add the same version entry at the top of the versions array
@@ -144,11 +165,17 @@ git commit -m "Stable: Xtream Library vX.Y.Z.0: Description"
 git push
 ```
 
+Then update `BUGS.md` and run `python3 scripts/check-bugs-status.py`, as for a beta.
+
 A beta build is normally left to soak about **a week** before promotion. Check what is overdue by
 diffing the two manifests rather than going by memory: anything in `manifest-dev.json` that is not
-in `manifest.json` and is older than that is a candidate. Promote by copying the entry **verbatim**
-from the beta manifest, so version, changelog, `targetAbi`, `sourceUrl` and `checksum` cannot drift
-between channels. Verify the asset still matches its recorded checksum before promoting.
+in `manifest.json` and is older than that is a candidate. Since 2026-10-04 only the newest
+candidate of each line (1.x, 2.x) goes to stable, since Jellyfin installs the highest compatible
+version anyway. Its changelog is rewritten to cover everything since the version stable already
+has, written for someone coming from that version: no fixes of beta-only bugs, user actions first.
+Every other field (version, `targetAbi`, `sourceUrl`, `checksum`, `timestamp`) is copied
+**verbatim** from the beta entry. Verify the asset still matches its recorded checksum before
+promoting.
 
 Soak time is not the only gate. A release that migrates or renames anything on disk needs longer and
 needs its warning leading the changelog, because the migration is what users cannot undo. v1.44.0.0

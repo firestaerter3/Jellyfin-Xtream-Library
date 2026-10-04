@@ -73,3 +73,6 @@ BUGS.md
 docs/plans/
 docs/superpowers/
 .gstack/
+
+# Claude Code per-user settings; holds permission rules that can carry credentials
+.claude/settings.local.json
