@@ -58,6 +58,7 @@ public class LiveTvService : IDisposable
     private DateTime _epgCacheTime = DateTime.MinValue;
     private int _refreshInFlight;
     private bool _disposed;
+    private CatchupHistoryStore? _catchupHistory;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LiveTvService"/> class.
@@ -92,6 +93,14 @@ public class LiveTvService : IDisposable
         /// <summary>Fetch channels from the selected categories only.</summary>
         BySelectedCategories,
     }
+
+    /// <summary>
+    /// Gets the recorded guide of catch-up channels (GitHub #108). Created on first use, next to
+    /// the channel snapshot.
+    /// </summary>
+    internal CatchupHistoryStore CatchupHistory => LazyInitializer.EnsureInitialized(
+        ref _catchupHistory,
+        () => new CatchupHistoryStore(Path.Combine(_appPaths.DataPath, "xtream-library", "catchup-history"), _logger));
 
     /// <summary>
     /// Resolves a channel logo value for output: local filesystem paths are rewritten to the
@@ -1271,23 +1280,64 @@ public class LiveTvService : IDisposable
                 }
             }
 
+            var history = new CatchupHistoryCollector(channels, config);
+
             // Prefer upstream XMLTV (preserves category, rating, credits, icon, etc.).
-            // Fall back to JSON-based fetch only if the upstream file is unavailable.
+            // Fall back to JSON-based fetch only if the upstream file is unavailable. The
+            // fallback decision is tracked per provider: one provider's successful programmes or
+            // recorded history must not mask another provider's empty or failed fragment, or that
+            // provider's channels would go without a guide instead of falling back.
             var passthroughCount = 0;
+            var fallbackProviders = new HashSet<int>();
             if (idMap.Count > 0)
             {
-                var upstreamXml = await GetMergedXmltvAsync(channels, cancellationToken).ConfigureAwait(false);
-                if (!string.IsNullOrEmpty(upstreamXml))
+                var fragments = await GetProviderXmltvFragmentsAsync(channels, cancellationToken).ConfigureAwait(false);
+                var providersWithXml = new HashSet<int>();
+                foreach (var (providerIndex, upstreamXml) in fragments)
                 {
-                    passthroughCount = AppendUpstreamProgrammes(sb, upstreamXml, idMap, config, cancellationToken);
+                    providersWithXml.Add(providerIndex);
+                    var (written, recorded) = AppendUpstreamProgrammes(sb, upstreamXml, idMap, history, providerIndex, config, cancellationToken);
+                    passthroughCount += written;
+
+                    // A fully-read upstream XMLTV that only recorded catch-up history (every
+                    // programme fell outside the EPG window) is not a failure for this provider.
+                    if (written == 0 && recorded == 0)
+                    {
+                        fallbackProviders.Add(providerIndex);
+                    }
+                }
+
+                foreach (var providerIndex in channels.Select(c => c.ProviderIndex).Distinct())
+                {
+                    if (!providersWithXml.Contains(providerIndex))
+                    {
+                        fallbackProviders.Add(providerIndex);
+                    }
+                }
+
+                if (fragments.Count > 0)
+                {
                     _logger.LogInformation("Passed through {Count} programmes from upstream XMLTV", passthroughCount);
                 }
             }
-
-            if (passthroughCount == 0)
+            else
             {
-                _logger.LogInformation("Upstream XMLTV unavailable or empty; falling back to per-channel JSON EPG");
-                var epgData = await FetchEpgDataAsync(channels, config, cancellationToken).ConfigureAwait(false);
+                fallbackProviders.UnionWith(channels.Select(c => c.ProviderIndex));
+            }
+
+            if (fallbackProviders.Count > 0)
+            {
+                _logger.LogInformation("Upstream XMLTV unavailable or empty for one or more providers; falling back to per-channel JSON EPG for those providers' channels");
+
+                // A provider whose XMLTV parse failed half way may have left partial,
+                // inconsistent history for its own channels: AppendUpstreamProgrammes records
+                // progressively as it reads, and an XmlException does not undo what it already
+                // recorded. Clear just that provider's entries before the JSON fallback rebuilds
+                // them from a full, consistent fetch; other providers' recorded history is left
+                // untouched.
+                history.ResetProviders(fallbackProviders);
+                var fallbackChannels = channels.Where(c => fallbackProviders.Contains(c.ProviderIndex)).ToList();
+                var epgData = await FetchEpgDataAsync(fallbackChannels, history, config, cancellationToken).ConfigureAwait(false);
 
                 foreach (var program in epgData.OrderBy(p => p.StartTimestamp))
                 {
@@ -1306,10 +1356,43 @@ public class LiveTvService : IDisposable
                     sb.AppendLine("  </programme>");
                 }
             }
+
+            await RecordCatchupHistoryAsync(history, cancellationToken).ConfigureAwait(false);
         }
 
         sb.AppendLine("</tv>");
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Stores what this EPG build saw of the catch-up channels (GitHub #108).
+    /// <para>
+    /// Never fails the EPG: the recorded guide is an extra for catch-up browsing, and Jellyfin's
+    /// own guide must not go missing because a file could not be written.
+    /// </para>
+    /// </summary>
+    /// <param name="history">What the build collected.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task.</returns>
+    private async Task RecordCatchupHistoryAsync(CatchupHistoryCollector history, CancellationToken cancellationToken)
+    {
+        if (!history.IsEnabled)
+        {
+            return;
+        }
+
+        try
+        {
+            await CatchupHistory.RecordAsync(history.ToPulls(), DateTimeOffset.UtcNow, sweepStaleFiles: true, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not record the catch-up guide history; the EPG itself is unaffected");
+        }
     }
 
     /// <summary>
@@ -1318,16 +1401,20 @@ public class LiveTvService : IDisposable
     /// All other programme child elements (category, rating, credits, icon, etc.) are
     /// preserved verbatim.
     /// </summary>
-    /// <returns>Number of programmes written; zero, with nothing appended, when the document
-    /// could not be read to the end.</returns>
-    private int AppendUpstreamProgrammes(
+    /// <returns>The programmes written to the visible EPG and the programmes recorded for
+    /// catch-up history; both zero, with nothing appended, when the document could not be read
+    /// to the end.</returns>
+    private (int Written, int Recorded) AppendUpstreamProgrammes(
         StringBuilder sb,
         string upstreamXml,
         Dictionary<string, string> idMap,
+        CatchupHistoryCollector history,
+        int providerIndex,
         PluginConfiguration config,
         CancellationToken cancellationToken)
     {
         var written = 0;
+        var recordedCount = 0;
         var startLength = sb.Length;
         var nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         // Keep programs that ended up to 1 hour ago to be resilient to timezone/clock skews
@@ -1365,15 +1452,15 @@ public class LiveTvService : IDisposable
                 }
 
                 // Optional time-window filter to keep the EPG file proportional to EpgDaysToFetch.
+                // A catch-up channel's programme outside the window is still read, for the
+                // recorded guide, just not written: the past is exactly what that guide is for.
                 var startAttr = reader.GetAttribute("start");
                 var stopAttr = reader.GetAttribute("stop");
-                if (TryParseXmltvTime(stopAttr, out var stopUnix) && stopUnix < pastGraceUnix)
-                {
-                    reader.Skip();
-                    continue;
-                }
-
-                if (TryParseXmltvTime(startAttr, out var startUnix) && startUnix > endUnix)
+                bool hasStart = TryParseXmltvTime(startAttr, out var startUnix);
+                bool hasStop = TryParseXmltvTime(stopAttr, out var stopUnix);
+                bool outsideWindow = (hasStop && stopUnix < pastGraceUnix) || (hasStart && startUnix > endUnix);
+                bool isRecordable = hasStart && hasStop && history.Records(providerIndex, upstreamCh);
+                if (outsideWindow && !isRecordable)
                 {
                     reader.Skip();
                     continue;
@@ -1390,6 +1477,24 @@ public class LiveTvService : IDisposable
                     continue;
                 }
 
+                if (isRecordable)
+                {
+                    history.Add(
+                        providerIndex,
+                        upstreamCh,
+                        new CatchupHistoryEntry(
+                            startUnix,
+                            stopUnix,
+                            element.Element("title")?.Value ?? string.Empty,
+                            element.Element("desc")?.Value ?? string.Empty));
+                    recordedCount++;
+                }
+
+                if (outsideWindow)
+                {
+                    continue;
+                }
+
                 element.SetAttributeValue("channel", ourId);
                 sb.Append("  ").Append(element.ToString(SaveOptions.DisableFormatting)).Append('\n');
                 written++;
@@ -1403,10 +1508,10 @@ public class LiveTvService : IDisposable
             // appended comes out again, or the fallback would list those programmes twice.
             _logger.LogWarning(ex, "Failed to parse upstream XMLTV; falling back to JSON EPG");
             sb.Length = startLength;
-            return 0;
+            return (0, 0);
         }
 
-        return written;
+        return (written, recordedCount);
     }
 
     internal static bool TryParseXmltvTime(string? value, out long unixSeconds)
@@ -1452,24 +1557,30 @@ public class LiveTvService : IDisposable
         return true;
     }
 
-    private async Task<string?> GetMergedXmltvAsync(List<LiveStreamInfo> channels, CancellationToken cancellationToken)
+    /// <summary>
+    /// Fetches each configured provider's upstream XMLTV, keeping them apart so a caller can
+    /// still tell which provider a &lt;programme&gt; came from (needed to keep catch-up history
+    /// from crossing providers that happen to reuse the same EPG channel id).
+    /// </summary>
+    private async Task<List<(int ProviderIndex, string Xml)>> GetProviderXmltvFragmentsAsync(List<LiveStreamInfo> channels, CancellationToken cancellationToken)
     {
-        var fragments = new List<string>();
+        var fragments = new List<(int ProviderIndex, string Xml)>();
         foreach (var providerIndex in channels.Select(c => c.ProviderIndex).Distinct())
         {
             var connectionInfo = Plugin.Instance.GetCreds(providerIndex);
             var xml = await _client.GetXmltvAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrEmpty(xml))
             {
-                fragments.Add(xml);
+                fragments.Add((providerIndex, xml));
             }
         }
 
-        return fragments.Count == 0 ? null : string.Join('\n', fragments);
+        return fragments;
     }
 
     private async Task<List<EpgProgram>> FetchEpgDataAsync(
         List<LiveStreamInfo> channels,
+        CatchupHistoryCollector history,
         PluginConfiguration config,
         CancellationToken cancellationToken)
     {
@@ -1503,6 +1614,10 @@ public class LiveTvService : IDisposable
                 {
                     program.ChannelId = channelId;
                 }
+
+                // Before the window filter below: what has already aired is what the recorded
+                // catch-up guide is for.
+                history.Add(channel, epgListings.Listings);
 
                 // Filter to our time range
                 return epgListings.Listings
@@ -1608,6 +1723,7 @@ public class LiveTvService : IDisposable
                 _m3uLock.Dispose();
                 _epgLock.Dispose();
                 _snapshotLock.Dispose();
+                _catchupHistory?.Dispose();
             }
 
             _disposed = true;
