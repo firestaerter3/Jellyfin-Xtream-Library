@@ -71,12 +71,12 @@ Releases go to the **beta channel first**, then are promoted to stable. Never pu
 Read the review comments on the PR, not only the CI result. Codex and CodeRabbit post findings as
 review comments, and a green CI says nothing about them. On 2026-09-27 two real bugs (user NFO files
 deleted, a parser desync) were merged and released because only CI was checked. With `gh` broken
-here, list them with:
+here, list them with the command below. The repo is public, so it needs no token, which would
+otherwise show up in the process list.
 
 ```bash
-curl -s -H "Authorization: Bearer $(gh auth token)" \
-  "https://api.github.com/repos/firestaerter3/Jellyfin-Xtream-Library/pulls/<N>/comments" \
-  | python3 -c "import json,sys;[print(c['user']['login'],c['path'],c.get('line'),c['body'][:300]) for c in json.load(sys.stdin)]"
+curl -s "https://api.github.com/repos/firestaerter3/Jellyfin-Xtream-Library/pulls/<N>/comments?per_page=100" \
+  | python3 -c "import json,sys;[print('---',c['user']['login'],c['path'],c.get('line'),'\n'+c['body']) for c in json.load(sys.stdin)]"
 ```
 
 When a bot says it hit its review limit, the PR has had no review; say so rather than treating it as

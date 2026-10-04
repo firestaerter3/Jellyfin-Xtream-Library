@@ -29,7 +29,11 @@ PLUGIN_GUID = "63ba5fcd-c8ce-421a-83e8-ba0b11030d53"
 
 VERSION = re.compile(r"\bv?(\d+\.\d+\.\d+\.\d+)\b")
 SHA = re.compile(r"[`(]([0-9a-f]{7,40})[`)]")
-BETA_WORDS = re.compile(r"\(beta\)|\bbeta\b|not yet promoted|not yet stable|not yet on stable", re.I)
+BETA_WORDS = re.compile(r"\bbeta\b", re.I)
+# Wording that says the whole entry is not on stable, whichever version it names.
+NOT_STABLE_WORDS = re.compile(r"not (?:yet )?(?:promoted|stable|on stable)", re.I)
+# Wording an updated status uses, "on stable since <date>" or "on stable as vX".
+ON_STABLE_WORDS = re.compile(r"(?<!not )(?<!not yet )\bon stable (?:since|as)\b", re.I)
 UNRELEASED_WORDS = re.compile(r"not released|not yet released|not pushed", re.I)
 
 
@@ -40,7 +44,10 @@ def parse(version):
 def stable_versions(fetch):
     """Versions on the stable channel, from origin/main when available, else the working tree."""
     if fetch:
-        subprocess.run(["git", "-C", str(MANIFEST_REPO), "fetch", "-q"], capture_output=True)
+        result = subprocess.run(["git", "-C", str(MANIFEST_REPO), "fetch", "-q"], capture_output=True)
+        if result.returncode != 0:
+            # Silence means "all matches", so a stale manifest must not pass for a clean one.
+            print("check-bugs-status: git fetch in jellyfin-plugin-repo failed; checked the last fetched manifest")
     try:
         raw = subprocess.run(
             ["git", "-C", str(MANIFEST_REPO), "show", "origin/main:manifest.json"],
@@ -68,6 +75,29 @@ def unreleased_but_tagged(bug, status):
             if in_a_tag(sha):
                 return [f"{bug}: status says not released, but commit {sha} is in a tag"]
     return []
+
+
+def stale_beta_versions(status, stable):
+    """Versions the status calls beta or not stable that are on stable after all.
+
+    A beta label belongs to the version it follows ("v1.56.0.0 (beta), v2.0.2.0 on stable"
+    only calls 1.56.0.0 beta). Wording such as "not yet promoted" covers every version named.
+    """
+    matches = list(VERSION.finditer(status))
+    whole_entry = bool(NOT_STABLE_WORDS.search(status))
+    stale = []
+    for i, m in enumerate(matches):
+        # "on stable as v2.0.9.0" names the stable version itself, not one awaiting promotion.
+        if re.search(r"on stable as\s*$", status[:m.start()], re.I):
+            continue
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(status)
+        segment = status[m.end():end]
+        # "(beta)" right after the version labels it; "on stable as/since" in its own segment
+        # says that version (or the line it belongs to) has since been promoted.
+        labelled = BETA_WORDS.search(segment) is not None and not ON_STABLE_WORDS.search(segment)
+        if (whole_entry or labelled) and on_stable(m.group(1), stable):
+            stale.append(m.group(1))
+    return stale
 
 
 def open_rows(text):
@@ -110,10 +140,9 @@ def main():
         problems.extend(unreleased_but_tagged(bug, status))
 
     for bug, status in section_statuses(text):
-        versions = VERSION.findall(status)
-        if BETA_WORDS.search(status) and "on stable" not in status and versions and \
-                any(on_stable(v, stable) for v in versions):
-            problems.append(f"{bug}: status says beta / not promoted, but {', '.join(versions)} is on stable")
+        stale = stale_beta_versions(status, stable)
+        if stale:
+            problems.append(f"{bug}: status says beta / not on stable, but {', '.join(stale)} is on stable")
         problems.extend(unreleased_but_tagged(bug, status))
 
     if problems:
