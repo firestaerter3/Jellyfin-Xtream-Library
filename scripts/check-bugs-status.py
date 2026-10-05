@@ -33,6 +33,7 @@ BETA_WORDS = re.compile(r"\bbeta\b", re.I)
 # Wording that says the whole entry is not on stable, whichever version it names.
 NOT_STABLE_WORDS = re.compile(r"not (?:yet )?(?:promoted|stable|on stable)", re.I)
 # Wording an updated status uses, "on stable since <date>" or "on stable as vX".
+LIST_SEPARATOR = re.compile(r"\s*(?:,|/|\band\b|&)?\s*", re.I)
 ON_STABLE_WORDS = re.compile(r"(?<!not )(?<!not yet )\bon stable (?:since|as)\b", re.I)
 UNRELEASED_WORDS = re.compile(r"not released|not yet released|not pushed", re.I)
 
@@ -88,18 +89,24 @@ def stale_beta_versions(status, stable):
     # "X and Y, not on stable" is about the whole entry. Once the status also says something
     # is on stable, the wording is per version, so each phrase only covers its own version.
     whole_entry = bool(NOT_STABLE_WORDS.search(status)) and not ON_STABLE_WORDS.search(status)
+    labels = []
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(status)
+        segment = status[m.end():end]
+        labels.append((BETA_WORDS.search(segment) is not None or NOT_STABLE_WORDS.search(segment) is not None)
+                      and not ON_STABLE_WORDS.search(segment))
+    # "v1.0.0.0 and v1.1.0.0, not yet promoted": the first version's own segment is only
+    # " and ", so the label of the version it is listed with carries back to it.
+    for i in range(len(matches) - 2, -1, -1):
+        between = status[matches[i].end():matches[i + 1].start()]
+        if labels[i + 1] and LIST_SEPARATOR.fullmatch(between):
+            labels[i] = True
     stale = []
     for i, m in enumerate(matches):
         # "on stable as v2.0.9.0" names the stable version itself, not one awaiting promotion.
         if re.search(r"on stable as\s*$", status[:m.start()], re.I):
             continue
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(status)
-        segment = status[m.end():end]
-        # "(beta)" right after the version labels it; "on stable as/since" in its own segment
-        # says that version (or the line it belongs to) has since been promoted.
-        labelled = (BETA_WORDS.search(segment) is not None or NOT_STABLE_WORDS.search(segment) is not None) \
-            and not ON_STABLE_WORDS.search(segment)
-        if (whole_entry or labelled) and on_stable(m.group(1), stable):
+        if (whole_entry or labels[i]) and on_stable(m.group(1), stable):
             stale.append(m.group(1))
     return stale
 
