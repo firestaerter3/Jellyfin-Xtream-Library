@@ -80,11 +80,14 @@ def unreleased_but_tagged(bug, status):
 def stale_beta_versions(status, stable):
     """Versions the status calls beta or not stable that are on stable after all.
 
-    A beta label belongs to the version it follows ("v1.56.0.0 (beta), v2.0.2.0 on stable"
-    only calls 1.56.0.0 beta). Wording such as "not yet promoted" covers every version named.
+    A label belongs to the version it follows ("v1.56.0.0 (beta), v2.0.2.0 on stable as ..."
+    only calls 1.56.0.0 beta). Wording such as "not yet promoted" covers every version named,
+    unless the status also says something is on stable; then it only covers its own version.
     """
     matches = list(VERSION.finditer(status))
-    whole_entry = bool(NOT_STABLE_WORDS.search(status))
+    # "X and Y, not on stable" is about the whole entry. Once the status also says something
+    # is on stable, the wording is per version, so each phrase only covers its own version.
+    whole_entry = bool(NOT_STABLE_WORDS.search(status)) and not ON_STABLE_WORDS.search(status)
     stale = []
     for i, m in enumerate(matches):
         # "on stable as v2.0.9.0" names the stable version itself, not one awaiting promotion.
@@ -94,7 +97,8 @@ def stale_beta_versions(status, stable):
         segment = status[m.end():end]
         # "(beta)" right after the version labels it; "on stable as/since" in its own segment
         # says that version (or the line it belongs to) has since been promoted.
-        labelled = BETA_WORDS.search(segment) is not None and not ON_STABLE_WORDS.search(segment)
+        labelled = (BETA_WORDS.search(segment) is not None or NOT_STABLE_WORDS.search(segment) is not None) \
+            and not ON_STABLE_WORDS.search(segment)
         if (whole_entry or labelled) and on_stable(m.group(1), stable):
             stale.append(m.group(1))
     return stale
