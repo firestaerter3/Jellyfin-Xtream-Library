@@ -560,6 +560,11 @@
                                         parallel workers: 50 means at most 20 requests a second, whatever Sync Parallelism is set to.
                                         If the provider answers 429 (too many requests), every request to it waits out the retry delay,
                                         not only the one that was refused. Default: 50ms. Set to 0 for no gap.
+                                        <br /><br />
+                                        Some providers never answer 429 and simply stop accepting connections after a few hundred
+                                        requests in a few minutes; the sync then shows timeouts or 504 errors instead. If that
+                                        happens on your first sync, raise this to 200 or more. 200 ms has been confirmed to keep
+                                        such a provider happy through a full sync of a large library.
                                     </div>
                                 </div>
                                 <div class="inputContainer">
