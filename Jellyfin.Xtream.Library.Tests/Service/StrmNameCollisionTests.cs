@@ -82,35 +82,89 @@ public class StrmNameCollisionTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    [Fact]
-    public async Task TwoStreamsSharingTitleAndQualityTag_WriteOneFileAndCountTheCollision()
+    // GitHub #142. Two streams that come out with the same file name used to leave only one in the
+    // library: the second was refused and counted as a collision. Now both are kept as versions of
+    // one movie. The lowest stream id gets the plain name, so the outcome does not depend on the
+    // order the parallel loop ran them in.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TwoStreamsSharingTitleAndQualityTag_AreBothKeptAsVersions(bool reversed)
     {
-        // Both resolve to "Duplicate Movie (2024)" with version label "FHD", so both want
-        // "Duplicate Movie (2024) - FHD.strm".
-        var result = await RunMovieSyncAsync(
+        var streams = new[]
+        {
             new StreamInfo { StreamId = 100, Name = "Duplicate Movie (2024) - [FHD]", ContainerExtension = "mp4" },
-            new StreamInfo { StreamId = 200, Name = "Duplicate Movie (2024) - [FHD]", ContainerExtension = "mp4" })
-            .ConfigureAwait(true);
+            new StreamInfo { StreamId = 200, Name = "Duplicate Movie (2024) - [FHD]", ContainerExtension = "mp4" },
+        };
+        var result = await RunMovieSyncAsync(reversed ? streams.Reverse().ToArray() : streams).ConfigureAwait(true);
 
-        var movieFolder = Path.Combine(_libraryPath, "Movies", "Duplicate Movie (2024)");
-        var written = Directory.Exists(movieFolder)
-            ? Directory.GetFiles(movieFolder, "*.strm")
-            : Array.Empty<string>();
-
-        written.Should().HaveCount(1, "the two streams collapse to one name");
-        result.MovieNameCollisions.Should().Be(1, "the refusal has to be counted, not silent");
-        result.MoviesCreated.Should().Be(1);
-        result.Errors.Should().Be(0, "a collision is a provider quirk, not a sync failure");
-
-        // The counter reaches the caller only if it is aggregated into the global result as well
-        // as the per-provider one. That wiring is easy to forget and invisible to a unit test.
-        _log.Should().Contain(l => l.StartsWith("[Warning] STRM name collision for movie", StringComparison.Ordinal));
-
-        // The surviving file belongs to exactly one of the two streams, and was not rewritten
-        // by the other. Before the fix the content was whichever stream happened to finish last.
-        var content = await File.ReadAllTextAsync(written[0]).ConfigureAwait(true);
-        content.Should().Match(c => c.Contains("/100.mp4", StringComparison.Ordinal) || c.Contains("/200.mp4", StringComparison.Ordinal));
+        var folder = Path.Combine(_libraryPath, "Movies", "Duplicate Movie (2024)");
+        StrmNamesAndIds(folder).Should().Equal(
+            ("Duplicate Movie (2024) - FHD - 200.strm", 200),
+            ("Duplicate Movie (2024) - FHD.strm", 100));
+        result.MovieNameCollisions.Should().Be(0, "a duplicate kept as a version is not a refusal");
+        result.Errors.Should().Be(0);
     }
+
+    [Fact]
+    public async Task AnEstablishedFile_KeepsItsNameWhenALowerIdDuplicateAppears()
+    {
+        await RunMovieSyncAsync(new StreamInfo { StreamId = 200, Name = "Same Movie (2024)", ContainerExtension = "mp4" }).ConfigureAwait(true);
+
+        await RunMovieSyncAsync(
+            new StreamInfo { StreamId = 200, Name = "Same Movie (2024)", ContainerExtension = "mp4" },
+            new StreamInfo { StreamId = 100, Name = "Same Movie (2024)", ContainerExtension = "mp4" }).ConfigureAwait(true);
+
+        // Renaming the existing file would make Jellyfin see a new item and drop its watched state.
+        StrmNamesAndIds(Path.Combine(_libraryPath, "Movies", "Same Movie (2024)")).Should().Equal(
+            ("Same Movie (2024) - 100.strm", 100),
+            ("Same Movie (2024).strm", 200));
+    }
+
+    [Fact]
+    public async Task AReimportedStream_OverwritesThePlainFileInPlace()
+    {
+        // The provider gave the same film a new stream id; the old one is gone. The file has to
+        // stay where it is, as before, or the item would lose its watched state.
+        await RunMovieSyncAsync(new StreamInfo { StreamId = 100, Name = "Same Movie (2024)", ContainerExtension = "mp4" }).ConfigureAwait(true);
+
+        await RunMovieSyncAsync(new StreamInfo { StreamId = 300, Name = "Same Movie (2024)", ContainerExtension = "mp4" }).ConfigureAwait(true);
+
+        StrmNamesAndIds(Path.Combine(_libraryPath, "Movies", "Same Movie (2024)")).Should().Equal(
+            ("Same Movie (2024).strm", 300));
+    }
+
+    [Fact]
+    public async Task ANewDuplicate_OnAnIncrementalSync_DoesNotOverwriteAnUnchangedMovie()
+    {
+        // On an incremental sync the unchanged movie is skipped and never claims its file name, so
+        // the newcomer used to claim it and overwrite the established file with its own stream.
+        await RunMovieSyncAsync(
+            new[] { new StreamInfo { StreamId = 100, Name = "Same Movie (2024)", ContainerExtension = "mp4" } },
+            useShippedDefaults: true).ConfigureAwait(true);
+
+        await RunMovieSyncAsync(
+            new[]
+            {
+                new StreamInfo { StreamId = 100, Name = "Same Movie (2024)", ContainerExtension = "mp4" },
+                new StreamInfo { StreamId = 200, Name = "Same Movie (2024)", ContainerExtension = "mp4" },
+            },
+            useShippedDefaults: true).ConfigureAwait(true);
+
+        StrmNamesAndIds(Path.Combine(_libraryPath, "Movies", "Same Movie (2024)")).Should().Equal(
+            ("Same Movie (2024) - 200.strm", 200),
+            ("Same Movie (2024).strm", 100));
+    }
+
+    private static (string Name, int StreamId)[] StrmNamesAndIds(string folder)
+        => Directory.Exists(folder)
+            ? Directory.GetFiles(folder, "*.strm")
+                .Select(f => (Path.GetFileName(f), int.Parse(
+                    System.Text.RegularExpressions.Regex.Match(File.ReadAllText(f), @"/(\d+)\.\w+\s*$").Groups[1].Value,
+                    System.Globalization.CultureInfo.InvariantCulture)))
+                .OrderBy(t => t.Item1, StringComparer.Ordinal)
+                .ToArray()
+            : Array.Empty<(string, int)>();
 
     [Fact]
     public async Task TwoStreamsWithDifferentQualityTags_BothWriteAndNothingCollides()
@@ -129,17 +183,19 @@ public class StrmNameCollisionTests : IDisposable
     }
 
     [Fact]
-    public async Task TwoStreamsSharingAVersionTag_CollideTheSameWayAsAQualityTag()
+    public async Task TwoStreamsSharingAVersionTag_AreKeptTheSameWayAsAQualityTag()
     {
-        // V1/V2 became version labels in #75, so they can collide exactly like FHD does.
+        // V1/V2 became version labels in #75, so they can share a name exactly like FHD does,
+        // and since #142 both are kept.
         var result = await RunMovieSyncAsync(
             new StreamInfo { StreamId = 100, Name = "Tagged Movie (2024) - [V1]", ContainerExtension = "mp4" },
             new StreamInfo { StreamId = 200, Name = "Tagged Movie (2024) - [V1]", ContainerExtension = "mp4" })
             .ConfigureAwait(true);
 
-        result.MovieNameCollisions.Should().Be(1);
-        Directory.GetFiles(Path.Combine(_libraryPath, "Movies", "Tagged Movie (2024)"), "*.strm")
-            .Should().HaveCount(1);
+        result.MovieNameCollisions.Should().Be(0);
+        StrmNamesAndIds(Path.Combine(_libraryPath, "Movies", "Tagged Movie (2024)")).Should().Equal(
+            ("Tagged Movie (2024) - V1 - 200.strm", 200),
+            ("Tagged Movie (2024) - V1.strm", 100));
     }
 
     // syncedFiles doubles as the orphan-protection set: the incremental and smart-skip paths bulk-add
@@ -263,15 +319,15 @@ public class StrmNameCollisionTests : IDisposable
         var written = Directory.GetFiles(Path.Combine(_libraryPath, "Movies"), "*.strm", SearchOption.AllDirectories);
         result.Errors.Should().Be(0);
 
-        if (caseSensitive)
+        // Two distinct paths where the filesystem tells case apart; one path where it does not,
+        // and then the second is kept as a version of the first (#142) rather than overwriting it.
+        result.MovieNameCollisions.Should().Be(0);
+        written.Should().HaveCount(2);
+        written.Select(File.ReadAllText).Should().Contain(c => c.Contains("/100.mp4", StringComparison.Ordinal))
+            .And.Contain(c => c.Contains("/200.mp4", StringComparison.Ordinal));
+        if (!caseSensitive)
         {
-            result.MovieNameCollisions.Should().Be(0, "these are two distinct paths here");
-            written.Should().HaveCount(2);
-        }
-        else
-        {
-            result.MovieNameCollisions.Should().Be(1, "these are one file here, so the second must be refused");
-            written.Should().HaveCount(1);
+            written.Select(Path.GetFileName).Should().Contain(n => n!.EndsWith(" - 200.strm", StringComparison.Ordinal));
         }
     }
 
@@ -293,7 +349,7 @@ public class StrmNameCollisionTests : IDisposable
     // HasDuplicateLibraryPaths but nothing refuses the config. A per-provider claim set would let
     // the second provider overwrite the first one's file with nothing counted.
     [Fact]
-    public async Task TwoProvidersSharingALibraryPath_StillDetectTheCollision()
+    public async Task TwoProvidersSharingALibraryPath_KeepTheFirstProvidersFile()
     {
         _client.Setup(c => c.GetVodCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Category> { new() { CategoryId = 1, CategoryName = "Movies" } });
@@ -306,9 +362,14 @@ public class StrmNameCollisionTests : IDisposable
         var result = await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: false, providerCount: 2)
             .ConfigureAwait(true);
 
-        result.MovieNameCollisions.Should().Be(1, "the second provider must not silently overwrite the first");
-        Directory.GetFiles(Path.Combine(_libraryPath, "Movies"), "*.strm", SearchOption.AllDirectories)
-            .Should().HaveCount(1);
+        // The second provider must not overwrite the first one's file. Since #142 its stream is kept
+        // next to it as a version instead of being refused.
+        result.MovieNameCollisions.Should().Be(0);
+        var files = Directory.GetFiles(Path.Combine(_libraryPath, "Movies"), "*.strm", SearchOption.AllDirectories)
+            .Select(f => (Path.GetFileName(f), File.ReadAllText(f))).OrderBy(t => t.Item1, StringComparer.Ordinal).ToArray();
+        files.Select(f => f.Item1).Should().Equal("Shared Movie (2024) - 100.strm", "Shared Movie (2024).strm");
+        files[1].Item2.Should().Contain("provider0.test", "the first provider keeps the plain file");
+        files[0].Item2.Should().Contain("provider1.test");
     }
 
     // GitHub #90. Every version of a title (V1/V2/V3) resolves to one folder and therefore to one
