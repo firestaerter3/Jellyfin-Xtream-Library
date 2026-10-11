@@ -24,4 +24,6 @@ namespace Jellyfin.Xtream.Library.Service;
 /// <param name="StreamUrl">The URL this stream would write.</param>
 /// <param name="StreamId">The stream id the URL points at.</param>
 /// <param name="DiskOwnerStreamId">Stream id in the existing file, when it is another stream's.</param>
-internal sealed record ContestedStrm(string PlainPath, string StrmFileName, string StreamUrl, int StreamId, int? DiskOwnerStreamId);
+/// <param name="MovieStreamId">The catalogue stream id of the movie this entry belongs to, which
+/// the per-movie counters are keyed on (it differs from <paramref name="StreamId"/> in Dispatcharr mode).</param>
+internal sealed record ContestedStrm(string PlainPath, string StrmFileName, string StreamUrl, int StreamId, int? DiskOwnerStreamId, int MovieStreamId);

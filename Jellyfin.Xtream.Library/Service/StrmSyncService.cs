@@ -1700,6 +1700,7 @@ public partial class StrmSyncService
 
         // GitHub #142. Plain file names more than one stream wanted, and who wrote each plain name.
         var contestedStrms = new ConcurrentBag<ContestedStrm>();
+        var skippedMovieIds = new ConcurrentDictionary<int, byte>();
         var plainNameWriters = new ConcurrentDictionary<string, (int StreamId, string StreamUrl)>(PathClaimComparer);
 
         // Parse folder ID overrides
@@ -2449,7 +2450,7 @@ public partial class StrmSyncService
 
                             // Another stream with the same title took this name in this run. Who
                             // keeps it is decided once every batch has run (GitHub #142).
-                            contestedStrms.Add(new ContestedStrm(strmPath, strmFileName, streamUrl, entryStreamId, null));
+                            contestedStrms.Add(new ContestedStrm(strmPath, strmFileName, streamUrl, entryStreamId, null, stream.StreamId));
                             continue;
                         }
 
@@ -2464,7 +2465,7 @@ public partial class StrmSyncService
                             && !StrmUrlBelongsToSameStream(existingUrl, streamUrl)
                             && ExtractStreamIdFromStrmUrl(existingUrl) is int diskOwnerId)
                         {
-                            contestedStrms.Add(new ContestedStrm(strmPath, strmFileName, streamUrl, entryStreamId, diskOwnerId));
+                            contestedStrms.Add(new ContestedStrm(strmPath, strmFileName, streamUrl, entryStreamId, diskOwnerId, stream.StreamId));
                             continue;
                         }
 
@@ -2669,6 +2670,7 @@ public partial class StrmSyncService
                     else if (allSkipped)
                     {
                         Interlocked.Increment(ref moviesSkipped);
+                        skippedMovieIds.TryAdd(stream.StreamId, 0);
                     }
                 }
                 catch (Exception ex)
@@ -2707,10 +2709,26 @@ public partial class StrmSyncService
             syncedFiles,
             claimedPaths,
             cancellationToken).ConfigureAwait(false);
-        moviesCreated += versions.Created;
-        moviesSkipped -= versions.Created;
-        moviesUpdated += versions.Updated;
+        // A movie the loop counted as skipped only because its name was contested is created or
+        // updated after all. A movie the loop already counted stays counted once.
+        foreach (var (movieId, outcome) in versions.Outcomes)
+        {
+            if (skippedMovieIds.ContainsKey(movieId))
+            {
+                moviesSkipped--;
+                if (outcome == VersionOutcome.Created)
+                {
+                    moviesCreated++;
+                }
+                else
+                {
+                    moviesUpdated++;
+                }
+            }
+        }
+
         nameCollisions += versions.Refused;
+        errors += versions.Failed;
 
         // Update result with thread-safe counters
         result.MoviesCreated += moviesCreated;
@@ -4019,9 +4037,9 @@ public partial class StrmSyncService
     /// <param name="syncedFiles">Files this run wrote or kept, protected from orphan cleanup.</param>
     /// <param name="claimedPaths">Paths claimed in this run, shared across providers.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>Files created for streams the loop had counted as skipped, plain files rewritten,
-    /// and duplicates that could not be kept.</returns>
-    internal async Task<(int Created, int Updated, int Refused)> KeepDuplicateStreamsAsVersionsAsync(
+    /// <returns>Per movie (catalogue stream id), whether a file was created or only updated for it;
+    /// duplicates that could not be kept; and names whose files could not be written.</returns>
+    internal async Task<(IReadOnlyDictionary<int, VersionOutcome> Outcomes, int Refused, int Failed)> KeepDuplicateStreamsAsVersionsAsync(
         IEnumerable<ContestedStrm> contested,
         IReadOnlyDictionary<string, (int StreamId, string StreamUrl)> writers,
         IReadOnlySet<int>? catalogueIds,
@@ -4029,88 +4047,93 @@ public partial class StrmSyncService
         ConcurrentDictionary<string, byte> claimedPaths,
         CancellationToken cancellationToken)
     {
-        int created = 0, updated = 0, refused = 0, kept = 0;
+        var outcomes = new Dictionary<int, VersionOutcome>();
+        int refused = 0, failed = 0, kept = 0;
+
+        // Created wins over Updated when one movie gets both.
+        void Record(int movieId, VersionOutcome outcome)
+        {
+            if (!outcomes.TryGetValue(movieId, out var current) || outcome == VersionOutcome.Created)
+            {
+                outcomes[movieId] = outcome == VersionOutcome.Created ? outcome : current == VersionOutcome.Created ? current : outcome;
+            }
+        }
+
         foreach (var group in contested.GroupBy(c => c.PlainPath, PathClaimComparer))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            string plainPath = group.Key;
-            string fileName = group.First().StrmFileName;
-            string folder = Path.GetDirectoryName(plainPath)!;
-
-            // Everyone who wants the plain name, one entry per stream.
-            var wanting = group
-                .GroupBy(c => c.StreamId)
-                .ToDictionary(g => g.Key, g => g.First().StreamUrl);
-            bool hasWriter = writers.TryGetValue(plainPath, out var writer);
-            if (hasWriter)
+            try
             {
-                wanting.TryAdd(writer.StreamId, writer.StreamUrl);
-            }
+                string plainPath = group.Key;
+                string fileName = group.First().StrmFileName;
+                string folder = Path.GetDirectoryName(plainPath)!;
 
-            int? diskOwner = group.Select(c => c.DiskOwnerStreamId).FirstOrDefault(id => id.HasValue);
-            int? keeper = DecideVersionKeeper(wanting.Keys.ToList(), hasWriter, diskOwner, catalogueIds);
-
-            if (keeper.HasValue && (!hasWriter || writer.StreamId != keeper.Value))
-            {
-                string keeperUrl = wanting[keeper.Value];
-                if (!StrmContentMatches(plainPath, keeperUrl))
+                // Everyone who wants the plain name, one entry per stream.
+                var wanting = group
+                    .GroupBy(c => c.StreamId)
+                    .ToDictionary(g => g.Key, g => (Url: g.First().StreamUrl, MovieId: (int?)g.First().MovieStreamId));
+                bool hasWriter = writers.TryGetValue(plainPath, out var writer);
+                if (hasWriter)
                 {
-                    Directory.CreateDirectory(folder);
-                    await File.WriteAllTextAsync(plainPath, keeperUrl, cancellationToken).ConfigureAwait(false);
-                    if (hasWriter)
+                    // Already counted by the loop, so no movie id to report for it.
+                    wanting.TryAdd(writer.StreamId, (writer.StreamUrl, null));
+                }
+
+                int? diskOwner = group.Select(c => c.DiskOwnerStreamId).FirstOrDefault(id => id.HasValue);
+                int? keeper = DecideVersionKeeper(wanting.Keys.ToList(), hasWriter, diskOwner, catalogueIds);
+
+                if (keeper.HasValue && (!hasWriter || writer.StreamId != keeper.Value))
+                {
+                    var (keeperUrl, keeperMovie) = wanting[keeper.Value];
+                    if (!StrmContentMatches(plainPath, keeperUrl))
                     {
-                        updated++;
+                        bool existed = File.Exists(plainPath);
+                        await WriteStrmReplacingAsync(plainPath, keeperUrl, cancellationToken).ConfigureAwait(false);
+                        if (keeperMovie.HasValue)
+                        {
+                            Record(keeperMovie.Value, existed ? VersionOutcome.Updated : VersionOutcome.Created);
+                        }
                     }
-                    else
+                }
+
+                foreach (var (streamId, (streamUrl, movieId)) in wanting.OrderBy(w => w.Key))
+                {
+                    if (streamId == keeper)
                     {
-                        created++;
+                        continue;
+                    }
+
+                    string versionPath = Path.Combine(folder, AppendStreamIdSuffix(fileName, streamId));
+                    syncedFiles.TryAdd(versionPath, 0);
+                    if (!claimedPaths.TryAdd(versionPath, 0))
+                    {
+                        refused++;
+                        _logger.LogWarning(
+                            "STRM name collision for movie: {Path} was already claimed in this run; refusing to overwrite it with stream {StreamId}",
+                            versionPath,
+                            streamId);
+                        continue;
+                    }
+
+                    kept++;
+                    if (StrmContentMatches(versionPath, streamUrl))
+                    {
+                        continue;
+                    }
+
+                    bool existed = File.Exists(versionPath);
+                    await WriteStrmReplacingAsync(versionPath, streamUrl, cancellationToken).ConfigureAwait(false);
+                    if (movieId.HasValue)
+                    {
+                        Record(movieId.Value, existed ? VersionOutcome.Updated : VersionOutcome.Created);
                     }
                 }
             }
-
-            foreach (var (streamId, streamUrl) in wanting.OrderBy(w => w.Key))
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                if (streamId == keeper)
-                {
-                    continue;
-                }
-
-                string versionPath = Path.Combine(folder, AppendStreamIdSuffix(fileName, streamId));
-                syncedFiles.TryAdd(versionPath, 0);
-                if (!claimedPaths.TryAdd(versionPath, 0))
-                {
-                    refused++;
-                    _logger.LogWarning(
-                        "STRM name collision for movie: {Path} was already claimed in this run; refusing to overwrite it with stream {StreamId}",
-                        versionPath,
-                        streamId);
-                    continue;
-                }
-
-                kept++;
-                if (StrmContentMatches(versionPath, streamUrl))
-                {
-                    continue;
-                }
-
-                bool existed = File.Exists(versionPath);
-                Directory.CreateDirectory(folder);
-                await File.WriteAllTextAsync(versionPath, streamUrl, cancellationToken).ConfigureAwait(false);
-
-                // The stream that first wrote the plain name was already counted as created.
-                if (hasWriter && writer.StreamId == streamId)
-                {
-                    continue;
-                }
-
-                if (existed)
-                {
-                    updated++;
-                }
-                else
-                {
-                    created++;
-                }
+                // One name failing must not cost the rest, or the sync result they feed.
+                failed++;
+                _logger.LogWarning(ex, "Failed to write the versions of {Path}", group.Key);
             }
         }
 
@@ -4121,7 +4144,39 @@ public partial class StrmSyncService
                 kept);
         }
 
-        return (created, updated, refused);
+        return (outcomes, refused, failed);
+    }
+
+    /// <summary>
+    /// Writes a STRM file. An existing file is replaced through a temporary file in the same
+    /// folder, so a failed or cancelled write never leaves an established movie's file empty.
+    /// </summary>
+    /// <param name="path">The STRM path.</param>
+    /// <param name="url">The URL to write.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    private static async Task WriteStrmReplacingAsync(string path, string url, CancellationToken cancellationToken)
+    {
+        string folder = Path.GetDirectoryName(path)!;
+        Directory.CreateDirectory(folder);
+        if (!File.Exists(path))
+        {
+            await File.WriteAllTextAsync(path, url, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        string temp = Path.Combine(folder, "." + Path.GetFileName(path) + "." + Guid.NewGuid().ToString("N") + ".tmp");
+        try
+        {
+            await File.WriteAllTextAsync(temp, url, cancellationToken).ConfigureAwait(false);
+            File.Move(temp, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temp))
+            {
+                File.Delete(temp);
+            }
+        }
     }
 
     /// <summary>

@@ -104,6 +104,8 @@ public class StrmNameCollisionTests : IDisposable
             ("Duplicate Movie (2024) - FHD.strm", 100));
         result.MovieNameCollisions.Should().Be(0, "a duplicate kept as a version is not a refusal");
         result.Errors.Should().Be(0);
+        result.MoviesCreated.Should().Be(2, "both streams ended up with a file");
+        result.MoviesSkipped.Should().Be(0);
     }
 
     [Fact]
@@ -111,9 +113,12 @@ public class StrmNameCollisionTests : IDisposable
     {
         await RunMovieSyncAsync(new StreamInfo { StreamId = 200, Name = "Same Movie (2024)", ContainerExtension = "mp4" }).ConfigureAwait(true);
 
-        await RunMovieSyncAsync(
+        var second = await RunMovieSyncAsync(
             new StreamInfo { StreamId = 200, Name = "Same Movie (2024)", ContainerExtension = "mp4" },
             new StreamInfo { StreamId = 100, Name = "Same Movie (2024)", ContainerExtension = "mp4" }).ConfigureAwait(true);
+
+        second.MoviesCreated.Should().Be(1, "only the newcomer got a new file");
+        second.MoviesSkipped.Should().Be(1, "the established movie was already up to date");
 
         // Renaming the existing file would make Jellyfin see a new item and drop its watched state.
         StrmNamesAndIds(Path.Combine(_libraryPath, "Movies", "Same Movie (2024)")).Should().Equal(
@@ -132,6 +137,8 @@ public class StrmNameCollisionTests : IDisposable
 
         StrmNamesAndIds(Path.Combine(_libraryPath, "Movies", "Same Movie (2024)")).Should().Equal(
             ("Same Movie (2024).strm", 300));
+        Directory.GetFiles(Path.Combine(_libraryPath, "Movies", "Same Movie (2024)"), "*.tmp", SearchOption.AllDirectories)
+            .Should().BeEmpty("the replacement goes through a temporary file that must not be left behind");
     }
 
     [Fact]
