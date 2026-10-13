@@ -51,6 +51,7 @@ public static class NfoWriter
     /// <param name="dateAdded">Optional date the content was added on the provider's catalog.</param>
     /// <param name="posterUrl">Optional remote URL to the poster/cover image. Referenced directly, never downloaded.</param>
     /// <param name="backdropUrl">Optional remote URL to the backdrop/fanart image. Referenced directly, never downloaded.</param>
+    /// <param name="excludedArtworkHosts">Optional comma-separated artwork hosts to exclude (host or host:port).</param>
     /// <returns>True if NFO was written, false if no data was available.</returns>
     public static async Task<bool> WriteMovieNfoAsync(
         string nfoPath,
@@ -71,7 +72,8 @@ public static class NfoWriter
         string? youtubeTrailerId = null,
         DateTime? dateAdded = null,
         string? posterUrl = null,
-        string? backdropUrl = null)
+        string? backdropUrl = null,
+        string? excludedArtworkHosts = null)
     {
         bool hasMedia = HasUsableData(video, audio);
         bool hasExtendedMetadata = HasUsableExtendedMetadata(plot, genre, director, cast, country, rating, premiered, youtubeTrailerId, dateAdded) ||
@@ -100,8 +102,8 @@ public static class NfoWriter
         AppendCountry(sb, country);
         AppendDirector(sb, director);
         AppendCast(sb, cast);
-        AppendThumb(sb, posterUrl);
-        AppendFanart(sb, backdropUrl);
+        AppendThumb(sb, posterUrl, excludedArtworkHosts);
+        AppendFanart(sb, backdropUrl, excludedArtworkHosts);
         AppendTrailer(sb, youtubeTrailerId);
 
         if (tmdbId.HasValue)
@@ -137,6 +139,7 @@ public static class NfoWriter
     /// <param name="rating">Optional rating (0-10 scale).</param>
     /// <param name="posterUrl">Optional remote URL to the poster/cover image. Referenced directly, never downloaded.</param>
     /// <param name="backdropUrl">Optional remote URL to the backdrop/fanart image. Referenced directly, never downloaded.</param>
+    /// <param name="excludedArtworkHosts">Optional comma-separated artwork hosts to exclude (host or host:port).</param>
     /// <returns>True if NFO was written, false if no provider IDs or other usable metadata were available.</returns>
     public static async Task<bool> WriteShowNfoAsync(
         string nfoPath,
@@ -150,7 +153,8 @@ public static class NfoWriter
         string? cast = null,
         decimal? rating = null,
         string? posterUrl = null,
-        string? backdropUrl = null)
+        string? backdropUrl = null,
+        string? excludedArtworkHosts = null)
     {
         bool hasExtendedMetadata = HasUsableExtendedMetadata(plot, genre, director, cast, null, null, null, null, null) ||
             IsUsableRating(rating) || !string.IsNullOrWhiteSpace(posterUrl) || !string.IsNullOrWhiteSpace(backdropUrl);
@@ -170,8 +174,8 @@ public static class NfoWriter
         AppendGenres(sb, genre);
         AppendDirector(sb, director);
         AppendCast(sb, cast);
-        AppendThumb(sb, posterUrl);
-        AppendFanart(sb, backdropUrl);
+        AppendThumb(sb, posterUrl, excludedArtworkHosts);
+        AppendFanart(sb, backdropUrl, excludedArtworkHosts);
 
         // TVDb is the primary identifier for series; TMDb is secondary
         if (tvdbId.HasValue)
@@ -206,6 +210,7 @@ public static class NfoWriter
     /// <param name="rating">Optional rating (0-10 scale).</param>
     /// <param name="dateAdded">Optional date the episode was added on the provider's catalog.</param>
     /// <param name="thumbUrl">Optional remote URL to the episode screenshot. Referenced directly, never downloaded.</param>
+    /// <param name="excludedArtworkHosts">Optional comma-separated artwork hosts to exclude (host or host:port).</param>
     /// <returns>True if NFO was written, false if no media info or other usable metadata was available.</returns>
     public static async Task<bool> WriteEpisodeNfoAsync(
         string nfoPath,
@@ -217,7 +222,8 @@ public static class NfoWriter
         string? premiered = null,
         decimal? rating = null,
         DateTime? dateAdded = null,
-        string? thumbUrl = null)
+        string? thumbUrl = null,
+        string? excludedArtworkHosts = null)
     {
         bool hasExtendedMetadata = HasUsableExtendedMetadata(plot, null, null, null, null, null, premiered, null, dateAdded) ||
             IsUsableRating(rating) || !string.IsNullOrWhiteSpace(thumbUrl);
@@ -234,7 +240,7 @@ public static class NfoWriter
         AppendPlot(sb, plot);
         AppendRating(sb, rating);
         AppendPremiered(sb, premiered);
-        AppendThumb(sb, thumbUrl);
+        AppendThumb(sb, thumbUrl, excludedArtworkHosts);
         AppendDateAdded(sb, dateAdded);
 
         if (HasUsableData(video, audio))
@@ -353,17 +359,36 @@ public static class NfoWriter
         }
     }
 
-    private static void AppendThumb(StringBuilder sb, string? posterUrl)
+    private static bool IsBlockedArtworkUrl(string? url, string? excludedArtworkHosts)
     {
-        if (!string.IsNullOrWhiteSpace(posterUrl))
+        if (string.IsNullOrWhiteSpace(excludedArtworkHosts) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        foreach (var host in excludedArtworkHosts.Split(",", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (string.Equals(host, uri.Host, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(host, $"{uri.Host}:{uri.Port}", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void AppendThumb(StringBuilder sb, string? posterUrl, string? excludedArtworkHosts)
+    {
+        if (!string.IsNullOrWhiteSpace(posterUrl) && !IsBlockedArtworkUrl(posterUrl, excludedArtworkHosts))
         {
             sb.Append("  <thumb aspect=\"poster\">").Append(EscapeXml(posterUrl)).AppendLine("</thumb>");
         }
     }
 
-    private static void AppendFanart(StringBuilder sb, string? backdropUrl)
+    private static void AppendFanart(StringBuilder sb, string? backdropUrl, string? excludedArtworkHosts)
     {
-        if (!string.IsNullOrWhiteSpace(backdropUrl))
+        if (!string.IsNullOrWhiteSpace(backdropUrl) && !IsBlockedArtworkUrl(backdropUrl, excludedArtworkHosts))
         {
             sb.AppendLine("  <fanart>");
             sb.Append("    <thumb>").Append(EscapeXml(backdropUrl)).AppendLine("</thumb>");
