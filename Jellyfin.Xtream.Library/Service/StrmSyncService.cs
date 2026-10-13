@@ -4948,7 +4948,14 @@ public partial class StrmSyncService
         {
             await File.WriteAllBytesAsync(temporaryPath, imageBytes, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-            File.Move(temporaryPath, destinationPath);
+            try
+            {
+                File.Move(temporaryPath, destinationPath);
+            }
+            catch (IOException) when (File.Exists(destinationPath))
+            {
+                // Another artwork request completed first. Keep its file and discard ours.
+            }
         }
         finally
         {

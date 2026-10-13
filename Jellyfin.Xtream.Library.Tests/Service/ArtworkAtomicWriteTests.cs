@@ -27,7 +27,28 @@ finally {Directory.Delete(root,true);}
 {
 var root=Path.Combine(Path.GetTempPath(),"xtream-atomic-"+Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(root);
-try {var file=Path.Combine(root,"poster.jpg"); var original=new byte[]{1,2,3}; await File.WriteAllBytesAsync(file,original); await Assert.ThrowsAsync<IOException>(()=>StrmSyncService.WriteArtworkAtomicallyAsync(file,new byte[]{4,5,6},NullLogger.Instance,CancellationToken.None)); Assert.Equal(original,File.ReadAllBytes(file)); Assert.Empty(Directory.GetFiles(root,"*.tmp"));}
+try {var file=Path.Combine(root,"poster.jpg"); var original=new byte[]{1,2,3}; await File.WriteAllBytesAsync(file,original); await StrmSyncService.WriteArtworkAtomicallyAsync(file,new byte[]{4,5,6},NullLogger.Instance,CancellationToken.None); Assert.Equal(original,File.ReadAllBytes(file)); Assert.Empty(Directory.GetFiles(root,"*.tmp"));}
 finally {Directory.Delete(root,true);}
+}
+
+[Fact]
+public async Task ConcurrentWritesToSameDestinationDoNotFail()
+{
+    var root = Path.Combine(Path.GetTempPath(), "xtream-atomic-race-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    try
+    {
+        var file = Path.Combine(root, "poster.jpg");
+        var tasks = Enumerable.Range(0, 16).Select(i => Task.Run(async () => await StrmSyncService.WriteArtworkAtomicallyAsync(file, Enumerable.Repeat((byte)i, 4096).ToArray(), NullLogger.Instance, CancellationToken.None)));
+        await Task.WhenAll(tasks);
+        var bytes = await File.ReadAllBytesAsync(file);
+        Assert.Equal(4096, bytes.Length);
+        Assert.All(bytes, value => Assert.Equal(bytes[0], value));
+        Assert.Empty(Directory.GetFiles(root, "*.tmp"));
+    }
+    finally
+    {
+        Directory.Delete(root, true);
+    }
 }
 }
