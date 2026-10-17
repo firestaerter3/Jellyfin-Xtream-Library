@@ -64,6 +64,31 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public List<ProviderConfig> Providers { get; set; } = new();
 
+    /// <summary>
+    /// Gets or sets the artwork connection timeout in seconds.
+    /// </summary>
+    public int ArtworkConnectionTimeoutSeconds { get; set; } = 3;
+
+    /// <summary>
+    /// Gets or sets the artwork download timeout in seconds.
+    /// </summary>
+    public int ArtworkDownloadTimeoutSeconds { get; set; } = 10;
+
+    /// <summary>
+    /// Gets or sets the number of artwork failures before blocking.
+    /// </summary>
+    public int ArtworkFailureThreshold { get; set; } = 3;
+
+    /// <summary>
+    /// Gets or sets the artwork blacklist duration in days.
+    /// </summary>
+    public int ArtworkBlacklistDays { get; set; } = 7;
+
+    /// <summary>
+    /// Gets or sets comma-separated artwork hosts or host:port endpoints excluded from NFO references.
+    /// </summary>
+    public string ArtworkExcludedHosts { get; set; } = string.Empty;
+
     // =====================
     // Global: Schedule
     // =====================

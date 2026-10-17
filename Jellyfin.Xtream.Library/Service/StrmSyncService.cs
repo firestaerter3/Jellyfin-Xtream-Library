@@ -55,10 +55,10 @@ public partial class StrmSyncService
     private const int MovieItemPathDepth = 2;
     private const int EpisodeItemPathDepth = 3;
 
-    // Static HttpClient is intentional for connection pooling and efficient socket usage.
-    // For image downloads, we don't need per-request configuration, and a shared client
-    // improves performance by reusing TCP connections. A default User-Agent is set below.
-    private static readonly HttpClient ImageHttpClient = CreateImageHttpClient();
+    private const int MaxArtworkBytes = 10_485_760;
+
+    // Cache pooled HTTP clients by connection timeout so settings can change between requests.
+    private static readonly ConcurrentDictionary<int, Lazy<HttpClient>> ImageHttpClients = new();
 
     private readonly IXtreamClient _client;
     private readonly IDispatcharrClient _dispatcharrClient;
@@ -71,6 +71,7 @@ public partial class StrmSyncService
     private readonly object _ctsLock = new();
     private readonly List<SyncResult> _syncHistory = new();
     private readonly object _syncHistoryLock = new();
+    private ArtworkFailureTracker? _artworkFailureTracker;
     private bool _historyLoaded;
     private CancellationTokenSource? _currentSyncCts;
     private volatile bool _syncSuppressed;
@@ -139,6 +140,8 @@ public partial class StrmSyncService
     public bool IsSyncActive => Volatile.Read(ref _syncActive) != 0 || CurrentProgress.IsRunning;
 
     private string SyncHistoryPath => Path.Combine(_appPaths.DataPath, "xtream-library", "sync_history.json");
+
+    private ArtworkFailureTracker ArtworkTracker => LazyInitializer.EnsureInitialized(ref _artworkFailureTracker, () => new ArtworkFailureTracker(_appPaths.DataPath, _logger, () => Plugin.Instance.Configuration.ArtworkFailureThreshold, () => Plugin.Instance.Configuration.ArtworkBlacklistDays));
 
     /// <summary>
     /// Gets the list of failed items from the last sync that can be retried.
@@ -2161,7 +2164,8 @@ public partial class StrmSyncService
                                     youtubeTrailerId: vodInfo?.Info?.YoutubeTrailer,
                                     dateAdded: AddedDateParser.Parse(stream.Added),
                                     posterUrl: vodInfo?.Info?.MovieImage ?? stream.StreamIcon,
-                                    backdropUrl: vodInfo?.Info?.BackdropPaths.FirstOrDefault()).ConfigureAwait(false);
+                                    backdropUrl: vodInfo?.Info?.BackdropPaths.FirstOrDefault(),
+                                    excludedArtworkHosts: Plugin.Instance.Configuration.ArtworkExcludedHosts).ConfigureAwait(false);
                                 }
                                 catch
                                 {
@@ -3161,7 +3165,8 @@ public partial class StrmSyncService
                                         premiered: episode.Info.ReleaseDate,
                                         rating: episode.Info.Rating,
                                         dateAdded: episode.Added,
-                                        thumbUrl: episode.Info.MovieImage).ConfigureAwait(false);
+                                        thumbUrl: episode.Info.MovieImage,
+                                        excludedArtworkHosts: Plugin.Instance.Configuration.ArtworkExcludedHosts).ConfigureAwait(false);
                                 }
 
                                 // Collect episode thumbnail for batch download
@@ -3243,7 +3248,8 @@ public partial class StrmSyncService
                                 cast: series.Cast,
                                 rating: series.Rating,
                                 posterUrl: series.Cover,
-                                backdropUrl: series.BackdropPaths.FirstOrDefault()).ConfigureAwait(false);
+                                backdropUrl: series.BackdropPaths.FirstOrDefault(),
+                                excludedArtworkHosts: Plugin.Instance.Configuration.ArtworkExcludedHosts).ConfigureAwait(false);
                         }
                     }
 
@@ -4442,44 +4448,169 @@ public partial class StrmSyncService
     /// <param name="destinationPath">The local path to save the image.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>True if download was successful, false otherwise.</returns>
-    private async Task<bool> DownloadImageAsync(string? imageUrl, string destinationPath, CancellationToken cancellationToken)
+    private Task<bool> DownloadImageAsync(string? imageUrl, string destinationPath, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrEmpty(imageUrl))
+        return DownloadImageCoreAsync(imageUrl, destinationPath, ArtworkTracker, Plugin.Instance.Configuration, _logger, cancellationToken);
+    }
+
+    /// <summary>
+    /// Downloads artwork with injectable dependencies for integration testing.
+    /// </summary>
+    /// <param name="imageUrl">Artwork URL.</param>
+    /// <param name="destinationPath">Destination path.</param>
+    /// <param name="tracker">Artwork failure tracker.</param>
+    /// <param name="artworkConfig">Artwork configuration.</param>
+    /// <param name="logger">Logger.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Whether artwork was downloaded successfully.</returns>
+    internal static async Task<bool> DownloadImageCoreAsync(string? imageUrl, string destinationPath, ArtworkFailureTracker tracker, PluginConfiguration artworkConfig, ILogger logger, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(imageUrl))
         {
             return false;
         }
 
-        // Skip if file already exists
         if (File.Exists(destinationPath))
         {
             return true;
         }
 
+        var hash = ArtworkFailureTracker.Hash(imageUrl);
+        var gate = tracker.Gate(hash);
         try
         {
-            using var response = await ImageHttpClient.GetAsync(imageUrl, cancellationToken).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        try
+        {
+            if (File.Exists(destinationPath))
+            {
+                return true;
+            }
+
+            if (tracker.IsBlocked(hash))
             {
                 return false;
             }
 
-            // Ensure directory exists
-            var directory = Path.GetDirectoryName(destinationPath);
-            if (!string.IsNullOrEmpty(directory))
+            byte[] imageBytes;
+            try
             {
-                Directory.CreateDirectory(directory);
+                var connectionSeconds = Math.Clamp(artworkConfig.ArtworkConnectionTimeoutSeconds, 1, 30);
+                using var requestCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                requestCts.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(artworkConfig.ArtworkDownloadTimeoutSeconds, 3, 120)));
+                using var response = await ImageHttpClients.GetOrAdd(connectionSeconds, static n => new Lazy<HttpClient>(() => CreateImageHttpClient(n))).Value.GetAsync(imageUrl, HttpCompletionOption.ResponseHeadersRead, requestCts.Token).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    tracker.Record(hash, false);
+                    return false;
+                }
+
+                if (response.Content.Headers.ContentLength is long declaredLength && declaredLength > MaxArtworkBytes)
+                {
+                    throw new InvalidDataException("Artwork exceeds the 10 MB download limit");
+                }
+
+                using var imageStream = await response.Content.ReadAsStreamAsync(requestCts.Token).ConfigureAwait(false);
+                using var imageBuffer = new MemoryStream();
+                var buffer = new byte[81920];
+                int bytesRead;
+                while ((bytesRead = await imageStream.ReadAsync(buffer, requestCts.Token).ConfigureAwait(false)) != 0)
+                {
+                    if (imageBuffer.Length + bytesRead > MaxArtworkBytes)
+                    {
+                        throw new InvalidDataException("Artwork exceeds the 10 MB download limit");
+                    }
+
+                    await imageBuffer.WriteAsync(buffer.AsMemory(0, bytesRead), requestCts.Token).ConfigureAwait(false);
+                }
+
+                imageBytes = imageBuffer.ToArray();
+                if (imageBytes.Length == 0)
+                {
+                    tracker.Record(hash, false);
+                    return false;
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return false;
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "Artwork download failed for hash {Hash}", hash[..12]);
+                tracker.Record(hash, false);
+                return false;
             }
 
-            // Save image
-            var imageBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
-            await File.WriteAllBytesAsync(destinationPath, imageBytes, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await WriteArtworkAtomicallyAsync(destinationPath, imageBytes, logger, cancellationToken).ConfigureAwait(false);
 
-            return true;
+                tracker.Record(hash, true);
+                return true;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return false;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Could not save artwork at {Path}", destinationPath);
+                return false;
+            }
         }
-        catch (Exception ex)
+        finally
         {
-            _logger.LogDebug(ex, "Failed to download image from {Url}", imageUrl);
-            return false;
+            gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Writes artwork to a temporary file before moving it to its final destination.
+    /// </summary>
+    /// <param name="destinationPath">Final artwork path.</param>
+    /// <param name="imageBytes">Downloaded artwork.</param>
+    /// <param name="logger">Logger for cleanup failures.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task representing the write operation.</returns>
+    internal static async Task WriteArtworkAtomicallyAsync(string destinationPath, byte[] imageBytes, ILogger logger, CancellationToken cancellationToken)
+    {
+        var directory = Path.GetDirectoryName(destinationPath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        var temporaryPath = destinationPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await File.WriteAllBytesAsync(temporaryPath, imageBytes, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                File.Move(temporaryPath, destinationPath);
+            }
+            catch (IOException) when (File.Exists(destinationPath))
+            {
+                // Another artwork request completed first. Keep its file and discard ours.
+            }
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(temporaryPath);
+            }
+            catch (Exception cleanupException) when (cleanupException is IOException or UnauthorizedAccessException)
+            {
+                logger.LogWarning(cleanupException, "Could not clean up temporary artwork at {Path}", temporaryPath);
+            }
         }
     }
 
@@ -4717,9 +4848,9 @@ public partial class StrmSyncService
         }
     }
 
-    private static HttpClient CreateImageHttpClient()
+    private static HttpClient CreateImageHttpClient(int connectionTimeoutSeconds)
     {
-        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        var client = new HttpClient(new SocketsHttpHandler { ConnectTimeout = TimeSpan.FromSeconds(connectionTimeoutSeconds), MaxConnectionsPerServer = 3 }) { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
         client.DefaultRequestHeaders.Add("User-Agent", "Jellyfin-Xtream-Library/1.0");
         return client;
     }

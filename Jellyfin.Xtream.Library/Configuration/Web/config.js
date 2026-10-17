@@ -330,6 +330,12 @@ var XtreamLibraryConfig = (function () {
             document.getElementById('chkUseBetaChannel').checked = config.UseBetaChannel === true;
             document.getElementById('txtMetadataParallelism').value = config.MetadataParallelism || 3;
 
+            document.getElementById("txtArtworkConnectionTimeoutSeconds").value = config.ArtworkConnectionTimeoutSeconds ?? 3;
+            document.getElementById("txtArtworkDownloadTimeoutSeconds").value = config.ArtworkDownloadTimeoutSeconds ?? 10;
+            document.getElementById("txtArtworkFailureThreshold").value = config.ArtworkFailureThreshold ?? 3;
+            document.getElementById("txtArtworkBlacklistDays").value = config.ArtworkBlacklistDays ?? 7;
+            document.getElementById("txtArtworkExcludedHosts").value = config.ArtworkExcludedHosts ?? "";
+
             // Schedule settings
             document.getElementById('selSyncScheduleType').value = config.SyncScheduleType || 'Interval';
             document.getElementById('selSyncDailyHour').value = config.SyncDailyHour || 3;
@@ -431,6 +437,12 @@ var XtreamLibraryConfig = (function () {
             config.EnableMetadataLookup = document.getElementById('chkEnableMetadataLookup').checked;
             config.UseBetaChannel = document.getElementById('chkUseBetaChannel').checked;
             config.MetadataParallelism = parseInt(document.getElementById('txtMetadataParallelism').value) || 3;
+
+            config.ArtworkConnectionTimeoutSeconds = Math.min(30, Math.max(1, parseInt(document.getElementById("txtArtworkConnectionTimeoutSeconds").value, 10) || 3));
+            config.ArtworkDownloadTimeoutSeconds = Math.min(120, Math.max(3, parseInt(document.getElementById("txtArtworkDownloadTimeoutSeconds").value, 10) || 10));
+            config.ArtworkFailureThreshold = Math.min(10, Math.max(1, parseInt(document.getElementById("txtArtworkFailureThreshold").value, 10) || 3));
+            config.ArtworkBlacklistDays = Math.min(90, Math.max(1, parseInt(document.getElementById("txtArtworkBlacklistDays").value, 10) || 7));
+            config.ArtworkExcludedHosts = document.getElementById("txtArtworkExcludedHosts").value.trim();
 
             // Schedule settings
             config.SyncScheduleType = document.getElementById('selSyncScheduleType').value;

@@ -407,6 +407,12 @@
                                     Time of day to run the sync (24-hour format, server timezone).
                                 </div>
                             </div>
+                            <h4>Artwork Protection (Global)</h4>
+                            <div class="inputContainer"><label class="inputLabel" for="txtArtworkConnectionTimeoutSeconds">Connection timeout (seconds)</label><input is="emby-input" type="number" id="txtArtworkConnectionTimeoutSeconds" min="1" max="30" step="1" /></div>
+                            <div class="inputContainer"><label class="inputLabel" for="txtArtworkDownloadTimeoutSeconds">Download timeout (seconds)</label><input is="emby-input" type="number" id="txtArtworkDownloadTimeoutSeconds" min="3" max="120" step="1" /></div>
+                            <div class="inputContainer"><label class="inputLabel" for="txtArtworkFailureThreshold">Failures before blocking</label><input is="emby-input" type="number" id="txtArtworkFailureThreshold" min="1" max="10" step="1" /></div>
+                            <div class="inputContainer"><label class="inputLabel" for="txtArtworkBlacklistDays">Blacklist duration (days)</label><input is="emby-input" type="number" id="txtArtworkBlacklistDays" min="1" max="90" step="1" /></div>
+                            <div class="inputContainer"><label class="inputLabel" for="txtArtworkExcludedHosts">Excluded artwork hosts (comma-separated)</label><input is="emby-input" type="text" id="txtArtworkExcludedHosts" placeholder="example.org:8080, images.example.com" /></div>
                             <div class="checkboxContainer checkboxContainer-withDescription">
                                 <label class="emby-checkbox-label">
                                     <input is="emby-checkbox" type="checkbox" id="chkTriggerScan" name="TriggerLibraryScan" />
