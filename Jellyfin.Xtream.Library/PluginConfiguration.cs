@@ -323,11 +323,12 @@ public class PluginConfiguration : BasePluginConfiguration
     public int CatchupTimeShiftMinutes { get; set; }
 
     /// <summary>
-    /// Gets or sets the block length, in minutes, used when a channel has no guide.
+    /// Gets or sets the block length, in minutes, used where a channel's guide has nothing.
     /// <para>
     /// Some providers only publish what is coming, never what has been, so there is nothing to
     /// list for a day that has passed even though its archive plays. Blocks give those channels a
-    /// way in. Zero switches them off, leaving such days empty.
+    /// way in, and fill the gaps the recorded guide leaves, such as the hours before recording
+    /// began. Zero switches them off, leaving only the programmes.
     /// </para>
     /// </summary>
     public int CatchupBlockMinutes { get; set; } = 30;

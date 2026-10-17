@@ -31,6 +31,11 @@ namespace Jellyfin.Xtream.Library.Service;
 public static class CatchupPlanner
 {
     /// <summary>
+    /// Shortest gap between programmes that <see cref="GapBlocks"/> offers as a block.
+    /// </summary>
+    internal const int MinGapMinutes = 5;
+
+    /// <summary>
     /// The channels a user can catch up on.
     /// <para>
     /// Same predicate the M3U already uses to decide which channels carry catch-up attributes
@@ -182,6 +187,84 @@ public static class CatchupPlanner
         }
 
         return blocks;
+    }
+
+    /// <summary>
+    /// Blocks for the parts of a day the guide leaves uncovered.
+    /// <para>
+    /// With a recorded guide a day is rarely all or nothing: the first day after install has titles
+    /// from the moment recording started, and a channel can be missing from a pull now and then.
+    /// Listing only the programmes would leave the rest of such a day unreachable although its
+    /// archive plays, so the gaps get blocks. A block that a programme covers in part is cut back
+    /// to the uncovered part. Without any programmes this is exactly <see cref="TimeBlocks"/>.
+    /// </para>
+    /// <para>
+    /// A gap shorter than <see cref="MinGapMinutes"/> is left out. Guides routinely leave a few
+    /// seconds or minutes between one programme's stop and the next start, and a block for each
+    /// would bury the day's programmes under slivers.
+    /// </para>
+    /// </summary>
+    /// <param name="programmes">The programmes listed for the day, as <see cref="ProgrammesInWindow"/>
+    /// returns them. Not the whole guide: a programme that is not listed must not count as
+    /// covering anything, or its time would be neither a programme nor a block. May be null.</param>
+    /// <param name="fromUtc">Window start, inclusive.</param>
+    /// <param name="toUtc">Window end, exclusive.</param>
+    /// <param name="nowUtc">The current instant.</param>
+    /// <param name="archiveHorizonUtc">Oldest instant the provider still serves.</param>
+    /// <param name="blockMinutes">Block length in minutes.</param>
+    /// <returns>Uncovered block parts, oldest first.</returns>
+    public static IReadOnlyList<(DateTimeOffset FromUtc, DateTimeOffset ToUtc)> GapBlocks(
+        IEnumerable<EpgProgram>? programmes,
+        DateTimeOffset fromUtc,
+        DateTimeOffset toUtc,
+        DateTimeOffset nowUtc,
+        DateTimeOffset archiveHorizonUtc,
+        int blockMinutes)
+    {
+        var covered = (programmes ?? Enumerable.Empty<EpgProgram>())
+            .Where(p => p.StopTimestamp > p.StartTimestamp)
+            .OrderBy(p => p.StartTimestamp)
+            .ToList();
+        long minGap = Math.Min(MinGapMinutes, Math.Max(1, blockMinutes)) * 60L;
+
+        var gaps = new List<(DateTimeOffset FromUtc, DateTimeOffset ToUtc)>();
+        foreach (var block in TimeBlocks(fromUtc, toUtc, nowUtc, archiveHorizonUtc, blockMinutes))
+        {
+            long cursor = block.FromUtc.ToUnixTimeSeconds();
+            long end = block.ToUtc.ToUnixTimeSeconds();
+
+            foreach (var programme in covered)
+            {
+                if (programme.StopTimestamp <= cursor)
+                {
+                    continue;
+                }
+
+                if (programme.StartTimestamp >= end)
+                {
+                    break;
+                }
+
+                AddGap(cursor, programme.StartTimestamp);
+                cursor = Math.Max(cursor, programme.StopTimestamp);
+                if (cursor >= end)
+                {
+                    break;
+                }
+            }
+
+            AddGap(cursor, end);
+        }
+
+        return gaps;
+
+        void AddGap(long from, long to)
+        {
+            if (to - from >= minGap)
+            {
+                gaps.Add((DateTimeOffset.FromUnixTimeSeconds(from), DateTimeOffset.FromUnixTimeSeconds(to)));
+            }
+        }
     }
 
     /// <summary>

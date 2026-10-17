@@ -342,7 +342,7 @@ public class XtreamCatchupChannel : IChannel, IDisableMediaSourceDisplay, IRequi
             return Empty();
         }
 
-        var programmes = await _epgCache.GetProgrammesAsync(
+        var fresh = await _epgCache.GetProgrammesAsync(
             reference.ProviderIndex,
             reference.StreamId,
             config.EpgCacheMinutes,
@@ -351,61 +351,100 @@ public class XtreamCatchupChannel : IChannel, IDisableMediaSourceDisplay, IRequi
         var zone = TimeZoneInfo.Local;
         var now = DateTimeOffset.UtcNow;
         int days = CatchupPlanner.DayCount(config.CatchupDays, channel.TvArchiveDuration);
+        var programmes = await WithHistoryAsync(reference, days, fresh, now, cancellationToken).ConfigureAwait(false);
 
         var (from, to) = CatchupPlanner.DayWindowUtc(reference.DaysAgo, zone, now);
         var horizon = CatchupPlanner.ArchiveHorizonUtc(days, zone, now);
         var selected = CatchupPlanner.ProgrammesInWindow(programmes, from, to, now, horizon);
 
-        var items = selected.Select(programme =>
+        var entries = selected.Select(programme =>
         {
             var startUtc = DateTimeOffset.FromUnixTimeSeconds(programme.StartTimestamp);
             var stopUtc = DateTimeOffset.FromUnixTimeSeconds(programme.StopTimestamp);
             var localStart = TimeZoneInfo.ConvertTime(startUtc, zone);
             var title = LiveTvService.DecodeBase64(programme.Title);
 
-            return BuildItem(
+            return (Start: startUtc, Item: BuildItem(
                 reference,
                 startUtc,
                 stopUtc,
                 $"{localStart:HH:mm} {title}",
-                LiveTvService.DecodeBase64(programme.Description));
+                LiveTvService.DecodeBase64(programme.Description)));
         }).ToList();
 
-        if (items.Count == 0 && config.CatchupBlockMinutes > 0)
+        int blockCount = 0;
+        if (config.CatchupBlockMinutes > 0)
         {
-            // The provider publishes only what is coming, so a day that has passed has nothing to
-            // list even though its archive plays. Offer the day in blocks instead of an empty
-            // folder: every stream URL is built from a time window anyway, so a block is as
-            // playable as a programme.
-            items = CatchupPlanner
-                .TimeBlocks(from, to, now, horizon, config.CatchupBlockMinutes)
-                .Select(block => BuildItem(
-                    reference,
-                    block.FromUtc,
-                    block.ToUtc,
-                    TimeZoneInfo.ConvertTime(block.FromUtc, zone).ToString("HH:mm", CultureInfo.CurrentCulture)
-                        + " - "
-                        + TimeZoneInfo.ConvertTime(block.ToUtc, zone).ToString("HH:mm", CultureInfo.CurrentCulture),
-                    null))
-                .ToList();
-
-            _logger.LogDebug(
-                "Catch-up channel {StreamId} day -{DaysAgo}: no guide, offering {Count} blocks of {Minutes} min",
-                reference.StreamId,
-                reference.DaysAgo,
-                items.Count,
-                config.CatchupBlockMinutes);
-
-            return new ChannelItemResult { Items = items, TotalRecordCount = items.Count };
+            // Providers publish little or no past guide, so parts of a day, or all of it, have
+            // nothing to list even though the archive plays. Those parts are offered in blocks:
+            // every stream URL is built from a time window anyway, so a block is as playable as a
+            // programme. Only what is listed counts as covered: a programme still airing, or one
+            // that began before the horizon, is not listed, and its finished part must stay
+            // reachable as blocks.
+            var blocks = CatchupPlanner.GapBlocks(selected, from, to, now, horizon, config.CatchupBlockMinutes);
+            blockCount = blocks.Count;
+            entries.AddRange(blocks.Select(block => (Start: block.FromUtc, Item: BuildItem(
+                reference,
+                block.FromUtc,
+                block.ToUtc,
+                TimeZoneInfo.ConvertTime(block.FromUtc, zone).ToString("HH:mm", CultureInfo.CurrentCulture)
+                    + " - "
+                    + TimeZoneInfo.ConvertTime(block.ToUtc, zone).ToString("HH:mm", CultureInfo.CurrentCulture),
+                null))));
         }
 
+        var items = entries.OrderBy(e => e.Start).Select(e => e.Item).ToList();
+
         _logger.LogDebug(
-            "Catch-up channel {StreamId} day -{DaysAgo}: {Count} programmes of {Total} in the guide",
+            "Catch-up channel {StreamId} day -{DaysAgo}: {Count} programmes of {Total} known, {Blocks} blocks of {Minutes} min for the gaps",
             reference.StreamId,
             reference.DaysAgo,
-            items.Count,
-            programmes.Count);
+            selected.Count,
+            programmes.Count,
+            blockCount,
+            config.CatchupBlockMinutes);
 
         return new ChannelItemResult { Items = items, TotalRecordCount = items.Count };
+    }
+
+    /// <summary>
+    /// Records the channel's fresh guide and returns it together with what was recorded before.
+    /// <para>
+    /// The fresh guide is what was fetched for this browse anyway, so recording it costs no
+    /// request. A failure here costs the recorded titles, never the browse: the fresh guide is
+    /// still returned.
+    /// </para>
+    /// </summary>
+    private async Task<IReadOnlyList<EpgProgram>> WithHistoryAsync(
+        CatchupItemRef reference,
+        int days,
+        IReadOnlyList<EpgProgram> fresh,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!LiveTvService.BuildProviderFingerprints(Plugin.Instance.Configuration).TryGetValue(reference.ProviderIndex, out var providerKey))
+            {
+                return fresh;
+            }
+
+            var pull = new CatchupHistoryPull(
+                providerKey,
+                reference.StreamId,
+                days,
+                fresh.Select(CatchupHistoryStore.FromEpg).ToList());
+            var merged = await _liveTvService.CatchupHistory.RecordAndLoadAsync(pull, now, cancellationToken).ConfigureAwait(false);
+            return merged.Select(CatchupHistoryStore.ToEpg).ToList();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Catch-up history unavailable for channel {StreamId}; showing the provider's guide only", reference.StreamId);
+            return fresh;
+        }
     }
 }
