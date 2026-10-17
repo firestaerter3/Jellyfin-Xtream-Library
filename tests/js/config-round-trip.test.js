@@ -325,3 +325,18 @@ test('the delete question names the saved provider and folder, and what is lost'
     assert.match(message, /in \/media\/lib1\/Series\?/);
     assert.match(message, /not saved/);
 });
+
+test('the duplicate tuner warning shows only with the native tuner chosen', async () => {
+    const { cfg, page } = await roundTrip(fixture());
+    cfg.m3uTunerOnPluginPlaylist = true;
+    cfg.updateTunerHint();
+    assert.strictEqual(page.elements.duplicateTunerWarning.style.display, '');
+
+    cfg.chooseTuner('m3u');
+    assert.strictEqual(page.elements.duplicateTunerWarning.style.display, 'none');
+
+    cfg.chooseTuner('native');
+    cfg.m3uTunerOnPluginPlaylist = false;
+    cfg.updateTunerHint();
+    assert.strictEqual(page.elements.duplicateTunerWarning.style.display, 'none');
+});

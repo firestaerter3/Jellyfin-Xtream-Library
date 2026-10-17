@@ -979,6 +979,11 @@
                                 <div class="fieldDescription" id="tunerChoiceWarning" style="display: none; margin-top: 8px; color: #ff6b6b;">
                                     The M3U tuner reads the playlist, so <strong>Publish Playlists</strong> under Setup URLs has to be on.
                                 </div>
+                                <div class="fieldDescription" id="duplicateTunerWarning" style="display: none; margin-top: 8px; color: #ff6b6b;">
+                                    Jellyfin also has an <strong>M3U Tuner</strong> reading this plugin's playlist, so every
+                                    channel appears twice. Remove that tuner under Dashboard &rarr; Live TV &rarr; Tuner Devices,
+                                    or choose <strong>My own M3U tuner</strong> here.
+                                </div>
                                 <!-- Holds EnableNativeTuner; the two choices above set it. -->
                                 <div style="display: none;">
                                     <input is="emby-checkbox" type="checkbox" id="chkEnableNativeTuner" name="EnableNativeTuner" />

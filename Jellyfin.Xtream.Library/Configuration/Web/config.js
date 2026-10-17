@@ -393,6 +393,7 @@ var XtreamLibraryConfig = (function () {
             self.updateLiveTvVisibility();
             self.updateCatchupVisibility();
             self.showTunerChoice();
+            self.checkDuplicateTuner();
             self.updateEmptyState();
 
             // Update Live TV URLs
@@ -2078,6 +2079,31 @@ var XtreamLibraryConfig = (function () {
             var publish = document.getElementById('chkPublishLiveTvPlaylists').checked;
             warning.style.display = (!native && !publish) ? '' : 'none';
         }
+        var duplicate = document.getElementById('duplicateTunerWarning');
+        if (duplicate) {
+            duplicate.style.display = (native && this.m3uTunerOnPluginPlaylist) ? '' : 'none';
+        }
+    },
+
+    // Asks the server whether Jellyfin also has an M3U tuner reading this plugin's playlist. With
+    // the native tuner chosen as well, every channel appears twice. A failed check shows nothing.
+    m3uTunerOnPluginPlaylist: false,
+
+    checkDuplicateTuner: function () {
+        var self = this;
+        fetch(ApiClient.getUrl('XtreamLibrary/LiveTv/TunerCheck'), {
+            method: 'GET',
+            headers: {
+                'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
+            }
+        }).then(function (r) {
+            return r.ok ? r.json() : null;
+        }).then(function (data) {
+            self.m3uTunerOnPluginPlaylist = !!(data && data.M3uTunerOnPluginPlaylist);
+            self.updateTunerHint();
+        }).catch(function () {
+            // Leave the warning hidden; the check is advice, not a requirement.
+        });
     },
 
     hasProvider: function () {
