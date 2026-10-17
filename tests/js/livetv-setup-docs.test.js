@@ -53,11 +53,11 @@ test('Native Tuner description says the plugin lists itself under Tuner Devices'
     // both are needed, and that a second entry added by hand is not.
     assert.match(
         CONFIG_HTML,
-        /Enable Live TV<\/strong>\s*both on, the plugin adds itself under Dashboard.*Tuner Devices/is,
+        /With this and <strong>Enable Live TV<\/strong> on, the\s*plugin lists itself under Dashboard.*Tuner Devices/is,
         'expected the help text to say the plugin adds its own tuner entry when both checkboxes are on');
     assert.match(
         CONFIG_HTML,
-        /Add Tuner.*do\s*<strong>\s*not\s*<\/strong>\s*add a second one by hand/is,
+        /do not add a second one by hand/is,
         'expected a warning against adding a second Xtream Library entry by hand');
 });
 
@@ -65,8 +65,8 @@ test('Setup URLs section explains the three URLs go in three different places', 
     // M3U -> Add Tuner
     assert.match(
         CONFIG_HTML,
-        /<strong>M3U Playlist URL<\/strong>.*Add Tuner Device.*M3U Tuner/is,
-        'M3U URL must point users to the M3U Tuner type under Add Tuner Device');
+        /<strong>M3U Playlist URL<\/strong>.*Tuner Devices.*M3U Tuner/is,
+        'M3U URL must point users to the M3U Tuner type under Tuner Devices');
     // EPG -> TV Guide Data Providers
     assert.match(
         CONFIG_HTML,
@@ -75,7 +75,7 @@ test('Setup URLs section explains the three URLs go in three different places', 
     // Catch-up -> not Jellyfin
     assert.match(
         CONFIG_HTML,
-        /<strong>Catch-up M3U URL<\/strong>.*not consumed by Jellyfin itself/is,
+        /<strong>Catch-up M3U URL<\/strong>.*Jellyfin does not use it/is,
         'Catch-up URL must say Jellyfin has no catch-up field');
 });
 

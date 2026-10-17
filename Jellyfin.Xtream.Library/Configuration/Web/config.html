@@ -239,10 +239,11 @@
                     <!-- Tab Navigation -->
                     <div class="xtream-tabs" role="tablist">
                         <button type="button" class="xtream-tab active" data-tab="dashboard" role="tab" aria-selected="true" aria-controls="tab-dashboard">Dashboard</button>
-                        <button type="button" class="xtream-tab" data-tab="general" role="tab" aria-selected="false" aria-controls="tab-general">General</button>
+                        <button type="button" class="xtream-tab" data-tab="provider" role="tab" aria-selected="false" aria-controls="tab-provider">Provider</button>
                         <button type="button" class="xtream-tab" data-tab="movies" role="tab" aria-selected="false" aria-controls="tab-movies">Movies</button>
                         <button type="button" class="xtream-tab" data-tab="series" role="tab" aria-selected="false" aria-controls="tab-series">Series</button>
                         <button type="button" class="xtream-tab" data-tab="livetv" role="tab" aria-selected="false" aria-controls="tab-livetv">Live TV</button>
+                        <button type="button" class="xtream-tab" data-tab="general" role="tab" aria-selected="false" aria-controls="tab-general">General</button>
                     </div>
 
                     <!-- Dashboard Tab -->
@@ -300,54 +301,10 @@
                         </div>
                     </div>
 
-                    <!-- General Tab -->
+                    <!-- General Tab: settings shared by every provider -->
                     <div id="tab-general" class="xtream-tab-content" role="tabpanel" aria-labelledby="general">
                         <div class="verticalSection">
-                            <h3 class="sectionTitle">Provider Credentials</h3>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtName">Name</label>
-                                <input is="emby-input" type="text" id="txtName" name="Name"
-                                       placeholder="Provider 1" />
-                                <div class="fieldDescription">
-                                    What this provider is called in the dropdown at the top of the page, so you can
-                                    tell several accounts apart. Leave it empty and the dropdown falls back to the
-                                    provider's position in the list.
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtBaseUrl">Base URL</label>
-                                <input is="emby-input" type="text" id="txtBaseUrl" name="BaseUrl"
-                                       placeholder="http://provider.com:8000" required />
-                                <div class="fieldDescription">
-                                    The base URL of your Xtream provider (including protocol and port, no trailing slash).
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtUsername">Username</label>
-                                <input is="emby-input" type="text" id="txtUsername" name="Username" required />
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtPassword">Password</label>
-                                <input is="emby-input" type="password" id="txtPassword" name="Password" required />
-                            </div>
-                            <div>
-                                <button is="emby-button" type="button" id="btnTestConnection" class="raised button-submit">
-                                    <span>Test Connection</span>
-                                </button>
-                                <span id="connectionStatus" style="margin-left: 10px;"></span>
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Library Settings</h3>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtLibraryPath">Library Path</label>
-                                <input is="emby-input" type="text" id="txtLibraryPath" name="LibraryPath"
-                                       placeholder="/config/xtream-library" required />
-                                <div class="fieldDescription">
-                                    Path where STRM files will be created. Use /config/xtream-library for Docker setups.
-                                </div>
-                            </div>
+                            <h3 class="sectionTitle">Schedule</h3>
                             <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="selSyncScheduleType">Sync Schedule</label>
                                 <select is="emby-select" id="selSyncScheduleType" name="SyncScheduleType">
@@ -407,33 +364,10 @@
                                     Time of day to run the sync (24-hour format, server timezone).
                                 </div>
                             </div>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input is="emby-checkbox" type="checkbox" id="chkTriggerScan" name="TriggerLibraryScan" />
-                                    <span>Trigger Library Scan After Sync</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">
-                                    Trigger a full Jellyfin library scan after sync. WARNING: With large libraries (10K+ items), this can consume excessive memory and cause instability. Jellyfin's file monitor already detects new/changed STRM files automatically, so this is usually unnecessary.
-                                </div>
-                            </div>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input is="emby-checkbox" type="checkbox" id="chkCleanupOrphans" name="CleanupOrphans" />
-                                    <span>Cleanup Orphaned Files</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">
-                                    Remove STRM files for content that no longer exists on the provider.
-                                </div>
-                            </div>
-                            <div id="orphanSafetyThresholdSettings" class="inputContainer" style="display: none;">
-                                <label class="inputLabel inputLabelUnfocused" for="txtOrphanSafetyThreshold">Orphan Safety Threshold (%)</label>
-                                <input is="emby-input" type="number" id="txtOrphanSafetyThreshold" name="OrphanSafetyThreshold"
-                                       min="0" max="100" step="5" />
-                                <div class="fieldDescription">
-                                    Skip orphan cleanup if more than this percentage of existing content would be
-                                    deleted, as a protection against provider glitches (0-100%). Default: 20%.
-                                </div>
-                            </div>
+                        </div>
+
+                        <div class="verticalSection">
+                            <h3 class="sectionTitle">Metadata</h3>
                             <div class="checkboxContainer checkboxContainer-withDescription">
                                 <label class="emby-checkbox-label">
                                     <input is="emby-checkbox" type="checkbox" id="chkEnableMetadataLookup" name="EnableMetadataLookup" />
@@ -444,38 +378,11 @@
                                     Requires metadata plugins (TMDb, TVDb) to be installed and configured in Jellyfin.
                                 </div>
                             </div>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input is="emby-checkbox" type="checkbox" id="chkFallbackToYearlessLookup" name="FallbackToYearlessLookup" />
-                                    <span>Fallback to Year-Free Lookup</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">
-                                    If a year-qualified metadata lookup returns no result, retry without the year.
-                                    For movies it also retries with the year of the provider's release date and with the
-                                    provider's original title, when the provider sends them.
-                                    Enable this if your provider has many incorrect years in stream names. Note: weakens
-                                    false-positive protection for ambiguous titles.
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtCustomTitleRemoveTerms">Custom Title Removal Terms (one per line)</label>
-                                <textarea is="emby-textarea" id="txtCustomTitleRemoveTerms" rows="4"
-                                    placeholder="(DE-)&#10;[Multi-Sub]&#10;FHD" style="width: 100%; font-family: monospace;"></textarea>
-                                <div class="fieldDescription">
-                                    Additional terms to remove from movie and series titles. One term per line.
-                                    Applied before built-in title cleaning (language tags, codec info, quality tags, etc.).
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtRegexRemovalPatterns">Regex Removal Patterns (file names only, one per line)</label>
-                                <textarea is="emby-textarea" id="txtRegexRemovalPatterns" rows="4"
-                                    placeholder="\s*\[tmdbid-\d+\]&#10;\s*\[tvdbid-\d+\]" style="width: 100%; font-family: monospace;"></textarea>
-                                <div class="fieldDescription">
-                                    .NET regex patterns to remove from STRM <strong>file names only</strong>. Folder names are left
-                                    untouched, so tags like <code>[tmdbid-N]</code> remain available for Jellyfin's metadata
-                                    identification. Useful for cleaning file names for tools like OpenSubtitles. One pattern per
-                                    line. Invalid patterns are skipped with a warning and do not abort the sync.
-                                </div>
+                            <div style="margin-top: 10px;">
+                                <button is="emby-button" type="button" id="btnClearMetadataCache" class="raised">
+                                    <span>Clear Metadata Cache</span>
+                                </button>
+                                <span id="metadataCacheStatus" style="margin-left: 10px;"></span>
                             </div>
                         </div>
 
@@ -490,206 +397,6 @@
                                     Receive pre-release versions of Xtream Library. Enabling this registers the beta plugin repository with Jellyfin; updates appear under Dashboard &rarr; Plugins &rarr; Catalog like any other plugin. Disabling removes the entry. Beta releases may contain bugs or incomplete features &mdash; opting in is how you help catch regressions before they reach the stable channel.
                                 </div>
                             </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <div class="advancedToggle" id="btnAdvancedToggle">
-                                <h3 class="sectionTitle">Advanced Settings <span id="advancedArrow">&#9656;</span></h3>
-                            </div>
-                            <div id="advancedSettings" style="display: none;">
-
-                                <h4 style="margin-top: 5px; opacity: 0.8;">Metadata</h4>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="txtUserAgent">Custom User-Agent (Optional)</label>
-                                    <input is="emby-input" type="text" id="txtUserAgent" name="UserAgent" />
-                                    <div class="fieldDescription">
-                                        Optional custom User-Agent string for API requests.
-                                    </div>
-                                </div>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="txtMetadataParallelism">Metadata Lookup Parallelism</label>
-                                    <input is="emby-input" type="number" id="txtMetadataParallelism" name="MetadataParallelism"
-                                           min="1" max="20" step="1" />
-                                    <div class="fieldDescription">
-                                        Number of parallel metadata lookups (1-20). Higher values speed up first sync but may
-                                        trigger API rate limits on TMDb/TVDb. Default: 3.
-                                    </div>
-                                </div>
-                                <div class="checkboxContainer checkboxContainer-withDescription">
-                                    <label class="emby-checkbox-label">
-                                        <input is="emby-checkbox" type="checkbox" id="chkDownloadArtworkForUnmatched" name="DownloadArtworkForUnmatched" />
-                                        <span>Download Artwork for Unmatched Content</span>
-                                    </label>
-                                    <div class="fieldDescription checkboxFieldDescription">
-                                        Download posters and fanart from the provider for content that couldn't be matched to TMDb/TVDb.
-                                        Ensures unmatched movies and series still have artwork in Jellyfin.
-                                    </div>
-                                </div>
-                                <div style="margin-top: 10px;">
-                                    <button is="emby-button" type="button" id="btnClearMetadataCache" class="raised">
-                                        <span>Clear Metadata Cache</span>
-                                    </button>
-                                    <span id="metadataCacheStatus" style="margin-left: 10px;"></span>
-                                </div>
-
-                                <h4 style="margin-top: 20px; opacity: 0.8;">Performance &amp; Rate Limiting</h4>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="txtSyncParallelism">Sync Parallelism</label>
-                                    <input is="emby-input" type="number" id="txtSyncParallelism" name="SyncParallelism"
-                                           min="1" max="10" step="1" />
-                                    <div class="fieldDescription">
-                                        Number of parallel API requests during sync (1-10). Lower values reduce rate limiting (429 errors)
-                                        from providers. Default: 10.
-                                    </div>
-                                </div>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="txtCategoryBatchSize">Category Batch Size</label>
-                                    <input is="emby-input" type="number" id="txtCategoryBatchSize" name="CategoryBatchSize"
-                                           min="0" max="100" step="1" />
-                                    <div class="fieldDescription">
-                                        Number of categories to process per batch during sync (1-100). Lower values reduce memory
-                                        usage for large libraries. Set to 0 to disable batching. Default: 25.
-                                    </div>
-                                </div>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="txtRequestDelayMs">Request Delay (ms)</label>
-                                    <input is="emby-input" type="number" id="txtRequestDelayMs" name="RequestDelayMs"
-                                           min="0" max="5000" step="50" />
-                                    <div class="fieldDescription">
-                                        Minimum gap in milliseconds between requests to your provider (0-5000), shared by all
-                                        parallel workers: 50 means at most 20 requests a second, whatever Sync Parallelism is set to.
-                                        If the provider answers 429 (too many requests), every request to it waits out the retry delay,
-                                        not only the one that was refused. Default: 50ms. Set to 0 for no gap.
-                                        <br /><br />
-                                        Some providers never answer 429 and simply stop accepting connections after a few hundred
-                                        requests in a few minutes; the sync then shows timeouts or 504 errors instead. If that
-                                        happens on your first sync, raise this to 200 or more. 200 ms has been confirmed to keep
-                                        such a provider happy through a full sync of a large library.
-                                    </div>
-                                </div>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="txtMaxRetries">Max Retries for Rate Limits</label>
-                                    <input is="emby-input" type="number" id="txtMaxRetries" name="MaxRetries"
-                                           min="0" max="10" step="1" />
-                                    <div class="fieldDescription">
-                                        Maximum number of retries when rate limited (429 response). Each retry waits longer
-                                        (exponential backoff). Default: 3.
-                                    </div>
-                                </div>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="txtRetryDelayMs">Initial Retry Delay (ms)</label>
-                                    <input is="emby-input" type="number" id="txtRetryDelayMs" name="RetryDelayMs"
-                                           min="100" max="30000" step="100" />
-                                    <div class="fieldDescription">
-                                        Initial delay after a 429 response before retrying (100-30000ms). Each subsequent retry
-                                        doubles this delay. Default: 1000ms (1 second).
-                                    </div>
-                                </div>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="txtTimeoutSeconds">Request Timeout (seconds)</label>
-                                    <input is="emby-input" type="number" id="txtTimeoutSeconds" name="TimeoutSeconds"
-                                           min="10" max="3600" step="10" />
-                                    <div class="fieldDescription">
-                                        How long to wait for a single API response (10-3600s). Providers with hundreds of
-                                        thousands of entries can need several minutes for one catalog call. Raise this if you see
-                                        timeouts in the log while fetching channels, movies or series. Applies per attempt, so a
-                                        retried request can take a multiple of this in total. Default: 300s (5 minutes).
-                                    </div>
-                                </div>
-
-                                <h4 style="margin-top: 20px; opacity: 0.8;">Incremental Sync</h4>
-                                <div class="checkboxContainer checkboxContainer-withDescription">
-                                    <label class="emby-checkbox-label">
-                                        <input is="emby-checkbox" type="checkbox" id="chkEnableIncrementalSync" name="EnableIncrementalSync" />
-                                        <span>Enable Incremental Sync</span>
-                                    </label>
-                                    <div class="fieldDescription checkboxFieldDescription">
-                                        Only process new, modified, and removed content after the first full sync.
-                                        Dramatically reduces sync time and API load for subsequent syncs.
-                                    </div>
-                                </div>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="txtFullSyncIntervalDays">Full Sync Interval (days)</label>
-                                    <input is="emby-input" type="number" id="txtFullSyncIntervalDays" name="FullSyncIntervalDays"
-                                           min="1" max="30" step="1" />
-                                    <div class="fieldDescription">
-                                        Force a full sync every N days to ensure consistency (1-30). Default: 7.
-                                    </div>
-                                </div>
-
-                                <h4 style="margin-top: 20px; opacity: 0.8;">Experimental</h4>
-                                <div class="checkboxContainer checkboxContainer-withDescription">
-                                    <label class="emby-checkbox-label">
-                                        <input is="emby-checkbox" type="checkbox" id="chkEnableProactiveMediaInfo" name="EnableProactiveMediaInfo" />
-                                        <span>Proactive Media Info</span>
-                                    </label>
-                                    <div class="fieldDescription checkboxFieldDescription">
-                                        Fetch media info (resolution, codec, audio) during sync and write NFO sidecar files.
-                                        Shows media details in Jellyfin without first-time playback. Increases sync time.
-                                    </div>
-                                </div>
-
-                                <h4 style="margin-top: 20px; opacity: 0.8;">Dispatcharr</h4>
-                                <div class="checkboxContainer checkboxContainer-withDescription">
-                                    <label class="emby-checkbox-label">
-                                        <input is="emby-checkbox" type="checkbox" id="chkEnableDispatcharrMode" name="EnableDispatcharrMode" />
-                                        <span>Dispatcharr Mode</span>
-                                    </label>
-                                    <div class="fieldDescription checkboxFieldDescription">
-                                        Discovers all stream variants per movie via Dispatcharr's REST API.
-                                        Creates multiple STRM files so Jellyfin can show real codec, resolution, and audio info
-                                        in the version picker. Requires a Django admin account on your Dispatcharr instance.
-                                    </div>
-                                </div>
-                                <div id="dispatcharrSettings" style="display: none;">
-                                    <div class="inputContainer">
-                                        <label class="inputLabel inputLabelUnfocused" for="txtDispatcharrBaseUrl">Dispatcharr URL</label>
-                                        <input is="emby-input" type="text" id="txtDispatcharrBaseUrl" name="DispatcharrBaseUrl"
-                                            placeholder="http://dispatcharr-host:9191" />
-                                        <div class="fieldDescription">
-                                            Leave empty if Dispatcharr answers on the same address as the Xtream URL above.
-                                            Fill this in when it runs on a different host, port or path, otherwise the login
-                                            is sent to the Xtream server and fails with "JWT login failed with status NotFound".
-                                        </div>
-                                    </div>
-                                    <div class="inputContainer">
-                                        <label class="inputLabel inputLabelUnfocused" for="txtDispatcharrApiUser">API Username</label>
-                                        <input is="emby-input" type="text" id="txtDispatcharrApiUser" name="DispatcharrApiUser" />
-                                        <div class="fieldDescription">
-                                            Django admin username for the Dispatcharr REST API.
-                                        </div>
-                                    </div>
-                                    <div class="inputContainer">
-                                        <label class="inputLabel inputLabelUnfocused" for="txtDispatcharrApiPass">API Password</label>
-                                        <input is="emby-input" type="password" id="txtDispatcharrApiPass" name="DispatcharrApiPass" />
-                                        <div class="fieldDescription">
-                                            Django admin password for the Dispatcharr REST API.
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <button is="emby-button" type="button" id="btnTestDispatcharr" class="raised button-submit">
-                                            <span>Test Dispatcharr</span>
-                                        </button>
-                                        <span id="dispatcharrStatus" style="margin-left: 10px;"></span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Danger Zone</h3>
-                            <div class="fieldDescription" style="color: #ff6b6b; margin-bottom: 10px;">
-                                Warning: This will permanently delete synced content. Use before re-syncing with new metadata lookup settings.
-                            </div>
-                            <div>
-                                <button is="emby-button" type="button" id="btnCleanMovies" class="raised" style="background: #c0392b;">
-                                    <span>Delete Movies Library</span>
-                                </button>
-                                <button is="emby-button" type="button" id="btnCleanSeries" class="raised" style="background: #c0392b; margin-left: 10px;">
-                                    <span>Delete Series Library</span>
-                                </button>
-                            </div>
-                            <div id="cleanLibrariesStatus" style="margin-top: 8px;"></div>
                         </div>
 
                         <div class="verticalSection">
@@ -721,6 +428,312 @@
                                 <strong>Failed Items:</strong>
                                 <div id="failedItemsContent"></div>
                             </div>
+                        </div>
+
+                        <div class="verticalSection">
+                            <details>
+                                <summary class="sectionTitle" style="cursor: pointer;">Advanced</summary>
+                                    <div class="inputContainer">
+                                        <label class="inputLabel inputLabelUnfocused" for="txtMetadataParallelism">Metadata Lookup Parallelism</label>
+                                        <input is="emby-input" type="number" id="txtMetadataParallelism" name="MetadataParallelism"
+                                               min="1" max="20" step="1" />
+                                        <div class="fieldDescription">
+                                            Number of parallel metadata lookups (1-20). Higher values speed up first sync but may
+                                            trigger API rate limits on TMDb/TVDb. Default: 3.
+                                        </div>
+                                    </div>
+                                    <div class="checkboxContainer checkboxContainer-withDescription">
+                                        <label class="emby-checkbox-label">
+                                            <input is="emby-checkbox" type="checkbox" id="chkTriggerScan" name="TriggerLibraryScan" />
+                                            <span>Trigger Library Scan After Sync</span>
+                                        </label>
+                                        <div class="fieldDescription checkboxFieldDescription">
+                                            Only needed when real-time monitoring is off for your Jellyfin libraries, which is common on network shares. Otherwise Jellyfin picks up new files by itself. A full scan is heavy on large libraries.
+                                        </div>
+                                    </div>
+                            </details>
+                        </div>
+                    </div>
+
+                    <!-- Provider Tab: settings for the provider picked above -->
+                    <div id="tab-provider" class="xtream-tab-content" role="tabpanel" aria-labelledby="provider">
+                        <div class="verticalSection">
+                            <h3 class="sectionTitle">Provider Credentials</h3>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtName">Name</label>
+                                <input is="emby-input" type="text" id="txtName" name="Name"
+                                       placeholder="Provider 1" />
+                                <div class="fieldDescription">
+                                    What this provider is called in the dropdown at the top of the page, so you can
+                                    tell several accounts apart. Leave it empty and the dropdown falls back to the
+                                    provider's position in the list.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtBaseUrl">Base URL</label>
+                                <input is="emby-input" type="text" id="txtBaseUrl" name="BaseUrl"
+                                       placeholder="http://provider.com:8000" required />
+                                <div class="fieldDescription">
+                                    The base URL of your Xtream provider (including protocol and port, no trailing slash).
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtUsername">Username</label>
+                                <input is="emby-input" type="text" id="txtUsername" name="Username" required />
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtPassword">Password</label>
+                                <input is="emby-input" type="password" id="txtPassword" name="Password" required />
+                            </div>
+                            <div>
+                                <button is="emby-button" type="button" id="btnTestConnection" class="raised button-submit">
+                                    <span>Test Connection</span>
+                                </button>
+                                <span id="connectionStatus" style="margin-left: 10px;"></span>
+                            </div>
+                        </div>
+
+                        <div class="verticalSection">
+                            <h3 class="sectionTitle">Library</h3>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtLibraryPath">Library Path</label>
+                                <input is="emby-input" type="text" id="txtLibraryPath" name="LibraryPath"
+                                       placeholder="/config/xtream-library" required />
+                                <div class="fieldDescription">
+                                    Path where STRM files will be created. Use /config/xtream-library for Docker setups.
+                                    After the first sync, add a Movies library on <code>&lt;this path&gt;/Movies</code> and a
+                                    Shows library on <code>&lt;this path&gt;/Series</code> in Jellyfin.
+                                </div>
+                            </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkCleanupOrphans" name="CleanupOrphans" />
+                                    <span>Cleanup Orphaned Files</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Remove STRM files for content that no longer exists on the provider.
+                                </div>
+                            </div>
+                            <div id="orphanSafetyThresholdSettings" class="inputContainer" style="display: none;">
+                                <label class="inputLabel inputLabelUnfocused" for="txtOrphanSafetyThreshold">Orphan Safety Threshold (%)</label>
+                                <input is="emby-input" type="number" id="txtOrphanSafetyThreshold" name="OrphanSafetyThreshold"
+                                       min="0" max="100" step="5" />
+                                <div class="fieldDescription">
+                                    Skip orphan cleanup if more than this percentage of existing content would be
+                                    deleted, as a protection against provider glitches (0-100%). Default: 20%.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="verticalSection">
+                            <h3 class="sectionTitle">Title Cleaning and Matching</h3>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtCustomTitleRemoveTerms">Custom Title Removal Terms (one per line)</label>
+                                <textarea is="emby-textarea" id="txtCustomTitleRemoveTerms" rows="4"
+                                    placeholder="(DE-)&#10;[Multi-Sub]&#10;FHD" style="width: 100%; font-family: monospace;"></textarea>
+                                <div class="fieldDescription">
+                                    Additional terms to remove from movie and series titles. One term per line.
+                                    Applied before built-in title cleaning (language tags, codec info, quality tags, etc.).
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtRegexRemovalPatterns">Regex Removal Patterns (file names only, one per line)</label>
+                                <textarea is="emby-textarea" id="txtRegexRemovalPatterns" rows="4"
+                                    placeholder="\s*\[tmdbid-\d+\]&#10;\s*\[tvdbid-\d+\]" style="width: 100%; font-family: monospace;"></textarea>
+                                <div class="fieldDescription">
+                                    .NET regex patterns to remove from STRM <strong>file names only</strong>. Folder names are left
+                                    untouched, so tags like <code>[tmdbid-N]</code> remain available for Jellyfin's metadata
+                                    identification. Useful for cleaning file names for tools like OpenSubtitles. One pattern per
+                                    line. Invalid patterns are skipped with a warning and do not abort the sync.
+                                </div>
+                            </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkFallbackToYearlessLookup" name="FallbackToYearlessLookup" />
+                                    <span>Fallback to Year-Free Lookup</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    If a year-qualified metadata lookup returns no result, retry without the year.
+                                    For movies it also retries with the year of the provider's release date and with the
+                                    provider's original title, when the provider sends them.
+                                    Enable this if your provider has many incorrect years in stream names. Note: weakens
+                                    false-positive protection for ambiguous titles.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="verticalSection">
+                            <h3 class="sectionTitle">Dispatcharr</h3>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkEnableDispatcharrMode" name="EnableDispatcharrMode" />
+                                    <span>Dispatcharr Mode</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Turn on if your provider URL is a Dispatcharr server. Each movie then gets every
+                                    stream Dispatcharr has for it, so Jellyfin can offer them as versions. Needs an
+                                    admin login for Dispatcharr.
+                                </div>
+                            </div>
+                            <div id="dispatcharrSettings" style="display: none;">
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtDispatcharrBaseUrl">Dispatcharr URL</label>
+                                    <input is="emby-input" type="text" id="txtDispatcharrBaseUrl" name="DispatcharrBaseUrl"
+                                        placeholder="http://dispatcharr-host:9191" />
+                                    <div class="fieldDescription">
+                                        Leave empty if Dispatcharr answers on the same address as the Base URL above.
+                                        Fill this in if it runs on a different address.
+                                    </div>
+                                </div>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtDispatcharrApiUser">API Username</label>
+                                    <input is="emby-input" type="text" id="txtDispatcharrApiUser" name="DispatcharrApiUser" />
+                                    <div class="fieldDescription">
+                                        An admin user on your Dispatcharr server.
+                                    </div>
+                                </div>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtDispatcharrApiPass">API Password</label>
+                                    <input is="emby-input" type="password" id="txtDispatcharrApiPass" name="DispatcharrApiPass" />
+                                    <div class="fieldDescription">
+                                        The password of that user.
+                                    </div>
+                                </div>
+                                <div>
+                                    <button is="emby-button" type="button" id="btnTestDispatcharr" class="raised button-submit">
+                                        <span>Test Dispatcharr</span>
+                                    </button>
+                                    <span id="dispatcharrStatus" style="margin-left: 10px;"></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="verticalSection">
+                            <details>
+                                <summary class="sectionTitle" style="cursor: pointer;">Provider tuning</summary>
+                                <div class="fieldDescription" style="margin: 6px 0 12px;">Leave these at their defaults unless something below describes your problem.</div>
+                                    <div class="inputContainer">
+                                        <label class="inputLabel inputLabelUnfocused" for="txtUserAgent">Custom User-Agent (Optional)</label>
+                                        <input is="emby-input" type="text" id="txtUserAgent" name="UserAgent" />
+                                        <div class="fieldDescription">
+                                            Optional custom User-Agent string for API requests.
+                                        </div>
+                                    </div>
+                                    <div class="checkboxContainer checkboxContainer-withDescription">
+                                        <label class="emby-checkbox-label">
+                                            <input is="emby-checkbox" type="checkbox" id="chkDownloadArtworkForUnmatched" name="DownloadArtworkForUnmatched" />
+                                            <span>Download Artwork for Unmatched Content</span>
+                                        </label>
+                                        <div class="fieldDescription checkboxFieldDescription">
+                                            Download posters and fanart from the provider for content that couldn't be matched to TMDb/TVDb.
+                                            Ensures unmatched movies and series still have artwork in Jellyfin.
+                                        </div>
+                                    </div>
+                                    <div class="inputContainer">
+                                        <label class="inputLabel inputLabelUnfocused" for="txtSyncParallelism">Sync Parallelism</label>
+                                        <input is="emby-input" type="number" id="txtSyncParallelism" name="SyncParallelism"
+                                               min="1" max="10" step="1" />
+                                        <div class="fieldDescription">
+                                            Number of parallel API requests during sync (1-10). Lower values reduce rate limiting (429 errors)
+                                            from providers. Default: 10.
+                                        </div>
+                                    </div>
+                                    <div class="inputContainer">
+                                        <label class="inputLabel inputLabelUnfocused" for="txtCategoryBatchSize">Category Batch Size</label>
+                                        <input is="emby-input" type="number" id="txtCategoryBatchSize" name="CategoryBatchSize"
+                                               min="0" max="100" step="1" />
+                                        <div class="fieldDescription">
+                                            Number of categories to process per batch during sync (1-100). Lower values reduce memory
+                                            usage for large libraries. Set to 0 to disable batching. Default: 25.
+                                        </div>
+                                    </div>
+                                    <div class="inputContainer">
+                                        <label class="inputLabel inputLabelUnfocused" for="txtRequestDelayMs">Request Delay (ms)</label>
+                                        <input is="emby-input" type="number" id="txtRequestDelayMs" name="RequestDelayMs"
+                                               min="0" max="5000" step="50" />
+                                        <div class="fieldDescription">
+                                            Minimum gap between requests to your provider (0-5000 ms), shared by all parallel
+                                            workers: 50 means at most 20 requests a second. Default: 50 ms.
+                                            If your provider starts refusing or timing out during the first sync, raise this to 200 or more.
+                                        </div>
+                                    </div>
+                                    <div class="inputContainer">
+                                        <label class="inputLabel inputLabelUnfocused" for="txtMaxRetries">Max Retries for Rate Limits</label>
+                                        <input is="emby-input" type="number" id="txtMaxRetries" name="MaxRetries"
+                                               min="0" max="10" step="1" />
+                                        <div class="fieldDescription">
+                                            Maximum number of retries when rate limited (429 response). Each retry waits longer
+                                            (exponential backoff). Default: 3.
+                                        </div>
+                                    </div>
+                                    <div class="inputContainer">
+                                        <label class="inputLabel inputLabelUnfocused" for="txtRetryDelayMs">Initial Retry Delay (ms)</label>
+                                        <input is="emby-input" type="number" id="txtRetryDelayMs" name="RetryDelayMs"
+                                               min="100" max="30000" step="100" />
+                                        <div class="fieldDescription">
+                                            Initial delay after a 429 response before retrying (100-30000ms). Each subsequent retry
+                                            doubles this delay. Default: 1000ms (1 second).
+                                        </div>
+                                    </div>
+                                    <div class="inputContainer">
+                                        <label class="inputLabel inputLabelUnfocused" for="txtTimeoutSeconds">Request Timeout (seconds)</label>
+                                        <input is="emby-input" type="number" id="txtTimeoutSeconds" name="TimeoutSeconds"
+                                               min="10" max="3600" step="10" />
+                                        <div class="fieldDescription">
+                                            How long to wait for a single API response (10-3600s). Providers with hundreds of
+                                            thousands of entries can need several minutes for one catalog call. Raise this if you see
+                                            timeouts in the log while fetching channels, movies or series. Applies per attempt, so a
+                                            retried request can take a multiple of this in total. Default: 300s (5 minutes).
+                                        </div>
+                                    </div>
+                                    <div class="inputContainer">
+                                        <label class="inputLabel inputLabelUnfocused" for="txtFullSyncIntervalDays">Full Sync Interval (days)</label>
+                                        <input is="emby-input" type="number" id="txtFullSyncIntervalDays" name="FullSyncIntervalDays"
+                                               min="1" max="30" step="1" />
+                                        <div class="fieldDescription">
+                                            Force a full sync every N days to ensure consistency (1-30). Default: 7.
+                                        </div>
+                                    </div>
+                                    <div class="checkboxContainer checkboxContainer-withDescription">
+                                        <label class="emby-checkbox-label">
+                                            <input is="emby-checkbox" type="checkbox" id="chkEnableProactiveMediaInfo" name="EnableProactiveMediaInfo" />
+                                            <span>Proactive Media Info</span>
+                                        </label>
+                                        <div class="fieldDescription checkboxFieldDescription">
+                                            Fetch media info (resolution, codec, audio) during sync and write NFO sidecar files.
+                                            Shows media details in Jellyfin without first-time playback. Increases sync time.
+                                        </div>
+                                    </div>
+                                <div style="display: none;">
+                                        <div class="checkboxContainer checkboxContainer-withDescription">
+                                            <label class="emby-checkbox-label">
+                                                <input is="emby-checkbox" type="checkbox" id="chkEnableIncrementalSync" name="EnableIncrementalSync" />
+                                                <span>Enable Incremental Sync</span>
+                                            </label>
+                                            <div class="fieldDescription checkboxFieldDescription">
+                                                Only process new, modified, and removed content after the first full sync.
+                                                Dramatically reduces sync time and API load for subsequent syncs.
+                                            </div>
+                                        </div>
+                                </div>
+                            </details>
+                        </div>
+
+                        <div class="verticalSection">
+                            <h3 class="sectionTitle">Danger Zone</h3>
+                            <div class="fieldDescription" style="color: #ff6b6b; margin-bottom: 10px;">
+                                Deletes this provider's synced movie or series files. The next sync writes them again,
+                                but Jellyfin sees them as new items: watched status, favourites and resume points are lost.
+                            </div>
+                            <div>
+                                <button is="emby-button" type="button" id="btnCleanMovies" class="raised" style="background: #c0392b;">
+                                    <span>Delete Movies Library</span>
+                                </button>
+                                <button is="emby-button" type="button" id="btnCleanSeries" class="raised" style="background: #c0392b; margin-left: 10px;">
+                                    <span>Delete Series Library</span>
+                                </button>
+                            </div>
+                            <div id="cleanLibrariesStatus" style="margin-top: 8px;"></div>
                         </div>
                     </div>
 
@@ -755,7 +768,7 @@
                                     the folders they are in: nothing on your disk is moved or renamed.
                                     <br />
                                     To group films that are already there, use Delete Movies Library in the Danger
-                                    Zone on the General tab and then run a sync. That rebuilds the movie library from
+                                    Zone on the Provider tab and then run a sync. That rebuilds the movie library from
                                     scratch with grouping on. Jellyfin sees the rebuilt films as new items, so watched
                                     status, favourites and resume points for your movies are lost. Your series files
                                     are not touched.
@@ -962,12 +975,14 @@
                                     <span>Enable Native Tuner (faster channel switching)</span>
                                 </label>
                                 <div class="fieldDescription checkboxFieldDescription">
-                                    Registers a custom tuner type that skips FFmpeg probing, cutting channel switch time roughly in half. Channels are published automatically when this checkbox is on.
-                                    <br><br>
-                                    With this checkbox and <strong>Enable Live TV</strong> both on, the plugin adds itself under Dashboard &rarr; Live TV &rarr; Tuner Devices as <strong>Xtream Library (added by the plugin)</strong>. Jellyfin only shows Live TV once a tuner is listed there. An Xtream Library entry also appears in the Add Tuner type dropdown: do <strong>not</strong> add a second one by hand, one is enough. Turning either checkbox off removes the plugin's entry again.<br><br>
-                                    <strong>Pick one tuner mode, not both.</strong> If you have also added the M3U Playlist URL below as a manual <strong>M3U Tuner</strong> (not HDHomeRun) under Dashboard &rarr; Live TV &rarr; Tuner Devices, every channel will appear twice in the Live TV Guide. Either disable this checkbox, or remove the manually-added M3U tuner from the Dashboard.
-                                    <br><br>
-                                    Trade-off: the native tuner currently forces transcoding while the manual M3U tuner remuxes. If your provider stream and client both support direct stream, the M3U path uses less CPU.
+                                    Hands channels to Jellyfin directly: faster channel switching, and no playlist with
+                                    your password has to be published. With this and <strong>Enable Live TV</strong> on, the
+                                    plugin lists itself under Dashboard &rarr; Live TV &rarr; Tuner Devices as
+                                    <strong>Xtream Library (added by the plugin)</strong>; do not add a second one by hand.
+                                    <br /><br />
+                                    Use either this or a manual <strong>M3U Tuner</strong> (not HDHomeRun) with the playlist URL below, not
+                                    both, or every channel appears twice. The native tuner transcodes; the M3U tuner can
+                                    stream without transcoding.
                                 </div>
                             </div>
                             <div class="checkboxContainer checkboxContainer-withDescription">
@@ -996,42 +1011,6 @@
                                 </label>
                                 <div class="fieldDescription checkboxFieldDescription">
                                     Include channels marked as adult content.
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Cache Settings</h3>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtM3UCacheMinutes">M3U Cache (minutes)</label>
-                                <input is="emby-input" type="number" id="txtM3UCacheMinutes" name="M3UCacheMinutes"
-                                       min="1" max="60" step="1" />
-                                <div class="fieldDescription">
-                                    How long to cache the M3U playlist (1-60 minutes).
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtEpgCacheMinutes">EPG Cache (minutes)</label>
-                                <input is="emby-input" type="number" id="txtEpgCacheMinutes" name="EpgCacheMinutes"
-                                       min="5" max="120" step="1" />
-                                <div class="fieldDescription">
-                                    How long to cache the EPG data (5-120 minutes).
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtEpgDaysToFetch">EPG Days to Fetch</label>
-                                <input is="emby-input" type="number" id="txtEpgDaysToFetch" name="EpgDaysToFetch"
-                                       min="1" max="7" step="1" />
-                                <div class="fieldDescription">
-                                    Number of days of EPG data to fetch (1-7).
-                                </div>
-                            </div>
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtEpgParallelism">EPG Parallelism</label>
-                                <input is="emby-input" type="number" id="txtEpgParallelism" name="EpgParallelism"
-                                       min="1" max="10" step="1" />
-                                <div class="fieldDescription">
-                                    Number of parallel EPG fetch requests (1-10). Higher = faster but more load on provider.
                                 </div>
                             </div>
                         </div>
@@ -1217,6 +1196,8 @@
                                     Set to 0 to leave such days empty.
                                 </div>
                             </div>
+                            <!-- Kept for its saved value; only for a provider that reports the wrong time. -->
+                            <div style="display: none;">
                             <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="txtCatchupTimeShiftMinutes">Catch-up Time Correction (minutes)</label>
                                 <input is="emby-input" type="number" id="txtCatchupTimeShiftMinutes" name="CatchupTimeShiftMinutes"
@@ -1228,30 +1209,23 @@
                                     -60 an hour earlier.
                                 </div>
                             </div>
+                            </div>
                         </div>
 
                         <div class="verticalSection">
                             <h3 class="sectionTitle">Setup URLs</h3>
                             <div class="fieldDescription">
-                                Each URL below belongs in a different place. Jellyfin does not have a single screen that takes all three.
-                                <br><br>
-                                <strong>M3U Playlist URL</strong>: Dashboard &rarr; Live TV &rarr; Tuner Devices &rarr; Add Tuner Device, type <strong>M3U Tuner</strong>. Use this when you want the remux path (no transcoding, less CPU, but slower channel switch than the native tuner above). Only served while <strong>Publish Playlists</strong> below is on.
-                                <br>
-                                <strong>EPG (XMLTV) URL</strong>: Dashboard &rarr; Live TV &rarr; TV Guide Data Providers &rarr; Add &rarr; XMLTV. This is a separate screen, not part of the tuner dialog.
-                                <br>
-                                <strong>Catch-up M3U URL</strong>: not consumed by Jellyfin itself. Jellyfin's Live TV has no catch-up / timeshift concept. This URL is for catch-up-aware IPTV clients (e.g. Tivimate, XC-VM clients), and is only served while <strong>Publish Playlists</strong> below is on; the main M3U above already carries the catch-up attributes (<code>catchup</code>, <code>catchup-days</code>, <code>catchup-source</code>) on each channel that supports archive, while <strong>Enable Catch-up</strong> is on. With Dispatcharr they are left out unless <strong>Put the catch-up template in the playlist</strong> above is on.
-                                <br><br>
-                                <strong>Do not also enable the Native Tuner option above</strong>. Adding the M3U URL here as a manual tuner while the native tuner is active causes every channel to appear twice in the Live TV Guide.
+                                <strong>M3U Playlist URL</strong>: for a manual tuner, under Dashboard &rarr; Live TV &rarr;
+                                Tuner Devices &rarr; Add, type <strong>M3U Tuner</strong>. Not needed with the native tuner.
+                                <br />
+                                <strong>EPG (XMLTV) URL</strong>: under Dashboard &rarr; Live TV &rarr; TV Guide Data Providers &rarr;
+                                Add &rarr; XMLTV.
+                                <br />
+                                <strong>Catch-up M3U URL</strong>: for catch-up apps such as TiviMate; Jellyfin does not use it.
                                 <br /><br />
-                                <strong style="color: #ff6b6b;">Treat these URLs like your Xtream password.</strong>
-                                They work without a Jellyfin login, because Jellyfin's own tuner and guide fetcher send no
-                                login when they call them. Xtream has no token or session form, so your username and password
-                                sit in every stream line of the playlist. Anyone who can reach one of these URLs has your
-                                provider account, no login needed, and the path is the same on every install of this plugin.
-                                <br /><br />
-                                If Jellyfin is reachable from the internet, restrict <code>/XtreamLibrary/</code> at your
-                                reverse proxy to the addresses that need it. The Native Tuner above avoids this entirely:
-                                it hands channels to Jellyfin internally and never publishes a playlist.
+                                <strong style="color: #ff6b6b;">Treat these URLs like your Xtream password.</strong> They work
+                                without a Jellyfin login, and the playlists carry your provider username and password. If
+                                Jellyfin is reachable from the internet, limit them with the list below or at your reverse proxy.
                             </div>
                             <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
                                 <label class="emby-checkbox-label">
@@ -1259,17 +1233,10 @@
                                     <span>Publish Playlists (M3U and Catch-up M3U)</span>
                                 </label>
                                 <div class="fieldDescription checkboxFieldDescription">
-                                    Serve the M3U Playlist and Catch-up M3U URLs below. Turn this on only if you use
-                                    Jellyfin's <strong>M3U Tuner</strong> or an external player such as TiviMate. The
-                                    Native Tuner does not need it, and neither does the guide: the EPG URL and channel
-                                    logos stay available either way. While it is off, both playlist URLs answer
-                                    404.
-                                    <br /><br />
-                                    Both playlists contain your Xtream username and password in every stream line.
-                                    With <strong>Dispatcharr mode</strong> on, channels Dispatcharr knows are served
-                                    through its own URLs instead, which carry no credentials, unless "Put the
-                                    catch-up template in the playlist" above is on: that template still contains your
-                                    password.
+                                    Serve the M3U Playlist and Catch-up M3U URLs. Needed for a manual M3U Tuner or an app
+                                    such as TiviMate; the native tuner and the guide work without it. While it is off,
+                                    both playlist URLs answer 404. With <strong>Dispatcharr mode</strong> on, channels Dispatcharr knows
+                                    are served through its own URLs, which carry no password.
                                 </div>
                             </div>
                             <div class="inputContainer">
@@ -1277,33 +1244,14 @@
                                 <textarea is="emby-textarea" id="txtLiveTvEndpointAllowedIps" rows="4"
                                     placeholder="127.0.0.1&#10;::1&#10;10.0.0.0/8&#10;192.168.0.0/16" style="width: 100%; font-family: monospace;"></textarea>
                                 <div class="fieldDescription">
-                                    Leave empty to keep the three URLs above and the channel logo endpoint reachable by
-                                    anyone, which is how they have always worked. Fill it in and everything else gets a
-                                    404, indistinguishable from a URL that does not exist.
+                                    Leave empty to allow anyone. Fill it in and every other address gets a 404.
                                     <br /><br />
-                                    <strong>Your own server has to be on the list too.</strong> Jellyfin fetches channel
-                                    logos itself from <code>127.0.0.1</code>, so always include <code>127.0.0.1</code>
-                                    and <code>::1</code>. For the tuner and the guide, the simplest setup is to point them
-                                    at <code>http://localhost:8096/XtreamLibrary/...</code> rather than the URLs shown on this page,
-                                    which use the address you are browsing on. With a public URL there instead,
-                                    Jellyfin's request goes out and comes back in through your reverse proxy: it arrives
-                                    from the proxy's address, or, if the proxy is listed under Known Proxies in
-                                    Jellyfin's networking settings, from your server's own public address. Get this
-                                    wrong and the guide goes empty with no other symptom, so change it while you can
-                                    watch the result.
-                                    <br /><br />
-                                    Write IPv4 addresses in full (<code>192.168.1.0/24</code>, not
-                                    <code>192.168.1</code>). Lines starting with <code>#</code> are ignored, so a list
-                                    with only comments restricts nothing. A list whose entries are all invalid blocks
-                                    everyone, rather than silently opening up.
-                                    <br /><br />
-                                    <strong>Behind a reverse proxy, add it to Known Proxies first.</strong> Without that
-                                    (Dashboard &rarr; Networking), every request through the proxy counts as coming from
-                                    the proxy's own address. If that address is on this list, for example inside a
-                                    private range you added, anyone on the internet gets through. With the proxy listed,
-                                    Jellyfin uses the client address the proxy passes on, and a forged one sent through
-                                    the proxy does not get past it. A proxy on the Jellyfin host itself counts as known
-                                    without any setting.
+                                    <strong>Include your own server:</strong> Jellyfin fetches logos itself from
+                                    <code>127.0.0.1</code>, so always add <code>127.0.0.1</code> and <code>::1</code>, and point
+                                    the tuner and guide at <code>http://localhost:8096/XtreamLibrary/...</code>.
+                                    Behind a reverse proxy, add the proxy under Known Proxies in Jellyfin's networking
+                                    settings first, or every request counts as coming from the proxy.
+                                    Write IPv4 in full (<code>192.168.1.0/24</code>); lines starting with <code>#</code> are ignored.
                                 </div>
                             </div>
                             <div class="inputContainer">
@@ -1339,6 +1287,44 @@
                                 </button>
                                 <span id="liveTvCacheStatus" style="margin-left: 10px;"></span>
                             </div>
+                        </div>
+                        <div class="verticalSection">
+                            <details>
+                                <summary class="sectionTitle" style="cursor: pointer;">Live TV tuning</summary>
+                                <div class="fieldDescription" style="margin: 6px 0 12px;">Leave these at their defaults unless the guide is slow or out of date.</div>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtM3UCacheMinutes">M3U Cache (minutes)</label>
+                                    <input is="emby-input" type="number" id="txtM3UCacheMinutes" name="M3UCacheMinutes"
+                                           min="1" max="60" step="1" />
+                                    <div class="fieldDescription">
+                                        How long to cache the M3U playlist (1-60 minutes).
+                                    </div>
+                                </div>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtEpgCacheMinutes">EPG Cache (minutes)</label>
+                                    <input is="emby-input" type="number" id="txtEpgCacheMinutes" name="EpgCacheMinutes"
+                                           min="5" max="120" step="1" />
+                                    <div class="fieldDescription">
+                                        How long to cache the EPG data (5-120 minutes).
+                                    </div>
+                                </div>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtEpgDaysToFetch">EPG Days to Fetch</label>
+                                    <input is="emby-input" type="number" id="txtEpgDaysToFetch" name="EpgDaysToFetch"
+                                           min="1" max="7" step="1" />
+                                    <div class="fieldDescription">
+                                        Number of days of EPG data to fetch (1-7).
+                                    </div>
+                                </div>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtEpgParallelism">EPG Parallelism</label>
+                                    <input is="emby-input" type="number" id="txtEpgParallelism" name="EpgParallelism"
+                                           min="1" max="10" step="1" />
+                                    <div class="fieldDescription">
+                                        Number of parallel EPG fetch requests (1-10). Higher = faster but more load on provider.
+                                    </div>
+                                </div>
+                            </details>
                         </div>
                     </div>
 

@@ -2160,18 +2160,6 @@ var XtreamLibraryConfig = (function () {
         });
     },
 
-    toggleAdvanced: function () {
-        var section = document.getElementById('advancedSettings');
-        var arrow = document.getElementById('advancedArrow');
-        if (section.style.display === 'none') {
-            section.style.display = 'block';
-            arrow.innerHTML = '&#9662;'; // ▾
-        } else {
-            section.style.display = 'none';
-            arrow.innerHTML = '&#9656;'; // ▸
-        }
-    },
-
     // Dashboard methods
     loadDashboard: function () {
         var self = this;
@@ -2711,13 +2699,6 @@ function initXtreamLibraryConfig() {
         });
     }
 
-    var btnAdvancedToggle = document.getElementById('btnAdvancedToggle');
-    if (btnAdvancedToggle) {
-        btnAdvancedToggle.addEventListener('click', function (e) {
-            e.preventDefault();
-            XtreamLibraryConfig.toggleAdvanced();
-        });
-    }
 
     var chkEnableDispatcharrMode = document.getElementById('chkEnableDispatcharrMode');
     if (chkEnableDispatcharrMode) {
