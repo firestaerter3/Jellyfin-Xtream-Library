@@ -269,6 +269,123 @@ public class CatchupPlannerTests
         CatchupPlanner.TimeBlocks(From, To, Now, Horizon, blockMinutes).Should().BeEmpty();
     }
 
+    // ---- GapBlocks ----
+
+    private static EpgProgram At(string fromIso, string toIso) => Programme(Unix(fromIso), Unix(toIso));
+
+    [Fact]
+    public void WithoutAnyGuideTheGapsAreTheWholeDay()
+    {
+        CatchupPlanner.GapBlocks(null, From, To, Now, Horizon, 30)
+            .Should().Equal(CatchupPlanner.TimeBlocks(From, To, Now, Horizon, 30));
+    }
+
+    [Fact]
+    public void AFullyCoveredDayGetsNoBlocks()
+    {
+        var programmes = Enumerable.Range(0, 24)
+            .Select(h => Programme(From.AddHours(h).ToUnixTimeSeconds(), From.AddHours(h + 1).ToUnixTimeSeconds()));
+
+        CatchupPlanner.GapBlocks(programmes, From, To, Now, Horizon, 30).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void RecordingThatStartedMidDayLeavesTheMorningInBlocks()
+    {
+        // Installed at 14:10: titles from then on, nothing before.
+        var programmes = new[] { At("2026-07-14T14:10:00Z", "2026-07-15T00:00:00Z") };
+
+        var blocks = CatchupPlanner.GapBlocks(programmes, From, To, Now, Horizon, 30);
+
+        blocks.Should().HaveCount(29, "28 whole blocks up to 14:00, then 14:00-14:10");
+        blocks[^1].Should().Be((From.AddHours(14), From.AddHours(14).AddMinutes(10)));
+    }
+
+    [Fact]
+    public void ABlockIsCutBackToTheUncoveredPart()
+    {
+        // 20:05-20:20 is a hole in the middle of the 20:00-20:30 block.
+        var programmes = new[]
+        {
+            At("2026-07-14T00:00:00Z", "2026-07-14T20:05:00Z"),
+            At("2026-07-14T20:20:00Z", "2026-07-15T00:00:00Z"),
+        };
+
+        CatchupPlanner.GapBlocks(programmes, From, To, Now, Horizon, 30)
+            .Should().Equal((From.AddHours(20).AddMinutes(5), From.AddHours(20).AddMinutes(20)));
+    }
+
+    [Fact]
+    public void SliversBetweenProgrammesAreNotOffered()
+    {
+        // Guides leave a minute or two between one stop and the next start all the time.
+        var programmes = new[]
+        {
+            At("2026-07-14T00:00:00Z", "2026-07-14T20:00:00Z"),
+            At("2026-07-14T20:02:00Z", "2026-07-15T00:00:00Z"),
+        };
+
+        CatchupPlanner.GapBlocks(programmes, From, To, Now, Horizon, 30).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void OverlappingProgrammesCountAsOneCoveredStretch()
+    {
+        var programmes = new[]
+        {
+            At("2026-07-14T00:00:00Z", "2026-07-14T20:30:00Z"),
+            At("2026-07-14T20:00:00Z", "2026-07-14T21:00:00Z"),
+            At("2026-07-14T20:10:00Z", "2026-07-14T20:40:00Z"),
+            At("2026-07-14T21:00:00Z", "2026-07-15T00:00:00Z"),
+        };
+
+        CatchupPlanner.GapBlocks(programmes, From, To, Now, Horizon, 30).Should().BeEmpty();
+    }
+
+    // The browser passes what ProgrammesInWindow lists, not the whole guide. These two run the same
+    // pair of calls, because a programme that isn't listed must not hide the time it covers.
+    private static IReadOnlyList<(DateTimeOffset FromUtc, DateTimeOffset ToUtc)> BrowsedGaps(
+        EpgProgram[] guide, DateTimeOffset from, DateTimeOffset to)
+        => CatchupPlanner.GapBlocks(CatchupPlanner.ProgrammesInWindow(guide, from, to, Now, Horizon), from, to, Now, Horizon, 30);
+
+    [Fact]
+    public void AProgrammeStillAiringLeavesItsFinishedPartAsBlocks()
+    {
+        // 11:00 to 13:00, and it is 12:00. The programme isn't listed yet, so 11:00 to 12:00 has
+        // to be reachable as blocks. Some providers send one entry covering the whole day.
+        var today = DateTimeOffset.Parse("2026-07-15T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var guide = new[] { At("2026-07-15T00:00:00Z", "2026-07-15T11:00:00Z"), At("2026-07-15T11:00:00Z", "2026-07-15T13:00:00Z") };
+
+        var blocks = BrowsedGaps(guide, today, today.AddDays(1));
+
+        blocks.Should().Equal((today.AddHours(11), today.AddHours(11.5)), (today.AddHours(11.5), today.AddHours(12)));
+    }
+
+    [Fact]
+    public void AProgrammeFromBeforeTheHorizonLeavesTheStartOfTheOldestDayAsBlocks()
+    {
+        // Runs from before the horizon into the oldest day. It isn't listed, since it began before
+        // what the provider still serves, so the first hour must still come as blocks.
+        var guide = new[] { At("2026-07-07T23:00:00Z", "2026-07-08T01:00:00Z"), At("2026-07-08T01:00:00Z", "2026-07-09T00:00:00Z") };
+
+        var blocks = BrowsedGaps(guide, Horizon, Horizon.AddDays(1));
+
+        blocks.Should().Equal((Horizon, Horizon.AddMinutes(30)), (Horizon.AddMinutes(30), Horizon.AddHours(1)));
+    }
+
+    [Fact]
+    public void GapsFollowTheSameRulesAsBlocks()
+    {
+        // Nothing unfinished, nothing before the horizon, nothing when blocks are switched off.
+        var today = DateTimeOffset.Parse("2026-07-15T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        CatchupPlanner.GapBlocks(null, today, today.AddDays(1), Now, Horizon, 60).Should().HaveCount(12);
+
+        var old = DateTimeOffset.Parse("2026-07-01T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        CatchupPlanner.GapBlocks(null, old, old.AddDays(1), Now, Horizon, 30).Should().BeEmpty();
+
+        CatchupPlanner.GapBlocks(null, From, To, Now, Horizon, 0).Should().BeEmpty();
+    }
+
     // ---- DurationMinutes ----
 
     [Theory]
