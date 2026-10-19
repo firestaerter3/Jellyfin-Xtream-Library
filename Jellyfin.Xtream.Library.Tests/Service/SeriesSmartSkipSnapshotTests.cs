@@ -104,6 +104,15 @@ public class SeriesSmartSkipSnapshotTests : IDisposable
     }
 
     [Fact]
+    public void EffectiveEpisodeCount_FetchedWithoutEpisodes_IsUnknown()
+    {
+        var info = new ConcurrentDictionary<int, SeriesStreamInfo>();
+        info[7] = new SeriesStreamInfo { Episodes = null };
+
+        StrmSyncService.EffectiveEpisodeCount(info, Previous(2, Modified), Listed(Modified)).Should().Be(0);
+    }
+
+    [Fact]
     public void EffectiveEpisodeCount_PrefersInfoFetchedThisRun()
     {
         var info = new ConcurrentDictionary<int, SeriesStreamInfo>();

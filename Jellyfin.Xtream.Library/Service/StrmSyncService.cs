@@ -4108,7 +4108,8 @@ public partial class StrmSyncService
     /// <summary>
     /// Episode count to record for a series in the new snapshot. A series smart-skipped this run
     /// has no fetched info, so it keeps the previous count while its last_modified is unchanged.
-    /// Recording 0 instead makes the next sync fetch every skipped series again.
+    /// Recording 0 instead makes the next sync fetch every skipped series again. A series that was
+    /// fetched but came back without episodes stays at 0, so the next sync reads it again.
     /// </summary>
     /// <param name="seriesInfo">Series info fetched during this run.</param>
     /// <param name="previousSnapshot">Snapshot from the previous run, may be null.</param>
@@ -4119,9 +4120,9 @@ public partial class StrmSyncService
         ContentSnapshot? previousSnapshot,
         Series series)
     {
-        if (seriesInfo.TryGetValue(series.SeriesId, out var info) && info.Episodes != null)
+        if (seriesInfo.TryGetValue(series.SeriesId, out var info))
         {
-            return info.Episodes.Values.Sum(eps => eps.Count);
+            return info.Episodes?.Values.Sum(eps => eps.Count) ?? 0;
         }
 
         if (previousSnapshot != null &&
