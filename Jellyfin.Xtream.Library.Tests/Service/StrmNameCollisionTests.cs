@@ -567,6 +567,50 @@ public class StrmNameCollisionTests : IDisposable
         second.MovieNameCollisions.Should().Be(0, "the group the provider confirmed earlier still stands");
     }
 
+    // The stream that holds the plain name leaves the catalogue. A stream still listed takes the
+    // plain name over, in place, so the folder keeps a file named like itself and Jellyfin keeps
+    // one primary version instead of picking whichever file sorts first. Same rule whether the
+    // streams were put together by name or by the provider's TMDB id.
+    [Fact]
+    public async Task WhenTheStreamHoldingThePlainNameLeaves_ANameSharingStreamTakesItOver()
+    {
+        await RunMovieSyncAsync(
+            new StreamInfo { StreamId = 100, Name = "Same Movie (2024)", ContainerExtension = "mp4" },
+            new StreamInfo { StreamId = 200, Name = "Same Movie (2024)", ContainerExtension = "mp4" }).ConfigureAwait(true);
+
+        await RunMovieSyncAsync(
+            [new StreamInfo { StreamId = 200, Name = "Same Movie (2024)", ContainerExtension = "mp4" }],
+            useShippedDefaults: false,
+            cleanupOrphans: true).ConfigureAwait(true);
+
+        StrmNamesAndIds(Path.Combine(_libraryPath, "Movies", "Same Movie (2024)")).Should().Equal(
+            ("Same Movie (2024).strm", 200));
+    }
+
+    [Fact]
+    public async Task WhenTheStreamHoldingThePlainNameLeaves_AGroupedStreamTakesItOver()
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(200, "42");
+
+        await RunMovieSyncAsync(
+            [
+                new StreamInfo { StreamId = 100, Name = "Alpha Movie (2024)", ContainerExtension = "mp4" },
+                new StreamInfo { StreamId = 200, Name = "Beta Movie (2024)", ContainerExtension = "mp4" },
+            ],
+            useShippedDefaults: false,
+            groupByTmdbId: true).ConfigureAwait(true);
+
+        await RunMovieSyncAsync(
+            [new StreamInfo { StreamId = 200, Name = "Beta Movie (2024)", ContainerExtension = "mp4" }],
+            useShippedDefaults: false,
+            groupByTmdbId: true,
+            cleanupOrphans: true).ConfigureAwait(true);
+
+        StrmNamesAndIds(Path.Combine(_libraryPath, "Movies", "Alpha Movie (2024) [tmdbid-42]")).Should().Equal(
+            ("Alpha Movie (2024) [tmdbid-42].strm", 200));
+    }
+
     // GitHub #88, the reporter's own two streams. The provider does not answer for the second one,
     // the title search finds the id the first one's provider confirmed, and writing it anyway gave
     // it a folder of its own that no later sync would move.
