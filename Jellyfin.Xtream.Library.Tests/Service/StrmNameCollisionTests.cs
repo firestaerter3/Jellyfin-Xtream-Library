@@ -567,6 +567,16 @@ public class StrmNameCollisionTests : IDisposable
         second.MovieNameCollisions.Should().Be(0, "the group the provider confirmed earlier still stands");
     }
 
+    private static (string Name, int StreamId)[] StrmNamesAndIds(string folder)
+        => Directory.Exists(folder)
+            ? Directory.GetFiles(folder, "*.strm")
+                .Select(f => (Path.GetFileName(f), int.Parse(
+                    System.Text.RegularExpressions.Regex.Match(File.ReadAllText(f), @"/(\d+)\.\w+\s*$").Groups[1].Value,
+                    System.Globalization.CultureInfo.InvariantCulture)))
+                .OrderBy(t => t.Item1, StringComparer.Ordinal)
+                .ToArray()
+            : Array.Empty<(string, int)>();
+
     // The stream that holds the plain name leaves the catalogue. A stream still listed takes the
     // plain name over, in place, so the folder keeps a file named like itself and Jellyfin keeps
     // one primary version instead of picking whichever file sorts first. Same rule whether the
