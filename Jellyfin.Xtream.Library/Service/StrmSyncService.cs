@@ -335,8 +335,8 @@ public partial class StrmSyncService
 
         // Warn if any two enabled providers share the same LibraryPath
         var duplicatePaths = config.Providers
-            .Where(p => p.IsEnabled && !string.IsNullOrEmpty(p.LibraryPath))
-            .GroupBy(p => p.LibraryPath, StringComparer.OrdinalIgnoreCase)
+            .Where(p => p.IsEnabled && !string.IsNullOrEmpty(p.EffectiveLibraryPath))
+            .GroupBy(p => p.EffectiveLibraryPath, StringComparer.OrdinalIgnoreCase)
             .Where(g => g.Count() > 1)
             .Select(g => g.Key)
             .ToList();
@@ -676,6 +676,11 @@ public partial class StrmSyncService
 
         var syncedFiles = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
 
+        // Movie files that sit next to a primary under "<name> - <stream id>.strm", keyed by the
+        // path the primary has or would have. Filled by the movie sync and read by
+        // PromoteAlternatives once orphan cleanup has run.
+        var alternativeStrms = new ConcurrentDictionary<string, ConcurrentDictionary<int, string>>(StringComparer.OrdinalIgnoreCase);
+
         // Sync Movies and Series - run concurrently when parallelism > 1,
         // sequentially when parallelism <= 1 to respect strict rate limits
         bool runConcurrently = provider.SyncParallelism > 1;
@@ -700,6 +705,7 @@ public partial class StrmSyncService
                             allCollectedMovies,
                             movieIdentities,
                             hintSnapshot,
+                            alternativeStrms,
                             cancellationToken).ConfigureAwait(false);
                     },
                     cancellationToken));
@@ -745,6 +751,7 @@ public partial class StrmSyncService
                     allCollectedMovies,
                     movieIdentities,
                     hintSnapshot,
+                    alternativeStrms,
                     cancellationToken).ConfigureAwait(false);
             }
 
@@ -980,6 +987,26 @@ public partial class StrmSyncService
             }
         }
 
+        // A primary that left the provider has had its file removed by now. Where alternatives
+        // are left, one of them takes the primary's file name. Runs after the cleanup so that a
+        // stale primary the cleanup did not take (safety threshold, cleanup off) is never
+        // overwritten, and without counting the renamed file as an orphan.
+        if (provider.SyncMovies && !cancellationToken.IsCancellationRequested)
+        {
+            foreach (var promotion in PromoteAlternatives(alternativeStrms, syncedFiles))
+            {
+                claimedPaths.TryRemove(promotion.PreviousPath, out _);
+                claimedPaths.TryAdd(promotion.PrimaryPath, 0);
+                _logger.LogInformation(
+                    "Primary STRM of {Folder} is gone, stream {StreamId} is the primary now: {Previous} renamed to {Primary}",
+                    Path.GetFileName(Path.GetDirectoryName(promotion.PrimaryPath)),
+                    promotion.StreamId,
+                    Path.GetFileName(promotion.PreviousPath),
+                    Path.GetFileName(promotion.PrimaryPath));
+                ReassignGroupOwner(promotion.StreamId, allCollectedMovies, movieIdentities, hintSnapshot);
+            }
+        }
+
         // Save snapshot for next incremental sync. Grouping needs it too: the snapshot is what
         // records which folder each stream went to and whether the provider confirmed its id, and
         // the regroup action has nothing to work from without it (GitHub #88).
@@ -1164,10 +1191,19 @@ public partial class StrmSyncService
         ConcurrentBag<StreamInfo> allCollectedMovies,
         ConcurrentDictionary<int, ItemIdentity> movieIdentities,
         ContentSnapshot? groupingHint,
+        ConcurrentDictionary<string, ConcurrentDictionary<int, string>> alternativeStrms,
         CancellationToken cancellationToken)
     {
         var connectionInfo = new ConnectionInfo(provider.BaseUrl, provider.Username, provider.Password);
         var globalConfig = Plugin.Instance.Configuration;
+
+        // Stream ids repeat across providers, so on a library path that several providers write
+        // to, a file only counts as ours when its URL also points at our server.
+        var owners = new StrmOwnerResolver(
+            connectionInfo.BaseUrl,
+            SharingProviders(globalConfig.Providers, provider).Count > 1,
+            AlternativeTag(globalConfig.Providers, provider),
+            connectionInfo.UserName);
         var categories = await _client.GetVodCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
         var processedStreamIds = new ConcurrentDictionary<int, bool>();
 
@@ -1499,20 +1535,20 @@ public partial class StrmSyncService
                         if (existingMovieFolders.TryGetValue(targetFolder, out var folderCache) &&
                             folderCache.TryGetValue(baseName, out var existingFolderName))
                         {
-                            ProtectStrmFilesIn(Path.Combine(movieBasePath, existingFolderName), syncedFiles);
+                            ProtectOwnStrmIn(Path.Combine(movieBasePath, existingFolderName), m.Stream.StreamId, syncedFiles, alternativeStrms, owners, keepUnattributed: true);
                         }
 
                         // A grouped guest sits in the folder its owner named, which is not keyed by
                         // its own base name, so the lookup above cannot find it and cleanup would
                         // delete a file the provider still lists. The snapshot remembers where the
-                        // file went (GitHub #88). Only the guest's own file is protected: marking
+                        // file went (GitHub #88). Only the stream's own files are protected: marking
                         // the whole shared folder would also keep a departed owner's file alive
                         // forever (codex review).
                         if (groupingHint != null
                             && groupingHint.Movies.TryGetValue(m.Stream.StreamId, out var recordedMovie)
                             && !string.IsNullOrEmpty(recordedMovie.FolderName))
                         {
-                            ProtectGuestStrmIn(Path.Combine(movieBasePath, recordedMovie.FolderName), m.Stream.StreamId, syncedFiles);
+                            ProtectOwnStrmIn(Path.Combine(movieBasePath, recordedMovie.FolderName), m.Stream.StreamId, syncedFiles, alternativeStrms, owners, keepUnattributed: false);
                         }
                     }
                 }
@@ -1999,6 +2035,33 @@ public partial class StrmSyncService
                             : Path.Combine(moviesPath, targetFolder);
                         string movieFolder = Path.Combine(movieBasePath, folderName);
 
+                        // One folder holds one primary file, named like the folder, and every other
+                        // stream that lands there keeps its own file under "<name> - <stream id>".
+                        // That covers a guest of a TMDB group and equally two streams that share a
+                        // title without an id. The role is decided once per folder, not per file, so
+                        // a stream with several Dispatcharr files keeps all of them on one side.
+                        bool asAlternative = joinedGroupFolder;
+                        string primaryPath = Path.Combine(movieFolder, strmEntries[0].StrmFileName);
+                        bool primaryHeld = false;
+                        if (!asAlternative)
+                        {
+                            // A primary left on disk by an earlier run stays with its stream, whatever
+                            // order the parallel loop reaches them in. Otherwise the first stream to
+                            // claim the name takes it and the rest become alternatives.
+                            if (StrmBelongsToOtherStream(primaryPath, stream.StreamId, owners))
+                            {
+                                asAlternative = true;
+                            }
+                            else if (claimedPaths.TryAdd(primaryPath, 0))
+                            {
+                                primaryHeld = true;
+                            }
+                            else
+                            {
+                                asAlternative = true;
+                            }
+                        }
+
                         foreach (var (streamUrl, strmFileName) in strmEntries)
                         {
                         string strmPath = Path.Combine(movieFolder, strmFileName);
@@ -2014,10 +2077,35 @@ public partial class StrmSyncService
                         // it would collide with the title that named it. That is the feature working,
                         // not a provider quirk: keep both and tell them apart by stream id. The
                         // owner keeps the plain name, so neither file is renamed on a later sync.
-                        if (joinedGroupFolder)
+                        if (asAlternative)
                         {
-                            string groupedName = $"{Path.GetFileNameWithoutExtension(strmFileName)} - {stream.StreamId}{Path.GetExtension(strmFileName)}";
-                            strmPath = Path.Combine(movieFolder, groupedName);
+                            string plainPath = strmPath;
+                            string? alternativePath = AlternativePath(movieFolder, strmFileName, stream.StreamId, owners);
+                            if (alternativePath is null)
+                            {
+                                // The name is taken by a file whose URL belongs to another stream or
+                                // provider, for instance a tag inherited from a provider that was
+                                // removed. Leave it alone: it is neither registered nor protected
+                                // here, so cleanup judges it by its own owner. Recorded as failed so
+                                // the snapshot leaves the stream out and the next incremental sync
+                                // treats it as new, once the blocking file has been cleaned up.
+                                Interlocked.Increment(ref nameCollisions);
+                                failedItems.Add(new FailedItem
+                                {
+                                    ItemType = "Movie",
+                                    ItemId = stream.StreamId,
+                                    Name = stream.Name,
+                                    ErrorMessage = $"STRM name collision: {Path.GetFileName(plainPath)} has an alternative held by another stream or provider. Not written, so the next sync retries it",
+                                });
+                                _logger.LogWarning(
+                                    "STRM name collision for movie {MovieName}: the alternative file of stream {StreamId} is held by another stream or provider; refusing to overwrite it",
+                                    baseName,
+                                    stream.StreamId);
+                                continue;
+                            }
+
+                            strmPath = alternativePath;
+                            RegisterAlternative(alternativeStrms, plainPath, stream.StreamId, strmPath);
                         }
 
                         // Only now, once the final name is known. Protecting the pre-rename path
@@ -2025,7 +2113,7 @@ public partial class StrmSyncService
                         // departed owner's file would never be cleaned up (codex review).
                         syncedFiles.TryAdd(strmPath, 0);
 
-                        if (!claimedPaths.TryAdd(strmPath, 0))
+                        if (!(primaryHeld && string.Equals(strmPath, primaryPath, StringComparison.Ordinal)) && !claimedPaths.TryAdd(strmPath, 0))
                         {
                             Interlocked.Increment(ref nameCollisions);
                             _logger.LogWarning(
@@ -4027,44 +4115,376 @@ public partial class StrmSyncService
     }
 
     /// <summary>
-    /// Marks one grouped stream's own STRM as still wanted. Its file carries the stream id, so the
-    /// files its folder-mates own are deliberately left to answer for themselves.
+    /// Marks one stream's own STRM files in a folder as still wanted, so orphan cleanup leaves
+    /// them alone while the files of its folder-mates answer for themselves. A file belongs to the
+    /// stream and provider its URL names; one whose URL cannot be read that way (Dispatcharr) is
+    /// judged by its name. Files carrying the stream's own " - id" suffix are recorded as alternatives.
+    /// A file the stream's own account wrote under a provider tag it no longer has (the providers
+    /// before it in the list changed, so its tag moved) is kept and recorded only while the file
+    /// the stream uses now does not exist, the way <see cref="AlternativePath"/> reuses it. Once the
+    /// current file exists, the obsolete one is left out so orphan cleanup removes it.
     /// </summary>
-    /// <param name="folder">Shared folder to look in. Missing folders are ignored.</param>
-    /// <param name="streamId">The stream whose file should survive cleanup.</param>
+    /// <param name="folder">Folder to look in. Missing folders are ignored.</param>
+    /// <param name="streamId">The stream whose files should survive cleanup.</param>
     /// <param name="syncedFiles">The run's set of files that must survive cleanup.</param>
-    private static void ProtectGuestStrmIn(string folder, int streamId, ConcurrentDictionary<string, byte> syncedFiles)
+    /// <param name="alternatives">Receives the stream's alternative files.</param>
+    /// <param name="owners">Tells whose stream a file's URL names.</param>
+    /// <param name="keepUnattributed">Whether a file that cannot be attributed to any stream is kept.</param>
+    private static void ProtectOwnStrmIn(
+        string folder,
+        int streamId,
+        ConcurrentDictionary<string, byte> syncedFiles,
+        ConcurrentDictionary<string, ConcurrentDictionary<int, string>> alternatives,
+        StrmOwnerResolver owners,
+        bool keepUnattributed)
     {
         if (!Directory.Exists(folder))
         {
             return;
         }
 
-        string suffix = $" - {streamId}.strm";
+        string legacySuffix = $" - {streamId}.strm";
+        string? taggedSuffix = owners.AlternativeTag is null ? null : $" - {streamId} - {owners.AlternativeTag}.strm";
         foreach (var strmFile in Directory.GetFiles(folder, "*.strm"))
         {
-            if (Path.GetFileName(strmFile).EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            string fileName = Path.GetFileName(strmFile);
+            string? suffix = taggedSuffix is not null && fileName.EndsWith(taggedSuffix, StringComparison.OrdinalIgnoreCase)
+                ? taggedSuffix
+                : (fileName.EndsWith(legacySuffix, StringComparison.OrdinalIgnoreCase) ? legacySuffix : null);
+            bool ownSuffix = suffix is not null;
+            int? owner = owners.OwnerOf(ReadStrmUrl(strmFile));
+            bool protect = owner.HasValue ? owner.Value == streamId : (ownSuffix || keepUnattributed);
+            if (!protect)
             {
-                syncedFiles.TryAdd(strmFile, 0);
+                continue;
+            }
+
+            string? obsoletePrimaryName = suffix is null && owner == streamId
+                ? ObsoleteTaggedPrimaryName(fileName, streamId, owners.AlternativeTag)
+                : null;
+            if (obsoletePrimaryName is not null)
+            {
+                if (ReusesObsoleteStrm(folder, strmFile, obsoletePrimaryName, streamId, owners))
+                {
+                    syncedFiles.TryAdd(strmFile, 0);
+                    RegisterAlternative(alternatives, Path.Combine(folder, obsoletePrimaryName), streamId, strmFile);
+                }
+
+                continue;
+            }
+
+            syncedFiles.TryAdd(strmFile, 0);
+            if (suffix is not null)
+            {
+                RegisterAlternative(alternatives, Path.Combine(folder, fileName[..^suffix.Length] + ".strm"), streamId, strmFile);
             }
         }
     }
 
     /// <summary>
-    /// Marks every STRM in a folder as still wanted, so orphan cleanup leaves it alone.
+    /// The file name a stream uses when another stream holds the primary: the primary's name with
+    /// the stream id before the extension, followed by the provider tag when there is one.
     /// </summary>
-    /// <param name="folder">Folder to protect. Missing folders are ignored.</param>
-    /// <param name="syncedFiles">The run's set of files that must survive cleanup.</param>
-    private static void ProtectStrmFilesIn(string folder, ConcurrentDictionary<string, byte> syncedFiles)
+    /// <param name="primaryFileName">The name the primary file has or would have.</param>
+    /// <param name="streamId">The stream the alternative belongs to.</param>
+    /// <param name="providerTag">Tag of a provider that shares its library path, or null.</param>
+    /// <returns>The alternative's file name.</returns>
+    internal static string AlternativeFileName(string primaryFileName, int streamId, string? providerTag = null)
+        => $"{Path.GetFileNameWithoutExtension(primaryFileName)} - {streamId}{(providerTag is null ? string.Empty : $" - {providerTag}")}{Path.GetExtension(primaryFileName)}";
+
+    /// <summary>
+    /// Where a stream's alternative file goes. A provider that shares its library path tags its
+    /// names, but an untagged file this provider's stream already wrote there (named before tags
+    /// existed) is kept as it is, so the file is not renamed and Jellyfin does not see a new item.
+    /// </summary>
+    /// <param name="movieFolder">The movie's folder.</param>
+    /// <param name="primaryFileName">The name the primary file has or would have.</param>
+    /// <param name="streamId">The stream the alternative belongs to.</param>
+    /// <param name="owners">Tells whose stream a file's URL names and which tag the provider uses.</param>
+    /// <returns>
+    /// The path of the alternative file, or null when the file already at the stream's name is
+    /// another stream's (for instance a tag this provider inherited from one that left). The caller
+    /// must not write then. A file left under a tag the provider no longer has is reused while the
+    /// current name is free, so the next sync does not write a second file beside it.
+    /// </returns>
+    private static string? AlternativePath(string movieFolder, string primaryFileName, int streamId, StrmOwnerResolver owners)
     {
-        if (!Directory.Exists(folder))
+        string tagged = Path.Combine(movieFolder, AlternativeFileName(primaryFileName, streamId, owners.AlternativeTag));
+        if (File.Exists(tagged))
+        {
+            return StrmBelongsToOtherStream(tagged, streamId, owners) ? null : tagged;
+        }
+
+        return OwnedLegacyAlternative(movieFolder, primaryFileName, streamId, owners)
+            ?? FindObsoleteTaggedStrm(movieFolder, primaryFileName, streamId, owners)
+            ?? tagged;
+    }
+
+    /// <summary>
+    /// The untagged alternative file this stream wrote before its provider got a tag, when it is
+    /// still there and its URL is the stream's own.
+    /// </summary>
+    /// <param name="movieFolder">The movie's folder.</param>
+    /// <param name="primaryFileName">The name the primary file has or would have.</param>
+    /// <param name="streamId">The stream the alternative belongs to.</param>
+    /// <param name="owners">Tells whose stream a file's URL names and which tag the provider uses.</param>
+    /// <returns>The file's path, or null when there is none, or the provider has no tag.</returns>
+    private static string? OwnedLegacyAlternative(string movieFolder, string primaryFileName, int streamId, StrmOwnerResolver owners)
+    {
+        if (owners.AlternativeTag is null)
+        {
+            return null;
+        }
+
+        string legacy = Path.Combine(movieFolder, AlternativeFileName(primaryFileName, streamId));
+        return File.Exists(legacy) && owners.OwnerOf(ReadStrmUrl(legacy)) == streamId ? legacy : null;
+    }
+
+    /// <summary>
+    /// A file of this stream and account carrying a provider tag the provider no longer has. Tags
+    /// follow a provider's position among those sharing its path, so removing one moves the others
+    /// up and leaves their files under the old tag. Ownership is read from the URL, so a file that
+    /// is another provider's is never returned, whatever its name says.
+    /// </summary>
+    /// <param name="movieFolder">The movie's folder.</param>
+    /// <param name="primaryFileName">The name the primary file has or would have.</param>
+    /// <param name="streamId">The stream the alternative belongs to.</param>
+    /// <param name="owners">Tells whose stream a file's URL names and which tag the provider uses.</param>
+    /// <returns>The path of the file, the first by name when there are several, or null.</returns>
+    private static string? FindObsoleteTaggedStrm(string movieFolder, string primaryFileName, int streamId, StrmOwnerResolver owners)
+    {
+        if (!Directory.Exists(movieFolder))
+        {
+            return null;
+        }
+
+        return Directory.GetFiles(movieFolder, "*.strm")
+            .Where(f => string.Equals(ObsoleteTaggedPrimaryName(Path.GetFileName(f), streamId, owners.AlternativeTag), primaryFileName, StringComparison.OrdinalIgnoreCase)
+                        && owners.OwnerOf(ReadStrmUrl(f)) == streamId)
+            .OrderBy(f => f, StringComparer.Ordinal)
+            .FirstOrDefault();
+    }
+
+    /// <summary>
+    /// The primary file name an alternative named <c>&lt;name&gt; - &lt;stream id&gt; - p&lt;n&gt;.strm</c>
+    /// belongs to, when its tag is not the one the provider uses now.
+    /// </summary>
+    /// <param name="fileName">A STRM file name.</param>
+    /// <param name="streamId">The stream the alternative should belong to.</param>
+    /// <param name="currentTag">The tag the provider uses now, or null.</param>
+    /// <returns>The primary's file name, or null when the name is not a tagged alternative of the stream or carries the current tag.</returns>
+    internal static string? ObsoleteTaggedPrimaryName(string fileName, int streamId, string? currentTag)
+    {
+        const string Extension = ".strm";
+        if (!fileName.EndsWith(Extension, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        string body = fileName[..^Extension.Length];
+        int tagStart = body.LastIndexOf(" - p", StringComparison.OrdinalIgnoreCase);
+        if (tagStart < 0)
+        {
+            return null;
+        }
+
+        string tag = body[(tagStart + 3)..];
+        if (tag.Length < 2
+            || tag.AsSpan(1).ContainsAnyExceptInRange('0', '9')
+            || string.Equals(tag, currentTag, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        string idPart = $" - {streamId}";
+        string head = body[..tagStart];
+        return head.Length > idPart.Length && head.EndsWith(idPart, StringComparison.OrdinalIgnoreCase)
+            ? head[..^idPart.Length] + Extension
+            : null;
+    }
+
+    /// <summary>
+    /// Whether an obsolete tagged file is the one <see cref="AlternativePath"/> would reuse: the
+    /// stream has no file under its current name, no untagged file of its own, and this is the
+    /// first obsolete file by name.
+    /// </summary>
+    /// <param name="folder">The movie's folder.</param>
+    /// <param name="strmFile">The obsolete file.</param>
+    /// <param name="primaryFileName">The name the primary file has or would have.</param>
+    /// <param name="streamId">The stream the alternative belongs to.</param>
+    /// <param name="owners">Tells whose stream a file's URL names and which tag the provider uses.</param>
+    /// <returns>True when the file should be kept and recorded as the stream's alternative.</returns>
+    private static bool ReusesObsoleteStrm(string folder, string strmFile, string primaryFileName, int streamId, StrmOwnerResolver owners)
+        => !File.Exists(Path.Combine(folder, AlternativeFileName(primaryFileName, streamId, owners.AlternativeTag)))
+           && OwnedLegacyAlternative(folder, primaryFileName, streamId, owners) is null
+           && string.Equals(FindObsoleteTaggedStrm(folder, primaryFileName, streamId, owners), strmFile, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The configured providers that write to the same library folder as this one, in
+    /// configuration order. Enabled or not, so switching a provider off renames nothing.
+    /// </summary>
+    /// <param name="providers">All configured providers.</param>
+    /// <param name="provider">The provider asking.</param>
+    /// <returns>The providers sharing its folder, itself included; empty for a blank path.</returns>
+    internal static List<ProviderConfig> SharingProviders(IEnumerable<ProviderConfig> providers, ProviderConfig provider)
+    {
+        string path = provider.EffectiveLibraryPath;
+        return path.Length == 0
+            ? new List<ProviderConfig>()
+            : providers.Where(p => string.Equals(p.EffectiveLibraryPath, path, StringComparison.OrdinalIgnoreCase)).ToList();
+    }
+
+    /// <summary>
+    /// The tag a provider puts in its alternative file names so they cannot meet another
+    /// provider's on a shared library path: "p2" for the second provider of the path, "p3" for the
+    /// third. The first provider and providers alone on their path get none, so their names are the
+    /// ones every earlier version wrote.
+    /// </summary>
+    /// <param name="providers">All configured providers.</param>
+    /// <param name="provider">The provider asking.</param>
+    /// <returns>The tag, or null.</returns>
+    internal static string? AlternativeTag(IEnumerable<ProviderConfig> providers, ProviderConfig provider)
+    {
+        var sharing = SharingProviders(providers, provider);
+        int position = sharing.FindIndex(p => ReferenceEquals(p, provider));
+        if (position < 0)
+        {
+            position = sharing.FindIndex(p => string.Equals(p.BaseUrl, provider.BaseUrl, StringComparison.Ordinal)
+                && string.Equals(p.Username, provider.Username, StringComparison.Ordinal));
+        }
+
+        return sharing.Count > 1 && position > 0 ? $"p{position + 1}" : null;
+    }
+
+    /// <summary>
+    /// The stream id an Xtream movie URL (<c>.../movie/user/pass/123.mp4</c>) points at. Null for
+    /// anything else, Dispatcharr URLs included, since those carry a provider's id.
+    /// </summary>
+    /// <param name="url">URL read from a STRM file, may be null.</param>
+    /// <returns>The stream id, or null when the URL does not name one.</returns>
+    internal static int? ParseMovieStreamId(string? url)
+    {
+        if (string.IsNullOrEmpty(url))
+        {
+            return null;
+        }
+
+        int cut = url.IndexOfAny(['?', '#']);
+        string path = cut >= 0 ? url[..cut] : url;
+        if (!path.Contains("/movie/", StringComparison.Ordinal) || path.Contains("/proxy/vod/", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        string last = path[(path.LastIndexOf('/') + 1)..];
+        int dot = last.LastIndexOf('.');
+        if (dot > 0)
+        {
+            last = last[..dot];
+        }
+
+        return int.TryParse(last, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int id) ? id : null;
+    }
+
+    /// <summary>
+    /// Whether the file at this path is on disk and demonstrably another stream's. A file whose
+    /// URL names no stream (Dispatcharr, unreadable) is not.
+    /// </summary>
+    /// <param name="path">Path of the primary or alternative file.</param>
+    /// <param name="streamId">The stream asking.</param>
+    /// <param name="owners">Tells whose stream a file's URL names.</param>
+    /// <returns>True when the file's URL names a different stream, or another provider's.</returns>
+    private static bool StrmBelongsToOtherStream(string path, int streamId, StrmOwnerResolver owners)
+        => File.Exists(path)
+           && owners.OwnerOf(ReadStrmUrl(path)) is int owner
+           && owner != streamId;
+
+    private static void RegisterAlternative(
+        ConcurrentDictionary<string, ConcurrentDictionary<int, string>> alternatives,
+        string primaryPath,
+        int streamId,
+        string alternativePath)
+        => alternatives.GetOrAdd(primaryPath, _ => new ConcurrentDictionary<int, string>())[streamId] = alternativePath;
+
+    /// <summary>
+    /// Gives a primary file to an alternative when the primary is gone. For every primary path
+    /// that nothing wants and that no longer exists, the alternative with the lowest stream id is
+    /// renamed to that path, so the folder always has a file named like the folder. Used for
+    /// folders shared by title and by TMDB id alike. A primary that is still wanted, or still on
+    /// disk, is left alone.
+    /// </summary>
+    /// <param name="alternatives">Alternative files by the primary path they belong to.</param>
+    /// <param name="syncedFiles">The run's set of files that must survive cleanup; updated.</param>
+    /// <returns>One entry per rename: the stream, the new primary path, and the old path.</returns>
+    internal static List<(int StreamId, string PrimaryPath, string PreviousPath)> PromoteAlternatives(
+        ConcurrentDictionary<string, ConcurrentDictionary<int, string>> alternatives,
+        ConcurrentDictionary<string, byte> syncedFiles)
+    {
+        var promoted = new List<(int StreamId, string PrimaryPath, string PreviousPath)>();
+        foreach (var slot in alternatives.OrderBy(a => a.Key, StringComparer.Ordinal))
+        {
+            if (syncedFiles.ContainsKey(slot.Key) || File.Exists(slot.Key))
+            {
+                continue;
+            }
+
+            foreach (var candidate in slot.Value.OrderBy(c => c.Key))
+            {
+                if (!File.Exists(candidate.Value) || !syncedFiles.ContainsKey(candidate.Value))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    File.Move(candidate.Value, slot.Key);
+                }
+                catch (IOException)
+                {
+                    continue;
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    continue;
+                }
+
+                syncedFiles.TryRemove(candidate.Value, out _);
+                syncedFiles.TryAdd(slot.Key, 0);
+                promoted.Add((candidate.Key, slot.Key, candidate.Value));
+                break;
+            }
+        }
+
+        return promoted;
+    }
+
+    /// <summary>
+    /// After a TMDB group's owner was replaced by a promoted guest, records the new owner for every
+    /// member of the group, so the next run does not take the promoted file for a guest again.
+    /// </summary>
+    /// <param name="newOwnerId">The promoted stream.</param>
+    /// <param name="allMovies">Movies collected this run.</param>
+    /// <param name="identities">Identities resolved during this run; updated.</param>
+    /// <param name="previousSnapshot">Snapshot from the previous run, may be null.</param>
+    private static void ReassignGroupOwner(
+        int newOwnerId,
+        ConcurrentBag<StreamInfo> allMovies,
+        ConcurrentDictionary<int, ItemIdentity> identities,
+        ContentSnapshot? previousSnapshot)
+    {
+        var current = EffectiveMovieIdentity(identities, previousSnapshot, newOwnerId);
+        if (current.GroupOwnerStreamId is not int oldOwner || oldOwner == newOwnerId)
         {
             return;
         }
 
-        foreach (var strmFile in Directory.GetFiles(folder, "*.strm"))
+        foreach (int memberId in allMovies.Select(m => m.StreamId).Distinct())
         {
-            syncedFiles.TryAdd(strmFile, 0);
+            var member = EffectiveMovieIdentity(identities, previousSnapshot, memberId);
+            if (member.GroupOwnerStreamId == oldOwner)
+            {
+                identities[memberId] = new ItemIdentity(member.FolderName, member.TmdbId, null, member.Source, newOwnerId);
+            }
         }
     }
 

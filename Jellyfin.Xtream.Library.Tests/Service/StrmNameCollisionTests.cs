@@ -83,33 +83,197 @@ public class StrmNameCollisionTests : IDisposable
     }
 
     [Fact]
-    public async Task TwoStreamsSharingTitleAndQualityTag_WriteOneFileAndCountTheCollision()
+    public async Task TwoStreamsSharingTitleAndQualityTag_BothAreKeptTheFirstAsPrimary()
     {
         // Both resolve to "Duplicate Movie (2024)" with version label "FHD", so both want
-        // "Duplicate Movie (2024) - FHD.strm".
+        // "Duplicate Movie (2024) - FHD.strm". One keeps that name, the other keeps its own file
+        // next to it, tagged with its stream id, so neither version is lost.
         var result = await RunMovieSyncAsync(
             new StreamInfo { StreamId = 100, Name = "Duplicate Movie (2024) - [FHD]", ContainerExtension = "mp4" },
             new StreamInfo { StreamId = 200, Name = "Duplicate Movie (2024) - [FHD]", ContainerExtension = "mp4" })
             .ConfigureAwait(true);
 
         var movieFolder = Path.Combine(_libraryPath, "Movies", "Duplicate Movie (2024)");
-        var written = Directory.Exists(movieFolder)
-            ? Directory.GetFiles(movieFolder, "*.strm")
-            : Array.Empty<string>();
+        var written = Directory.GetFiles(movieFolder, "*.strm");
+        written.Should().HaveCount(2);
+        result.MovieNameCollisions.Should().Be(0, "the second stream is an alternative, not a collision");
+        result.MoviesCreated.Should().Be(2);
+        result.Errors.Should().Be(0);
 
-        written.Should().HaveCount(1, "the two streams collapse to one name");
-        result.MovieNameCollisions.Should().Be(1, "the refusal has to be counted, not silent");
-        result.MoviesCreated.Should().Be(1);
-        result.Errors.Should().Be(0, "a collision is a provider quirk, not a sync failure");
+        var primary = Path.Combine(movieFolder, "Duplicate Movie (2024) - FHD.strm");
+        var primaryStream = await StreamIdOfAsync(primary).ConfigureAwait(true);
+        var other = primaryStream == 100 ? 200 : 100;
+        var alternative = Path.Combine(movieFolder, $"Duplicate Movie (2024) - FHD - {other}.strm");
+        File.Exists(alternative).Should().BeTrue();
+        (await StreamIdOfAsync(alternative).ConfigureAwait(true)).Should().Be(other);
+    }
 
-        // The counter reaches the caller only if it is aggregated into the global result as well
-        // as the per-provider one. That wiring is easy to forget and invisible to a unit test.
-        _log.Should().Contain(l => l.StartsWith("[Warning] STRM name collision for movie", StringComparison.Ordinal));
+    private static async Task<int?> StreamIdOfAsync(string strmPath)
+        => StrmSyncService.ParseMovieStreamId(await File.ReadAllTextAsync(strmPath).ConfigureAwait(true));
 
-        // The surviving file belongs to exactly one of the two streams, and was not rewritten
-        // by the other. Before the fix the content was whichever stream happened to finish last.
-        var content = await File.ReadAllTextAsync(written[0]).ConfigureAwait(true);
-        content.Should().Match(c => c.Contains("/100.mp4", StringComparison.Ordinal) || c.Contains("/200.mp4", StringComparison.Ordinal));
+    // Same-title streams without an id: the primary is named like the folder, the alternative
+    // carries its stream id, and who is which does not change from one run to the next.
+    [Fact]
+    public async Task SameTitleStreams_KeepTheirRolesOnEveryRun()
+    {
+        StreamInfo[] Streams() =>
+        [
+            new StreamInfo { StreamId = 100, Name = "Twin Movie (2024)", ContainerExtension = "mp4" },
+            new StreamInfo { StreamId = 200, Name = "Twin Movie (2024)", ContainerExtension = "mp4" },
+        ];
+
+        await RunMovieSyncAsync(Streams(), useShippedDefaults: false).ConfigureAwait(true);
+        var folder = Path.Combine(_libraryPath, "Movies", "Twin Movie (2024)");
+        var primary = Path.Combine(folder, "Twin Movie (2024).strm");
+        var firstPrimary = await StreamIdOfAsync(primary).ConfigureAwait(true);
+
+        foreach (bool shipped in new[] { false, true, false })
+        {
+            var again = await RunMovieSyncAsync(Streams(), useShippedDefaults: shipped, cleanupOrphans: true).ConfigureAwait(true);
+            again.MovieNameCollisions.Should().Be(0);
+            (await StreamIdOfAsync(primary).ConfigureAwait(true)).Should().Be(firstPrimary);
+            Directory.GetFiles(folder, "*.strm").Should().HaveCount(2);
+        }
+    }
+
+    // The primary leaves the provider: its file is cleaned up as an orphan and the alternative takes
+    // the folder's name, in a full sync and in an incremental one that skips the unchanged stream.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenThePrimaryLeaves_TheAlternativeBecomesThePrimary(bool incremental)
+    {
+        StreamInfo Stream(int id) => new() { StreamId = id, Name = "Twin Movie (2024)", ContainerExtension = "mp4" };
+
+        await RunMovieSyncAsync([Stream(100), Stream(200)], useShippedDefaults: incremental).ConfigureAwait(true);
+        var folder = Path.Combine(_libraryPath, "Movies", "Twin Movie (2024)");
+        var primary = Path.Combine(folder, "Twin Movie (2024).strm");
+        int leaving = (await StreamIdOfAsync(primary).ConfigureAwait(true))!.Value;
+        int staying = leaving == 100 ? 200 : 100;
+
+        var result = await RunMovieSyncAsync([Stream(staying)], useShippedDefaults: incremental, cleanupOrphans: true).ConfigureAwait(true);
+
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().Equal("Twin Movie (2024).strm");
+        (await StreamIdOfAsync(primary).ConfigureAwait(true)).Should().Be(staying);
+        result.MovieNameCollisions.Should().Be(0);
+
+        // The next run recognises the promoted file as the stream's own instead of adding a second one.
+        await RunMovieSyncAsync([Stream(staying)], useShippedDefaults: incremental, cleanupOrphans: true).ConfigureAwait(true);
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().Equal("Twin Movie (2024).strm");
+    }
+
+    [Fact]
+    public async Task WhenAnAlternativeLeaves_ItsFileIsCleanedUpAndThePrimaryStays()
+    {
+        StreamInfo Stream(int id) => new() { StreamId = id, Name = "Twin Movie (2024)", ContainerExtension = "mp4" };
+
+        await RunMovieSyncAsync([Stream(100), Stream(200)], useShippedDefaults: true).ConfigureAwait(true);
+        var folder = Path.Combine(_libraryPath, "Movies", "Twin Movie (2024)");
+        var primary = Path.Combine(folder, "Twin Movie (2024).strm");
+        int staying = (await StreamIdOfAsync(primary).ConfigureAwait(true))!.Value;
+
+        await RunMovieSyncAsync([Stream(staying)], useShippedDefaults: true, cleanupOrphans: true).ConfigureAwait(true);
+
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().Equal("Twin Movie (2024).strm");
+        (await StreamIdOfAsync(primary).ConfigureAwait(true)).Should().Be(staying);
+    }
+
+    // Cleanup is off, so the departed primary's file is deliberately kept; nothing may overwrite it.
+    [Fact]
+    public async Task WithCleanupOff_AStalePrimaryIsNotReplacedByAnAlternative()
+    {
+        StreamInfo Stream(int id) => new() { StreamId = id, Name = "Twin Movie (2024)", ContainerExtension = "mp4" };
+
+        await RunMovieSyncAsync([Stream(100), Stream(200)], useShippedDefaults: false).ConfigureAwait(true);
+        var folder = Path.Combine(_libraryPath, "Movies", "Twin Movie (2024)");
+        var primary = Path.Combine(folder, "Twin Movie (2024).strm");
+        int leaving = (await StreamIdOfAsync(primary).ConfigureAwait(true))!.Value;
+        int staying = leaving == 100 ? 200 : 100;
+
+        await RunMovieSyncAsync([Stream(staying)], useShippedDefaults: false, cleanupOrphans: false).ConfigureAwait(true);
+
+        (await StreamIdOfAsync(primary).ConfigureAwait(true)).Should().Be(leaving);
+        File.Exists(Path.Combine(folder, $"Twin Movie (2024) - {staying}.strm")).Should().BeTrue();
+    }
+
+    // The same rule for a TMDB group: when the owner leaves, the guest takes the folder's name and
+    // is the owner on the next run, so it is not written a second time as a guest.
+    [Fact]
+    public async Task WhenAGroupOwnerLeaves_TheGuestBecomesTheOwnerOnEveryLaterRun()
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(200, "42");
+        await RunMovieSyncAsync(
+            [
+                new StreamInfo { StreamId = 100, Name = "Alpha Movie (2024)", ContainerExtension = "mp4" },
+                new StreamInfo { StreamId = 200, Name = "Beta Movie (2024)", ContainerExtension = "mp4" },
+            ],
+            useShippedDefaults: false,
+            groupByTmdbId: true).ConfigureAwait(true);
+
+        var folder = Path.Combine(_libraryPath, "Movies", "Alpha Movie (2024) [tmdbid-42]");
+        var primary = Path.Combine(folder, "Alpha Movie (2024) [tmdbid-42].strm");
+
+        for (int run = 0; run < 3; run++)
+        {
+            await RunMovieSyncAsync(
+                [new StreamInfo { StreamId = 200, Name = "Beta Movie (2024)", ContainerExtension = "mp4" }],
+                useShippedDefaults: run == 1,
+                groupByTmdbId: true,
+                cleanupOrphans: true).ConfigureAwait(true);
+
+            Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().Equal("Alpha Movie (2024) [tmdbid-42].strm");
+            (await StreamIdOfAsync(primary).ConfigureAwait(true)).Should().Be(200);
+        }
+    }
+
+    [Theory]
+    [InlineData("http://h/movie/u/p/123.mp4", 123)]
+    [InlineData("http://h/movie/u/p/123", 123)]
+    [InlineData("http://h:8080/movie/u/p/45.mkv?token=1", 45)]
+    [InlineData("http://d/proxy/vod/movie/0d4f1c2a?stream_id=5", null)]
+    [InlineData("http://h/live/u/p/9.ts", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void ParseMovieStreamId_ReadsOnlyXtreamMovieUrls(string? url, int? expected)
+        => StrmSyncService.ParseMovieStreamId(url).Should().Be(expected);
+
+    [Fact]
+    public void AlternativeFileName_PutsTheStreamIdBeforeTheExtension()
+        => StrmSyncService.AlternativeFileName("Movie (2024) - 4K.strm", 77).Should().Be("Movie (2024) - 4K - 77.strm");
+
+    [Fact]
+    public void PromoteAlternatives_PicksTheLowestStreamIdAndLeavesAWantedPrimaryAlone()
+    {
+        var wantedPrimary = Path.Combine(_libraryPath, "Wanted.strm");
+        File.WriteAllText(wantedPrimary, "http://h/movie/u/p/1.mp4");
+        var wantedAlt = Path.Combine(_libraryPath, "Wanted - 2.strm");
+        File.WriteAllText(wantedAlt, "http://h/movie/u/p/2.mp4");
+        var goneAlt3 = Path.Combine(_libraryPath, "Gone - 3.strm");
+        var goneAlt9 = Path.Combine(_libraryPath, "Gone - 9.strm");
+        File.WriteAllText(goneAlt3, "http://h/movie/u/p/3.mp4");
+        File.WriteAllText(goneAlt9, "http://h/movie/u/p/9.mp4");
+
+        var synced = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in new[] { wantedPrimary, wantedAlt, goneAlt3, goneAlt9 })
+        {
+            synced[f] = 0;
+        }
+
+        var alternatives = new System.Collections.Concurrent.ConcurrentDictionary<string, System.Collections.Concurrent.ConcurrentDictionary<int, string>>();
+        alternatives[wantedPrimary] = new() { [2] = wantedAlt };
+        var gonePrimary = Path.Combine(_libraryPath, "Gone.strm");
+        alternatives[gonePrimary] = new() { [9] = goneAlt9, [3] = goneAlt3 };
+
+        var promoted = StrmSyncService.PromoteAlternatives(alternatives, synced);
+
+        promoted.Should().ContainSingle().Which.StreamId.Should().Be(3);
+        File.Exists(gonePrimary).Should().BeTrue();
+        File.Exists(goneAlt3).Should().BeFalse();
+        File.Exists(goneAlt9).Should().BeTrue("only one alternative becomes the primary");
+        File.Exists(wantedAlt).Should().BeTrue();
+        synced.ContainsKey(gonePrimary).Should().BeTrue();
+        synced.ContainsKey(goneAlt3).Should().BeFalse();
     }
 
     [Fact]
@@ -129,17 +293,17 @@ public class StrmNameCollisionTests : IDisposable
     }
 
     [Fact]
-    public async Task TwoStreamsSharingAVersionTag_CollideTheSameWayAsAQualityTag()
+    public async Task TwoStreamsSharingAVersionTag_AreKeptTheSameWayAsAQualityTag()
     {
-        // V1/V2 became version labels in #75, so they can collide exactly like FHD does.
+        // V1/V2 became version labels in #75, so they share a name exactly like FHD does.
         var result = await RunMovieSyncAsync(
             new StreamInfo { StreamId = 100, Name = "Tagged Movie (2024) - [V1]", ContainerExtension = "mp4" },
             new StreamInfo { StreamId = 200, Name = "Tagged Movie (2024) - [V1]", ContainerExtension = "mp4" })
             .ConfigureAwait(true);
 
-        result.MovieNameCollisions.Should().Be(1);
+        result.MovieNameCollisions.Should().Be(0);
         Directory.GetFiles(Path.Combine(_libraryPath, "Movies", "Tagged Movie (2024)"), "*.strm")
-            .Should().HaveCount(1);
+            .Should().HaveCount(2);
     }
 
     // syncedFiles doubles as the orphan-protection set: the incremental and smart-skip paths bulk-add
@@ -251,10 +415,10 @@ public class StrmNameCollisionTests : IDisposable
     // the filesystem, so this test asserts what the host actually does rather than one platform's
     // answer, and fails if the two ever disagree.
     [Fact]
-    public async Task TitlesDifferingOnlyInCase_FollowTheFilesystem()
+    public async Task TitlesDifferingOnlyInCase_BothSurviveWhateverTheFilesystem()
     {
-        bool caseSensitive = IsCaseSensitive(_libraryPath);
-
+        // Case-sensitively these are two folders; case-insensitively one folder, where the
+        // second stream becomes an alternative. Either way nothing is lost or overwritten.
         var result = await RunMovieSyncAsync(
             new StreamInfo { StreamId = 100, Name = "Case Movie (2024)", ContainerExtension = "mp4" },
             new StreamInfo { StreamId = 200, Name = "CASE MOVIE (2024)", ContainerExtension = "mp4" })
@@ -262,17 +426,8 @@ public class StrmNameCollisionTests : IDisposable
 
         var written = Directory.GetFiles(Path.Combine(_libraryPath, "Movies"), "*.strm", SearchOption.AllDirectories);
         result.Errors.Should().Be(0);
-
-        if (caseSensitive)
-        {
-            result.MovieNameCollisions.Should().Be(0, "these are two distinct paths here");
-            written.Should().HaveCount(2);
-        }
-        else
-        {
-            result.MovieNameCollisions.Should().Be(1, "these are one file here, so the second must be refused");
-            written.Should().HaveCount(1);
-        }
+        result.MovieNameCollisions.Should().Be(0);
+        written.Should().HaveCount(2);
     }
 
     private static bool IsCaseSensitive(string dir)
@@ -293,7 +448,7 @@ public class StrmNameCollisionTests : IDisposable
     // HasDuplicateLibraryPaths but nothing refuses the config. A per-provider claim set would let
     // the second provider overwrite the first one's file with nothing counted.
     [Fact]
-    public async Task TwoProvidersSharingALibraryPath_StillDetectTheCollision()
+    public async Task TwoProvidersSharingALibraryPath_NeverOverwriteEachOther()
     {
         _client.Setup(c => c.GetVodCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Category> { new() { CategoryId = 1, CategoryName = "Movies" } });
@@ -306,9 +461,299 @@ public class StrmNameCollisionTests : IDisposable
         var result = await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: false, providerCount: 2)
             .ConfigureAwait(true);
 
-        result.MovieNameCollisions.Should().Be(1, "the second provider must not silently overwrite the first");
-        Directory.GetFiles(Path.Combine(_libraryPath, "Movies"), "*.strm", SearchOption.AllDirectories)
-            .Should().HaveCount(1);
+        // The second provider's copy is an alternative next to the first one's file.
+        result.MovieNameCollisions.Should().Be(0);
+        Directory.GetFiles(Path.Combine(_libraryPath, "Movies", "Shared Movie (2024)"), "*.strm")
+            .Select(Path.GetFileName).OrderBy(f => f, StringComparer.Ordinal)
+            .Should().Equal("Shared Movie (2024) - 100 - p2.strm", "Shared Movie (2024).strm");
+    }
+
+    // Stream ids are only unique within a provider. Provider 0 and provider 1 both list a stream 100
+    // for the same title; whichever leaves, the other one's file must neither be kept as if it were
+    // its own nor left without a primary. Only the staying provider cleans up, so the outcome is
+    // decided by who each file belongs to and not by one provider wiping the shared path.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task WhenOneProvidersStreamLeaves_TheOtherProvidersSameNumberedStreamIsNotTakenForIt(int leaving)
+    {
+        int staying = 1 - leaving;
+        StreamInfo SharedMovie() => new() { StreamId = 100, Name = "Shared Movie (2024)", ContainerExtension = "mp4" };
+        SetProviderCatalogue(0, SharedMovie());
+        SetProviderCatalogue(1, SharedMovie());
+
+        await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: true, providerCount: 2).ConfigureAwait(true);
+
+        var folder = Path.Combine(_libraryPath, "Movies", "Shared Movie (2024)");
+        Directory.GetFiles(folder, "*.strm").Should().HaveCount(2, "the second provider's copy is an alternative");
+
+        SetProviderCatalogue(leaving, new StreamInfo { StreamId = 999, Name = "Other Movie (2023)", ContainerExtension = "mp4" });
+        SetProviderCatalogue(staying, SharedMovie());
+        _configure = p => p.CleanupOrphans = p.Name == $"test{staying}";
+
+        await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: true, providerCount: 2).ConfigureAwait(true);
+
+        var remaining = Directory.GetFiles(folder, "*.strm");
+        remaining.Select(Path.GetFileName).Should().Equal("Shared Movie (2024).strm");
+        (await File.ReadAllTextAsync(remaining[0]).ConfigureAwait(true))
+            .Should().StartWith($"http://provider{staying}.test/movie/", "the leaving provider's file is gone and the other one is the primary");
+    }
+
+    // Both providers list a stream 100 and the first one also lists a second stream with the same
+    // title. Everything is kept: the primary, the first provider's alternative with its bare id,
+    // and the second provider's stream 100 under its own tag instead of a refused collision.
+    [Fact]
+    public async Task SameStreamIdOnTwoProviders_BothAlternativesAreWritten()
+    {
+        StreamInfo Movie(int id) => new() { StreamId = id, Name = "Shared Movie (2024)", ContainerExtension = "mp4" };
+        SetProviderCatalogue(0, Movie(100), Movie(200));
+        SetProviderCatalogue(1, Movie(100));
+
+        var result = await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: false, providerCount: 2).ConfigureAwait(true);
+
+        var files = Directory.GetFiles(Path.Combine(_libraryPath, "Movies", "Shared Movie (2024)"), "*.strm")
+            .Select(Path.GetFileName).ToArray();
+        result.MovieNameCollisions.Should().Be(0);
+        files.Should().HaveCount(3);
+        files.Should().Contain("Shared Movie (2024) - 100 - p2.strm");
+        files.Should().Contain("Shared Movie (2024).strm");
+    }
+
+    // A file the second provider wrote before tags existed keeps its name: renaming it would make
+    // Jellyfin see a new item and lose its watched state.
+    [Fact]
+    public async Task AnUntaggedFileOfTheSecondProvider_KeepsItsName()
+    {
+        var folder = Path.Combine(_libraryPath, "Movies", "Shared Movie (2024)");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllTextAsync(Path.Combine(folder, "Shared Movie (2024).strm"), "http://provider0.test/movie/u/p/100.mp4").ConfigureAwait(true);
+        await File.WriteAllTextAsync(Path.Combine(folder, "Shared Movie (2024) - 100.strm"), "http://provider1.test/movie/u/p/100.mp4").ConfigureAwait(true);
+        StreamInfo Movie() => new() { StreamId = 100, Name = "Shared Movie (2024)", ContainerExtension = "mp4" };
+        SetProviderCatalogue(0, Movie());
+        SetProviderCatalogue(1, Movie());
+
+        await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: false, providerCount: 2).ConfigureAwait(true);
+
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).OrderBy(f => f, StringComparer.Ordinal)
+            .Should().Equal("Shared Movie (2024) - 100.strm", "Shared Movie (2024).strm");
+    }
+
+    // The same file name belongs to the first provider when the URL says so, so it is not taken for
+    // the second provider's legacy file.
+    [Fact]
+    public async Task AnUntaggedFileOfTheFirstProvider_IsNotTakenForTheSecondProvidersOwn()
+    {
+        var folder = Path.Combine(_libraryPath, "Movies", "Shared Movie (2024)");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllTextAsync(Path.Combine(folder, "Shared Movie (2024).strm"), "http://provider0.test/movie/u/p/200.mp4").ConfigureAwait(true);
+        await File.WriteAllTextAsync(Path.Combine(folder, "Shared Movie (2024) - 100.strm"), "http://provider0.test/movie/u/p/100.mp4").ConfigureAwait(true);
+        StreamInfo Movie(int id) => new() { StreamId = id, Name = "Shared Movie (2024)", ContainerExtension = "mp4" };
+        SetProviderCatalogue(0, Movie(200), Movie(100));
+        SetProviderCatalogue(1, Movie(100));
+
+        await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: false, providerCount: 2).ConfigureAwait(true);
+
+        var files = Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).ToArray();
+        files.Should().HaveCount(3);
+        files.Should().Contain("Shared Movie (2024) - 100 - p2.strm");
+        (await File.ReadAllTextAsync(Path.Combine(folder, "Shared Movie (2024) - 100.strm")).ConfigureAwait(true))
+            .Should().StartWith("http://provider0.test/");
+    }
+
+    [Theory]
+    [InlineData(null, "Movie - 100.strm")]
+    [InlineData("p2", "Movie - 100 - p2.strm")]
+    public void AlternativeFileName_AddsTheProviderTagOnlyWhenThereIsOne(string? tag, string expected)
+        => StrmSyncService.AlternativeFileName("Movie.strm", 100, tag).Should().Be(expected);
+
+    [Fact]
+    public void AlternativeTag_TagsEveryProviderOfASharedPathButTheFirst()
+    {
+        var first = new ProviderConfig { BaseUrl = "http://a", Username = "u", LibraryPath = "/media" };
+        var other = new ProviderConfig { BaseUrl = "http://o", Username = "u", LibraryPath = "/other" };
+        var second = new ProviderConfig { BaseUrl = "http://b", Username = "u", LibraryPath = "/media/" };
+        var third = new ProviderConfig { BaseUrl = "http://c", Username = "u", LibraryPath = " /MEDIA " };
+        var providers = new[] { first, other, second, third };
+
+        StrmSyncService.AlternativeTag(providers, first).Should().BeNull();
+        StrmSyncService.AlternativeTag(providers, other).Should().BeNull("it is alone on its path");
+        StrmSyncService.AlternativeTag(providers, second).Should().Be("p2");
+        StrmSyncService.AlternativeTag(providers, third).Should().Be("p3");
+
+        second.IsEnabled = false;
+        StrmSyncService.AlternativeTag(providers, third).Should().Be("p3", "switching a provider off renames nothing");
+    }
+
+    [Fact]
+    public void AlternativeTag_FindsAProviderThatIsACopyOfAConfiguredOne()
+    {
+        var first = new ProviderConfig { BaseUrl = "http://a", Username = "u", LibraryPath = "/media" };
+        var second = new ProviderConfig { BaseUrl = "http://b", Username = "u", LibraryPath = "/media" };
+        var copy = new ProviderConfig { BaseUrl = "http://b", Username = "u", LibraryPath = "/media" };
+
+        StrmSyncService.AlternativeTag(new[] { first, second }, copy).Should().Be("p2");
+    }
+
+    [Theory]
+    [InlineData("http://a.test/movie/u/p/100.mp4", "http://a.test", true, 100)]
+    [InlineData("http://a.test/movie/u/p/100.mp4", "http://a.test/", true, 100)]
+    [InlineData("HTTP://A.TEST/movie/u/p/100.mp4", "http://a.test", true, 100)]
+    [InlineData("http://b.test/movie/u/p/100.mp4", "http://a.test", true, StrmOwnerResolver.OtherProvider)]
+    [InlineData("http://a.test:8080/movie/u/p/100.mp4", "http://a.test", true, StrmOwnerResolver.OtherProvider)]
+    [InlineData("http://b.test/movie/u/p/100.mp4", "http://a.test", false, 100)]
+    [InlineData("http://d.test/proxy/vod/movie/abc?stream_id=5", "http://a.test", true, null)]
+    [InlineData(null, "http://a.test", true, null)]
+    public void StrmOwnerResolver_NamesTheProviderOnlyWhenPathsAreShared(string? url, string baseUrl, bool scoped, int? expected)
+        => new StrmOwnerResolver(baseUrl, scoped).OwnerOf(url).Should().Be(expected);
+
+    // Two accounts on one server share the host and differ only in the segment after "/movie/".
+    // The password is not compared: changing it must not turn the provider's own files foreign.
+    [Theory]
+    [InlineData("http://a.test/movie/u/p/100.mp4", "u", 100)]
+    [InlineData("http://a.test/movie/u/other-password/100.mp4", "u", 100)]
+    [InlineData("http://a.test/movie/v/p/100.mp4", "u", StrmOwnerResolver.OtherProvider)]
+    [InlineData("http://a.test/movie/U/p/100.mp4", "u", StrmOwnerResolver.OtherProvider)]
+    [InlineData("http://b.test/movie/u/p/100.mp4", "u", StrmOwnerResolver.OtherProvider)]
+    [InlineData("http://a.test/movie/100.mp4", "u", 100)]
+    [InlineData("http://a.test/movie/v/p/100.mp4", null, 100)]
+    [InlineData("http://a.test/movie/v/p/100.mp4", "", 100)]
+    [InlineData("http://d.test/proxy/vod/movie/abc?stream_id=5", "u", null)]
+    public void StrmOwnerResolver_TellsTwoAccountsOnOneHostApart(string url, string? username, int? expected)
+        => new StrmOwnerResolver("http://a.test", true, null, username).OwnerOf(url).Should().Be(expected);
+
+    [Fact]
+    public void StrmOwnerResolver_IgnoresTheAccountWhenPathsAreNotShared()
+        => new StrmOwnerResolver("http://a.test", false, null, "u").OwnerOf("http://a.test/movie/v/p/100.mp4").Should().Be(100);
+
+    [Theory]
+    [InlineData("Movie - 100 - p2.strm", 100, null, "Movie.strm")]
+    [InlineData("Movie - 100 - p3.strm", 100, "p2", "Movie.strm")]
+    [InlineData("Movie (2024) - [V2] - 100 - p12.strm", 100, "p2", "Movie (2024) - [V2].strm")]
+    [InlineData("Movie - 100 - p2.strm", 100, "p2", null)]
+    [InlineData("Movie - 100 - P2.strm", 100, "p2", null)]
+    [InlineData("Movie - 200 - p2.strm", 100, null, null)]
+    [InlineData("Movie - 1100 - p2.strm", 100, null, null)]
+    [InlineData("Movie - 100.strm", 100, null, null)]
+    [InlineData("Movie - 100 - px.strm", 100, null, null)]
+    [InlineData("Movie - 100 - p.strm", 100, null, null)]
+    [InlineData(" - 100 - p2.strm", 100, null, null)]
+    [InlineData("Movie - 100 - p2.mp4", 100, null, null)]
+    public void ObsoleteTaggedPrimaryName_NamesThePrimaryOnlyForAnotherTagOfTheSameStream(string fileName, int streamId, string? currentTag, string? expected)
+        => StrmSyncService.ObsoleteTaggedPrimaryName(fileName, streamId, currentTag).Should().Be(expected);
+
+    // Two accounts on one server: the URLs differ only after "/movie/", so the host alone cannot
+    // say whose file the primary is. Account v lists the stream the primary file names, and the
+    // file is account u's: it stays, and v's copy goes next to it under v's tag.
+    [Fact]
+    public async Task TwoAccountsOnOneHost_DoNotTakeEachOthersPrimaryForTheirOwn()
+    {
+        var folder = Path.Combine(_libraryPath, "Movies", "Shared Movie (2024)");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllTextAsync(Path.Combine(folder, "Shared Movie (2024).strm"), "http://shared.test/movie/u/p/100.mp4").ConfigureAwait(true);
+        SetAccountCatalogue("http://shared.test", "u", new StreamInfo { StreamId = 999, Name = "Other Movie (2023)", ContainerExtension = "mp4" });
+        SetAccountCatalogue("http://shared.test", "v", new StreamInfo { StreamId = 100, Name = "Shared Movie (2024)", ContainerExtension = "mp4" });
+        _configure = p =>
+        {
+            p.BaseUrl = "http://shared.test";
+            p.Username = p.Name == "test0" ? "u" : "v";
+        };
+
+        await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: false, providerCount: 2).ConfigureAwait(true);
+
+        (await File.ReadAllTextAsync(Path.Combine(folder, "Shared Movie (2024).strm")).ConfigureAwait(true))
+            .Should().Be("http://shared.test/movie/u/p/100.mp4", "the primary is the other account's file");
+        (await File.ReadAllTextAsync(Path.Combine(folder, "Shared Movie (2024) - 100 - p2.strm")).ConfigureAwait(true))
+            .Should().Be("http://shared.test/movie/v/p/100.mp4");
+    }
+
+    // A tag can pass from one provider to the next when a provider ahead of them is removed. The
+    // file under the inherited tag is still the departed provider's, and the existing check one
+    // line below the tagged path (the untagged one) must apply to it as well.
+    [Fact]
+    public async Task ATaggedAlternativeOfAnotherProvider_IsNotOverwritten()
+    {
+        var folder = Path.Combine(_libraryPath, "Movies", "Shared Movie (2024)");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllTextAsync(Path.Combine(folder, "Shared Movie (2024).strm"), "http://provider0.test/movie/u/p/100.mp4").ConfigureAwait(true);
+        var tagged = Path.Combine(folder, "Shared Movie (2024) - 100 - p2.strm");
+        await File.WriteAllTextAsync(tagged, "http://gone.test/movie/u/p/100.mp4").ConfigureAwait(true);
+        StreamInfo Movie() => new() { StreamId = 100, Name = "Shared Movie (2024)", ContainerExtension = "mp4" };
+        SetProviderCatalogue(0, Movie());
+        SetProviderCatalogue(1, Movie());
+
+        var result = await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: false, providerCount: 2).ConfigureAwait(true);
+
+        (await File.ReadAllTextAsync(tagged).ConfigureAwait(true)).Should().Be("http://gone.test/movie/u/p/100.mp4");
+        result.MovieNameCollisions.Should().Be(1, "the refused overwrite is counted");
+        result.FailedItems.Should().ContainSingle(f => f.ItemType == "Movie" && f.ItemId == 100, "the snapshot must leave it out so the next sync retries it");
+        Directory.GetFiles(folder, "*.strm").Should().HaveCount(2);
+    }
+
+    // The provider that used to be second is first now, so its tag is gone. Its file still says
+    // "p2": it is reused, and no second file is written beside it.
+    [Fact]
+    public async Task AnAlternativeUnderAnObsoleteTag_IsReusedInsteadOfWrittenTwice()
+    {
+        var folder = Path.Combine(_libraryPath, "Movies", "Shared Movie (2024)");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllTextAsync(Path.Combine(folder, "Shared Movie (2024).strm"), "http://provider0.test/movie/u/p/200.mp4").ConfigureAwait(true);
+        await File.WriteAllTextAsync(Path.Combine(folder, "Shared Movie (2024) - 100 - p2.strm"), "http://provider0.test/movie/u/p/100.mp4").ConfigureAwait(true);
+        StreamInfo Movie(int id) => new() { StreamId = id, Name = "Shared Movie (2024)", ContainerExtension = "mp4" };
+        SetProviderCatalogue(0, Movie(200), Movie(100));
+        SetProviderCatalogue(1, new StreamInfo { StreamId = 999, Name = "Other Movie (2023)", ContainerExtension = "mp4" });
+
+        await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: false, providerCount: 2).ConfigureAwait(true);
+
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).OrderBy(f => f, StringComparer.Ordinal)
+            .Should().Equal("Shared Movie (2024) - 100 - p2.strm", "Shared Movie (2024).strm");
+    }
+
+    // Once the file under the current name exists, the obsolete one is a leftover. The movies are
+    // unchanged on the second run, so this goes through the protection of unchanged movies and not
+    // through the sync loop.
+    [Fact]
+    public async Task AnObsoleteTaggedFile_IsCleanedOnceTheCurrentOneExists()
+    {
+        // Stream 200 holds the primary from the start, so the order the streams are reached in
+        // does not decide which one becomes the alternative.
+        var folder = Path.Combine(_libraryPath, "Movies", "Shared Movie (2024)");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllTextAsync(Path.Combine(folder, "Shared Movie (2024).strm"), "http://provider0.test/movie/u/p/200.mp4").ConfigureAwait(true);
+        StreamInfo Movie(int id) => new() { StreamId = id, Name = "Shared Movie (2024)", ContainerExtension = "mp4" };
+        SetProviderCatalogue(0, Movie(200), Movie(100));
+        SetProviderCatalogue(1, new StreamInfo { StreamId = 999, Name = "Other Movie (2023)", ContainerExtension = "mp4" });
+        await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: true, providerCount: 2).ConfigureAwait(true);
+
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).OrderBy(f => f, StringComparer.Ordinal)
+            .Should().Equal("Shared Movie (2024) - 100.strm", "Shared Movie (2024).strm");
+        await File.WriteAllTextAsync(Path.Combine(folder, "Shared Movie (2024) - 100 - p2.strm"), "http://provider0.test/movie/u/p/100.mp4").ConfigureAwait(true);
+
+        _configure = p => p.CleanupOrphans = p.Name == "test0";
+        await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: true, providerCount: 2).ConfigureAwait(true);
+
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).OrderBy(f => f, StringComparer.Ordinal)
+            .Should().Equal("Shared Movie (2024) - 100.strm", "Shared Movie (2024).strm");
+    }
+
+    // The same stream's obsolete file is kept while the current name is free, also for an
+    // unchanged movie, instead of being protected without ever being registered.
+    [Fact]
+    public async Task AnObsoleteTaggedFile_IsKeptAsTheAlternativeWhileTheCurrentNameIsFree()
+    {
+        var folder = Path.Combine(_libraryPath, "Movies", "Shared Movie (2024)");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllTextAsync(Path.Combine(folder, "Shared Movie (2024).strm"), "http://provider0.test/movie/u/p/200.mp4").ConfigureAwait(true);
+        await File.WriteAllTextAsync(Path.Combine(folder, "Shared Movie (2024) - 100 - p2.strm"), "http://provider0.test/movie/u/p/100.mp4").ConfigureAwait(true);
+        StreamInfo Movie(int id) => new() { StreamId = id, Name = "Shared Movie (2024)", ContainerExtension = "mp4" };
+        SetProviderCatalogue(0, Movie(200), Movie(100));
+        SetProviderCatalogue(1, new StreamInfo { StreamId = 999, Name = "Other Movie (2023)", ContainerExtension = "mp4" });
+        await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: true, providerCount: 2).ConfigureAwait(true);
+
+        _configure = p => p.CleanupOrphans = p.Name == "test0";
+        await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: true, providerCount: 2).ConfigureAwait(true);
+
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).OrderBy(f => f, StringComparer.Ordinal)
+            .Should().Equal("Shared Movie (2024) - 100 - p2.strm", "Shared Movie (2024).strm");
     }
 
     // GitHub #90. Every version of a title (V1/V2/V3) resolves to one folder and therefore to one
@@ -478,13 +923,13 @@ public class StrmNameCollisionTests : IDisposable
             groupByTmdbId: true,
             cleanupOrphans: true).ConfigureAwait(true);
 
-        File.Exists(guestFile).Should().BeTrue("the provider still lists this stream");
-
-        // The other half of the same rule: only the guest's own file is spared. Protecting the
-        // whole shared folder would keep the departed owner's file in the library forever.
-        File.Exists(Path.Combine(
-            _libraryPath, "Movies", "Alpha Movie (2024) [tmdbid-42]", "Alpha Movie (2024) [tmdbid-42].strm"))
-            .Should().BeFalse("the provider stopped listing that stream");
+        // The owner is gone, so the guest takes the folder's name: its file is kept, as the
+        // primary, and the departed owner's file is not left behind.
+        var folder = Path.Combine(_libraryPath, "Movies", "Alpha Movie (2024) [tmdbid-42]");
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().Equal("Alpha Movie (2024) [tmdbid-42].strm");
+        (await File.ReadAllTextAsync(Path.Combine(folder, "Alpha Movie (2024) [tmdbid-42].strm")).ConfigureAwait(true))
+            .Should().EndWith("/200.mp4", "the provider still lists this stream");
+        File.Exists(guestFile).Should().BeFalse("it was renamed to the primary's name");
     }
 
     // Codex review finding: two streams can share a title and a year. Deciding who owns the folder
@@ -835,6 +1280,23 @@ public class StrmNameCollisionTests : IDisposable
 
         StrmFiles("Series").Should().HaveCount(12).And.NotContain(f => f.StartsWith("Kids", StringComparison.Ordinal));
         result.OrphanCleanupBlockedByThreshold.Should().BeFalse();
+    }
+
+    private void SetProviderCatalogue(int providerIndex, params StreamInfo[] streams)
+    {
+        string baseUrl = $"http://provider{providerIndex}.test";
+        _client.Setup(c => c.GetVodCategoryAsync(It.Is<ConnectionInfo>(i => i.BaseUrl == baseUrl), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Category> { new() { CategoryId = 1, CategoryName = "Movies" } });
+        _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.Is<ConnectionInfo>(i => i.BaseUrl == baseUrl), 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<StreamInfo>(streams));
+    }
+
+    private void SetAccountCatalogue(string baseUrl, string userName, params StreamInfo[] streams)
+    {
+        _client.Setup(c => c.GetVodCategoryAsync(It.Is<ConnectionInfo>(i => i.BaseUrl == baseUrl && i.UserName == userName), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Category> { new() { CategoryId = 1, CategoryName = "Movies" } });
+        _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.Is<ConnectionInfo>(i => i.BaseUrl == baseUrl && i.UserName == userName), 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<StreamInfo>(streams));
     }
 
     private string[] MovieFolders()

@@ -527,8 +527,8 @@ public class PluginConfiguration : BasePluginConfiguration
 
         // Warn on duplicate library paths (orphan cleanup cross-contamination)
         var paths = Providers
-            .Where(p => !string.IsNullOrEmpty(p.LibraryPath))
-            .Select(p => p.LibraryPath)
+            .Where(p => !string.IsNullOrEmpty(p.EffectiveLibraryPath))
+            .Select(p => p.EffectiveLibraryPath)
             .ToList();
         HasDuplicateLibraryPaths = paths.Count != paths.Distinct(StringComparer.OrdinalIgnoreCase).Count();
     }

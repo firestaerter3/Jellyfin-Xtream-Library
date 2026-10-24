@@ -124,7 +124,11 @@ public class SnapshotService : IDisposable
             string.Join(",", provider.ExcludedSeriesIds?.OrderBy(id => id) ?? Enumerable.Empty<int>()),
             enableMetadataLookup.ToString(CultureInfo.InvariantCulture),
             provider.TmdbFolderIdOverrides ?? string.Empty,
-            provider.TvdbFolderIdOverrides ?? string.Empty);
+            provider.TvdbFolderIdOverrides ?? string.Empty,
+            // Same-title movies without an id used to be dropped after the first. They are kept
+            // as alternatives now, which only a full sync can write for streams a snapshot
+            // already lists as done.
+            "movie-name-alternatives-v1");
 
         return ComputeMd5(data);
     }
