@@ -4122,6 +4122,36 @@ public partial class StrmSyncService
     }
 
     /// <summary>
+    /// Episode count to record for a series in the new snapshot. A series smart-skipped this run
+    /// has no fetched info, so it keeps the previous count while its last_modified is unchanged.
+    /// Recording 0 instead makes the next sync fetch every skipped series again. A series that was
+    /// fetched but came back without episodes stays at 0, so the next sync reads it again.
+    /// </summary>
+    /// <param name="seriesInfo">Series info fetched during this run.</param>
+    /// <param name="previousSnapshot">Snapshot from the previous run, may be null.</param>
+    /// <param name="series">Series to look up.</param>
+    /// <returns>The episode count, or 0 when it is not known.</returns>
+    internal static int EffectiveEpisodeCount(
+        ConcurrentDictionary<int, SeriesStreamInfo> seriesInfo,
+        ContentSnapshot? previousSnapshot,
+        Series series)
+    {
+        if (seriesInfo.TryGetValue(series.SeriesId, out var info))
+        {
+            return info.Episodes?.Values.Sum(eps => eps.Count) ?? 0;
+        }
+
+        if (previousSnapshot != null &&
+            previousSnapshot.Series.TryGetValue(series.SeriesId, out var earlier) &&
+            Math.Abs((series.LastModified.GetValueOrDefault() - earlier.LastModified).TotalSeconds) < 1)
+        {
+            return earlier.EpisodeCount;
+        }
+
+        return 0;
+    }
+
+    /// <summary>
     /// Whether a metadata id is worth acting on. Providers routinely send 0 for "no id", and a
     /// grouping feature that treats 0 as an id would put every such film in one folder and then
     /// offer that folder for an irreversible merge (GitHub #88).
@@ -4742,12 +4772,7 @@ public partial class StrmSyncService
             {
                 if (processedSeriesIds.Add(series.SeriesId) && !failedSeriesIds.Contains(series.SeriesId))
                 {
-                    var episodeCount = 0;
-                    if (seriesInfoDict.TryGetValue(series.SeriesId, out var info) && info.Episodes != null)
-                    {
-                        episodeCount = info.Episodes.Values.Sum(eps => eps.Count);
-                    }
-
+                    var episodeCount = EffectiveEpisodeCount(seriesInfoDict, carryForwardFrom, series);
                     var seriesIdentity = EffectiveSeriesIdentity(seriesIdentities, carryForwardFrom, series.SeriesId);
                     snapshot.Series[series.SeriesId] = new SeriesSnapshot
                     {
