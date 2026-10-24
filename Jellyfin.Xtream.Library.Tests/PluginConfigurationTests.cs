@@ -100,17 +100,6 @@ public class PluginConfigurationTests
     }
 
     [Fact]
-    public void ProviderConfig_Validate_ClampsFullSyncChangeThreshold_ToValidRange()
-    {
-        var pLow = new ProviderConfig { FullSyncChangeThreshold = -0.5 };
-        var pHigh = new ProviderConfig { FullSyncChangeThreshold = 2.0 };
-        pLow.Validate();
-        pHigh.Validate();
-        pLow.FullSyncChangeThreshold.Should().Be(0.0);
-        pHigh.FullSyncChangeThreshold.Should().Be(1.0);
-    }
-
-    [Fact]
     public void ProviderConfig_DefaultValues_AreReasonable()
     {
         var provider = new ProviderConfig();
@@ -122,7 +111,6 @@ public class PluginConfigurationTests
         provider.RetryDelayMs.Should().Be(1000);
         provider.EnableIncrementalSync.Should().BeTrue();
         provider.FullSyncIntervalDays.Should().Be(7);
-        provider.FullSyncChangeThreshold.Should().Be(0.50);
     }
 
     [Fact]

@@ -54,7 +54,6 @@ public class SyncControllerTests
         var appPathsMock = new Mock<IServerApplicationPaths>();
         appPathsMock.Setup(p => p.DataPath).Returns("/tmp");
         var snapshotService = new SnapshotService(appPathsMock.Object, NullLogger<SnapshotService>.Instance);
-        var deltaCalculator = new DeltaCalculator(NullLogger<DeltaCalculator>.Instance);
 
         var mockDispatcharrClient = new Mock<IDispatcharrClient>();
         var appHostMock = new Mock<IServerApplicationHost>();
@@ -67,7 +66,6 @@ public class SyncControllerTests
             _mockLibraryManager.Object,
             _mockMetadataLookup.Object,
             snapshotService,
-            deltaCalculator,
             liveTvService,
             appPathsMock.Object,
             _mockSyncServiceLogger.Object);
@@ -256,7 +254,6 @@ public class SyncControllerTests
             appPathsMock.Setup(p => p.DataPath).Returns("/tmp");
 
             var snapshotService = new SnapshotService(appPathsMock.Object, NullLogger<SnapshotService>.Instance);
-            var deltaCalculator = new DeltaCalculator(NullLogger<DeltaCalculator>.Instance);
             var mockDispatcharrClient = new Mock<IDispatcharrClient>();
             var appHostMock = new Mock<IServerApplicationHost>();
             appHostMock.Setup(h => h.GetApiUrlForLocalAccess(It.IsAny<System.Net.IPAddress>(), It.IsAny<bool>()))
@@ -268,7 +265,6 @@ public class SyncControllerTests
                 _mockLibraryManager.Object,
                 _mockMetadataLookup.Object,
                 snapshotService,
-                deltaCalculator,
                 liveTvService,
                 appPathsMock.Object,
                 _mockSyncServiceLogger.Object);

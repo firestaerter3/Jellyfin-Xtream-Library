@@ -160,7 +160,7 @@ For automatic TMDb/TVDb ID lookup:
 2. Enable **Live TV**
 3. Click **Load Categories** and select the Live TV categories you want
    - Optionally, expand any category with the ▸ toggle to enable or disable individual channels (all enabled by default). After editing per-channel selections, hit **Refresh Live TV cache** for the M3U/EPG to pick up the change.
-4. Enable **Native Tuner** to register as a Jellyfin tuner (recommended)
+4. Under **How does Jellyfin get the channels?** pick the **Native tuner** (the plugin lists itself under Tuner Devices and publishes no playlist) or **My own M3U tuner** (you add an M3U Tuner with the plugin's playlist URL, which carries your provider password; it can stream without transcoding)
 5. Enable **EPG** for programme guide data (fetches XMLTV automatically)
 6. Optionally enable **Catchup** for timeshift replay support
 7. Click **Save**
@@ -315,9 +315,10 @@ Xtream password.**
 
 - **Do not expose the plugin's endpoints to the open internet.** If Jellyfin itself is public,
   restrict `/XtreamLibrary/` at your reverse proxy to the addresses that actually need it.
-- **Prefer the native tuner over the M3U tuner.** With Enable Native Tuner the plugin hands
-  channels to Jellyfin internally and never publishes a playlist, so no credential-bearing URL is
-  served to an anonymous caller.
+- **For exposure, the native tuner is the safer choice.** With the native tuner chosen the plugin
+  hands channels to Jellyfin internally and never publishes a playlist, so no credential-bearing URL
+  is served to an anonymous caller. If you use the M3U tuner, keep the playlist behind the
+  allow-list or your reverse proxy.
 - **Leave Publish Playlists off unless something reads the playlists.** `LiveTv.m3u` and
   `Catchup.m3u` are only served while it is on; otherwise they answer 404. Only Jellyfin's M3U
   tuner and external players such as TiviMate need them. It is off when you enable Live TV on a new

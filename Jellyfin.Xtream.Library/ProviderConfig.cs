@@ -269,11 +269,6 @@ public class ProviderConfig
     /// </summary>
     public int FullSyncIntervalDays { get; set; } = 7;
 
-    /// <summary>
-    /// Gets or sets the change threshold (0.0 to 1.0) that triggers a full sync.
-    /// </summary>
-    public double FullSyncChangeThreshold { get; set; } = 0.50;
-
     // =====================
     // Orphan Cleanup
     // =====================
@@ -351,6 +346,5 @@ public class ProviderConfig
         OrphanSafetyThreshold = Math.Clamp(OrphanSafetyThreshold, 0.0, 1.0);
 
         FullSyncIntervalDays = Math.Clamp(FullSyncIntervalDays, 1, 30);
-        FullSyncChangeThreshold = Math.Clamp(FullSyncChangeThreshold, 0.0, 1.0);
     }
 }

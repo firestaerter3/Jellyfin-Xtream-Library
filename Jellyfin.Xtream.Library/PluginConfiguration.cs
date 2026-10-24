@@ -194,6 +194,21 @@ public class PluginConfiguration : BasePluginConfiguration
     public string LiveTvOutputFormat { get; set; } = "ts";
 
     /// <summary>
+    /// Gets or sets how long, in milliseconds, ffmpeg may analyse a native-tuner channel whose
+    /// stream stats are known before it starts writing. 0 leaves it to Jellyfin's own setting
+    /// (the container's FFmpeg:analyzeduration). Not on the settings page; for measuring
+    /// (homelab-ops #550).
+    /// </summary>
+    public int LiveTvAnalyzeDurationMs { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether a native-tuner channel with stream stats declares
+    /// its audio codec, so Jellyfin can copy the audio instead of re-encoding it. Not on the
+    /// settings page; for measuring (homelab-ops #550).
+    /// </summary>
+    public bool LiveTvCopyAudio { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether to include adult channels.
     /// </summary>
     public bool IncludeAdultChannels { get; set; }
@@ -438,9 +453,6 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>Gets or sets the legacy full sync interval days. Migrated to Providers[0].</summary>
     public int FullSyncIntervalDays { get; set; } = 7;
-
-    /// <summary>Gets or sets the legacy full sync change threshold. Migrated to Providers[0].</summary>
-    public double FullSyncChangeThreshold { get; set; } = 0.50;
 
     /// <summary>Gets or sets the legacy request delay ms. Migrated to Providers[0].</summary>
     public int RequestDelayMs { get; set; } = 50;

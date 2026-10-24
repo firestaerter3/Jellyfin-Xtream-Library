@@ -553,6 +553,40 @@ public sealed class CatchupHistoryXmltvTests : IDisposable
     }
 
     [Fact]
+    public async Task AChannelListedTwiceIsRecordedOnceAndTheGuideStaysTheSame()
+    {
+        // Some guides list a channel twice, about 15 minutes apart (#166). The recorded guide must
+        // keep one copy, and a past copy read only for the recording must not hide the copy that is
+        // still inside the EPG window.
+        var now = DateTimeOffset.UtcNow;
+        _client
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiveStreamInfo>
+            {
+                new() { StreamId = 1, Num = 1, Name = "Archive", EpgChannelId = "arch", TvArchive = true, TvArchiveDuration = 3 },
+            });
+        _client
+            .Setup(c => c.GetXmltvAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("<tv>"
+                + Programme("arch", now.AddHours(-20), now.AddHours(-19), "Last night")
+                + Programme("arch", now.AddMinutes(-100), now.AddMinutes(-61), "Just ended")
+                + Programme("arch", now.AddMinutes(-30), now.AddMinutes(30), "Now on")
+                + Programme("arch", now.AddHours(-20).AddMinutes(15), now.AddHours(-19).AddMinutes(15), "Last night")
+                + Programme("arch", now.AddMinutes(-85), now.AddMinutes(-46), "Just ended")
+                + Programme("arch", now.AddMinutes(-15), now.AddMinutes(45), "Now on")
+                + "</tv>");
+
+        var xml = await _liveTvService.GetXmltvEpgAsync(CancellationToken.None);
+
+        var shown = System.Xml.Linq.XDocument.Parse(xml).Descendants("programme").Select(p => p.Element("title")!.Value).ToList();
+        shown.Should().Equal(new[] { "Now on", "Just ended" },
+            "the second listing of a current programme is left out, and the copy of \"Just ended\" still inside the window is shown");
+
+        var recorded = await _liveTvService.CatchupHistory.LoadAsync(ProviderKey, 1, CancellationToken.None);
+        recorded.Select(e => e.Title).Should().Equal("Last night", "Just ended", "Now on");
+    }
+
+    [Fact]
     public async Task AnXmltvWithOnlyPastProgrammesKeepsItsHistoryAndStillFallsBackForTheGuide()
     {
         // A fully-read upstream XMLTV whose programmes all fall outside the EPG window writes

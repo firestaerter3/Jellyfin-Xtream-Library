@@ -226,7 +226,7 @@ public class LiveTvControllerTests : IDisposable
 
         var result = await _controller.GetM3UPlaylist(System.Threading.CancellationToken.None);
 
-        result.Should().BeOfType<NotFoundResult>();
+        result.Should().BeOfType<ContentResult>().Which.StatusCode.Should().Be(StatusCodes.Status404NotFound);
     }
 
     [Fact]
@@ -242,7 +242,7 @@ public class LiveTvControllerTests : IDisposable
 
         var result = await _controller.GetM3UPlaylist(System.Threading.CancellationToken.None);
 
-        result.Should().BeOfType<NotFoundResult>();
+        result.Should().BeOfType<ContentResult>().Which.StatusCode.Should().Be(StatusCodes.Status404NotFound);
     }
 
     [Fact]
@@ -254,7 +254,7 @@ public class LiveTvControllerTests : IDisposable
 
         var result = await _controller.GetCatchupM3UPlaylist(System.Threading.CancellationToken.None);
 
-        result.Should().BeOfType<NotFoundResult>();
+        result.Should().BeOfType<ContentResult>().Which.StatusCode.Should().Be(StatusCodes.Status404NotFound);
     }
 
     [Fact]
@@ -298,7 +298,7 @@ public class LiveTvControllerTests : IDisposable
 
         var result = await _controller.GetM3UPlaylist(System.Threading.CancellationToken.None);
 
-        result.Should().BeOfType<NotFoundResult>();
+        result.Should().BeOfType<ContentResult>().Which.StatusCode.Should().Be(StatusCodes.Status404NotFound);
     }
 
     [Fact]
@@ -310,7 +310,7 @@ public class LiveTvControllerTests : IDisposable
 
         var result = await _controller.GetCatchupM3UPlaylist(System.Threading.CancellationToken.None);
 
-        result.Should().BeOfType<NotFoundResult>();
+        result.Should().BeOfType<ContentResult>().Which.StatusCode.Should().Be(StatusCodes.Status404NotFound);
     }
 
     [Fact]
@@ -321,7 +321,7 @@ public class LiveTvControllerTests : IDisposable
 
         var result = await _controller.GetM3UPlaylist(System.Threading.CancellationToken.None);
 
-        result.Should().BeOfType<BadRequestObjectResult>();
+        result.Should().BeOfType<ContentResult>().Which.StatusCode.Should().Be(StatusCodes.Status400BadRequest);
     }
 
     [Fact]
@@ -333,7 +333,7 @@ public class LiveTvControllerTests : IDisposable
 
         var result = await _controller.GetEpgXml(System.Threading.CancellationToken.None);
 
-        result.Should().BeOfType<BadRequestObjectResult>();
+        result.Should().BeOfType<ContentResult>().Which.StatusCode.Should().Be(StatusCodes.Status400BadRequest);
     }
 
     [Fact]
@@ -346,7 +346,8 @@ public class LiveTvControllerTests : IDisposable
 
         var result = await _controller.GetM3UPlaylist(System.Threading.CancellationToken.None);
 
-        result.Should().BeOfType<BadRequestObjectResult>("the request got past the allow-list to the Live TV check");
+        result.Should().BeOfType<ContentResult>("the request got past the allow-list to the Live TV check")
+            .Which.StatusCode.Should().Be(StatusCodes.Status400BadRequest);
     }
 
     [Fact]
@@ -358,6 +359,68 @@ public class LiveTvControllerTests : IDisposable
 
         var result = await _controller.GetEpgXml(System.Threading.CancellationToken.None);
 
-        result.Should().BeOfType<NotFoundResult>();
+        result.Should().BeOfType<ContentResult>().Which.StatusCode.Should().Be(StatusCodes.Status404NotFound);
+    }
+
+    /// <summary>
+    /// The playlist and guide endpoints carry [Produces] with a non-JSON type. Any ObjectResult
+    /// they return is turned into an empty 406, so their errors must come back as plain text
+    /// (BUG-022).
+    /// </summary>
+    /// <param name="endpoint">Which endpoint to call.</param>
+    /// <param name="setting">Which setting to leave off.</param>
+    /// <param name="message">The message the caller should see.</param>
+    [Theory]
+    [InlineData("LiveTv.m3u", "LiveTv", "Live TV is not enabled in plugin settings.")]
+    [InlineData("LiveTv.m3u", "Credentials", "Provider credentials not configured.")]
+    [InlineData("Epg.xml", "LiveTv", "Live TV is not enabled in plugin settings.")]
+    [InlineData("Epg.xml", "Epg", "EPG is not enabled in plugin settings.")]
+    [InlineData("Epg.xml", "Credentials", "Provider credentials not configured.")]
+    [InlineData("Catchup.m3u", "LiveTv", "Live TV is not enabled in plugin settings.")]
+    [InlineData("Catchup.m3u", "Catchup", "Catch-up is not enabled in plugin settings.")]
+    [InlineData("Catchup.m3u", "Credentials", "Provider credentials not configured.")]
+    public async System.Threading.Tasks.Task PlaylistAndGuideErrors_ArePlainTextAndKeepTheirMessage(
+        string endpoint, string setting, string message)
+    {
+        var config = Plugin.Instance.Configuration;
+        config.EnableLiveTv = setting != "LiveTv";
+        config.EnableEpg = setting != "Epg";
+        config.EnableCatchup = setting != "Catchup";
+        config.Providers = setting == "Credentials"
+            ? new()
+            : new() { new ProviderConfig { BaseUrl = "http://provider.invalid", Username = "user" } };
+
+        var result = endpoint switch
+        {
+            "LiveTv.m3u" => await _controller.GetM3UPlaylist(System.Threading.CancellationToken.None),
+            "Epg.xml" => await _controller.GetEpgXml(System.Threading.CancellationToken.None),
+            _ => await _controller.GetCatchupM3UPlaylist(System.Threading.CancellationToken.None),
+        };
+
+        result.Should().NotBeAssignableTo<ObjectResult>("[Produces] turns an ObjectResult into an empty 406");
+        var content = result.Should().BeOfType<ContentResult>().Subject;
+        content.StatusCode.Should().Be(StatusCodes.Status400BadRequest);
+        content.ContentType.Should().StartWith("text/plain");
+        content.Content.Should().Be(message);
+    }
+
+    [Theory]
+    [InlineData("LiveTv.m3u")]
+    [InlineData("Catchup.m3u")]
+    public async System.Threading.Tasks.Task HiddenEndpoint_AnswersLikeARouteThatDoesNotExist(string endpoint)
+    {
+        // NotFound() on an [ApiController] becomes ProblemDetails, and [Produces] then turns that
+        // into an empty 406, which tells a prober the endpoint exists. A plain, empty 404 does not.
+        Plugin.Instance.Configuration.PublishLiveTvPlaylists = false;
+
+        var result = endpoint == "LiveTv.m3u"
+            ? await _controller.GetM3UPlaylist(System.Threading.CancellationToken.None)
+            : await _controller.GetCatchupM3UPlaylist(System.Threading.CancellationToken.None);
+
+        result.Should().NotBeAssignableTo<Microsoft.AspNetCore.Mvc.Infrastructure.IClientErrorActionResult>();
+        result.Should().NotBeAssignableTo<ObjectResult>();
+        var content = result.Should().BeOfType<ContentResult>().Subject;
+        content.StatusCode.Should().Be(StatusCodes.Status404NotFound);
+        content.Content.Should().BeNull();
     }
 }

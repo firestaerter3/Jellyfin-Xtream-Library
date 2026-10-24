@@ -29,11 +29,10 @@ using Xunit;
 namespace Jellyfin.Xtream.Library.Tests.Service;
 
 /// <summary>
-/// Covers GetMovieAdvancedInfoAsync/GetSeriesAdvancedInfoAsync: when Dispatcharr Mode is on the
-/// REST provider-info endpoints should be tried first, falling back to the classic Xtream
-/// get_vod_info/get_series_info calls only when Dispatcharr Mode is off or the REST call comes
-/// back empty. Movies and series both went from "classic call only" to this same shape, so both
-/// get the same coverage here.
+/// Covers GetMovieAdvancedInfoAsync: when Dispatcharr Mode is on the REST provider-info endpoint
+/// is tried first, falling back to the classic Xtream get_vod_info call only when Dispatcharr Mode
+/// is off or the REST call comes back empty. Series have no such path: they always use
+/// get_series_info (GitHub #153), see <see cref="SeriesIdRepairTests"/>.
 /// </summary>
 public class StrmSyncServiceDispatcharrModeTests
 {
@@ -49,7 +48,6 @@ public class StrmSyncServiceDispatcharrModeTests
         var appPathsMock = new Mock<IServerApplicationPaths>();
         appPathsMock.Setup(p => p.DataPath).Returns("/tmp");
         var snapshotService = new SnapshotService(appPathsMock.Object, NullLogger<SnapshotService>.Instance);
-        var deltaCalculator = new DeltaCalculator(NullLogger<DeltaCalculator>.Instance);
 
         var appHostMock = new Mock<IServerApplicationHost>();
         appHostMock.Setup(h => h.GetApiUrlForLocalAccess(It.IsAny<System.Net.IPAddress>(), It.IsAny<bool>()))
@@ -62,7 +60,6 @@ public class StrmSyncServiceDispatcharrModeTests
             new Mock<ILibraryManager>().Object,
             new Mock<IMetadataLookupService>().Object,
             snapshotService,
-            deltaCalculator,
             liveTvService,
             appPathsMock.Object,
             NullLogger<StrmSyncService>.Instance);
@@ -123,65 +120,5 @@ public class StrmSyncServiceDispatcharrModeTests
 
         result.Should().BeSameAs(classicInfo);
         _mockClient.Verify(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), 42, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task GetSeriesAdvancedInfo_DispatcharrModeOff_UsesClassicClientOnly()
-    {
-        var classicInfo = new SeriesStreamInfo();
-        _mockClient
-            .Setup(c => c.GetSeriesStreamsBySeriesAsync(It.IsAny<ConnectionInfo>(), 7916, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(classicInfo);
-
-        var result = await _syncService.GetSeriesAdvancedInfoAsync(MakeProvider(false), Connection, enableDispatcharrMode: false, 7916, CancellationToken.None);
-
-        result.Should().BeSameAs(classicInfo);
-        _mockDispatcharrClient.Verify(d => d.GetSeriesProviderInfoAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
-        _mockDispatcharrClient.Verify(d => d.GetSeriesEpisodesAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task GetSeriesAdvancedInfo_DispatcharrModeOn_RestSucceeds_ClassicClientNeverCalled()
-    {
-        var restSeriesInfo = new SeriesInfo { Name = "Alone: Frozen" };
-        var restEpisodes = new Dictionary<int, ICollection<Episode>>
-        {
-            [1] = new List<Episode> { new() { EpisodeId = 266574, Season = 1 } },
-        };
-        _mockDispatcharrClient
-            .Setup(d => d.GetSeriesProviderInfoAsync(It.IsAny<string>(), 7916, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(restSeriesInfo);
-        _mockDispatcharrClient
-            .Setup(d => d.GetSeriesEpisodesAsync(It.IsAny<string>(), 7916, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(restEpisodes);
-
-        var result = await _syncService.GetSeriesAdvancedInfoAsync(MakeProvider(true), Connection, enableDispatcharrMode: true, 7916, CancellationToken.None);
-
-        result.Info.Should().BeSameAs(restSeriesInfo);
-        result.Episodes.Should().BeSameAs(restEpisodes);
-        _mockClient.Verify(c => c.GetSeriesStreamsBySeriesAsync(It.IsAny<ConnectionInfo>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task GetSeriesAdvancedInfo_DispatcharrModeOn_RestReturnsNoEpisodes_FallsBackToClassic()
-    {
-        // Series metadata came back, but the episode list was empty (e.g. the series has no
-        // provider relations Dispatcharr's own episodes endpoint could resolve). Metadata from
-        // one source and episodes from the other would be a worse result than a clean classic
-        // fallback, so the whole Dispatcharr path is treated as a miss here.
-        _mockDispatcharrClient
-            .Setup(d => d.GetSeriesProviderInfoAsync(It.IsAny<string>(), 7916, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SeriesInfo { Name = "Alone: Frozen" });
-        _mockDispatcharrClient
-            .Setup(d => d.GetSeriesEpisodesAsync(It.IsAny<string>(), 7916, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new Dictionary<int, ICollection<Episode>>());
-        var classicInfo = new SeriesStreamInfo();
-        _mockClient
-            .Setup(c => c.GetSeriesStreamsBySeriesAsync(It.IsAny<ConnectionInfo>(), 7916, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(classicInfo);
-
-        var result = await _syncService.GetSeriesAdvancedInfoAsync(MakeProvider(true), Connection, enableDispatcharrMode: true, 7916, CancellationToken.None);
-
-        result.Should().BeSameAs(classicInfo);
     }
 }

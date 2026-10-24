@@ -55,6 +55,7 @@ public class XtreamTunerHost : ITunerHost
     private readonly ILogger<XtreamTunerHost> _logger;
     private volatile Dictionary<string, string> _channelNumberToChannelId = new();
     private volatile Dictionary<string, StreamStatsInfo> _streamStats = new();
+    private volatile Dictionary<string, string> _dispatcharrUuids = new();
     private List<ChannelInfo>? _cachedChannels;
     private DateTime _cacheTime = DateTime.MinValue;
     private bool _cachedNumberByCategory;
@@ -114,6 +115,8 @@ public class XtreamTunerHost : ITunerHost
         int stride = ChannelNumbering.ComputeStride(channels);
         var newMap = new Dictionary<string, string>(channels.Count);
         var newStats = new Dictionary<string, StreamStatsInfo>(channels.Count);
+        var newUuids = new Dictionary<string, string>(channels.Count);
+        int proxyCount = 0;
         int statsCount = 0;
 
         var result = new List<ChannelInfo>(channels.Count);
@@ -140,6 +143,15 @@ public class XtreamTunerHost : ITunerHost
                 statsCount++;
             }
 
+            if (!string.IsNullOrEmpty(channel.DispatcharrUuid))
+            {
+                newUuids[channelId] = channel.DispatcharrUuid;
+                if (BuildProxyStreamUrl(config, channel) != null)
+                {
+                    proxyCount++;
+                }
+            }
+
             var cleanName = ChannelNameCleaner.CleanChannelName(
                 channel.Name,
                 config.ChannelRemoveTerms,
@@ -164,10 +176,15 @@ public class XtreamTunerHost : ITunerHost
 
         _channelNumberToChannelId = newMap;
         _streamStats = newStats;
+        _dispatcharrUuids = newUuids;
         _cachedChannels = result;
         _cacheTime = DateTime.UtcNow;
         _cachedNumberByCategory = config.LiveTvNumberByCategory;
-        _logger.LogInformation("Channel list cached with {Count} channels ({StatsCount} with stream stats)", result.Count, statsCount);
+        _logger.LogInformation(
+            "Channel list cached with {Count} channels ({StatsCount} with stream stats, {ProxyCount} with a Dispatcharr URL without credentials)",
+            result.Count,
+            statsCount,
+            proxyCount);
 
         return result;
     }
@@ -183,12 +200,11 @@ public class XtreamTunerHost : ITunerHost
         }
 
         var config = Plugin.Instance.Configuration;
-        var streamUrl = BuildStreamUrl(config, providerIndex, streamId);
         var canonicalChannelId = BuildChannelId(providerIndex, streamId);
+        var (streamUrl, isHls) = ResolveStreamUrl(config, providerIndex, streamId, canonicalChannelId);
         _streamStats.TryGetValue(canonicalChannelId, out var stats);
-        var isHls = !string.Equals(config.LiveTvOutputFormat, "ts", StringComparison.OrdinalIgnoreCase);
 
-        var mediaSource = CreateMediaSourceInfo(canonicalChannelId, streamUrl, stats, isHls, _logger);
+        var mediaSource = CreateMediaSourceInfo(canonicalChannelId, streamUrl, stats, isHls, config, _logger);
 
         return new List<MediaSourceInfo> { mediaSource };
     }
@@ -204,12 +220,11 @@ public class XtreamTunerHost : ITunerHost
         }
 
         var config = Plugin.Instance.Configuration;
-        var streamUrl = BuildStreamUrl(config, providerIndex, parsedStreamId);
         var canonicalChannelId = BuildChannelId(providerIndex, parsedStreamId);
+        var (streamUrl, isHls) = ResolveStreamUrl(config, providerIndex, parsedStreamId, canonicalChannelId);
         _streamStats.TryGetValue(canonicalChannelId, out var stats);
-        var isHls = !string.Equals(config.LiveTvOutputFormat, "ts", StringComparison.OrdinalIgnoreCase);
 
-        var mediaSource = CreateMediaSourceInfo(canonicalChannelId, streamUrl, stats, isHls, _logger);
+        var mediaSource = CreateMediaSourceInfo(canonicalChannelId, streamUrl, stats, isHls, config, _logger);
 
         var httpClient = _httpClientFactory.CreateClient();
         ILiveStream liveStream = new XtreamLiveStream(mediaSource, httpClient, _logger);
@@ -287,6 +302,54 @@ public class XtreamTunerHost : ITunerHost
         return false;
     }
 
+    /// <summary>
+    /// The URL a channel is played from: Dispatcharr's own channel URL when the channel was
+    /// matched to a Dispatcharr uuid, otherwise the Xtream URL.
+    /// <para>
+    /// This URL is the media source's Path, and clients see it. Some open it themselves instead of
+    /// asking Jellyfin for the stream: Swiftfin 1.6.1 with VLC, and Moonfin for every live
+    /// channel whatever SupportsDirectPlay says. With the Xtream URL that hands the provider login
+    /// to the app (homelab-ops #550). Dispatcharr's channel URL carries no login, the same reason
+    /// the M3U playlist uses it (GitHub #113). It always serves MPEG-TS, so it is never HLS.
+    /// </para>
+    /// </summary>
+    private (string Url, bool IsHls) ResolveStreamUrl(PluginConfiguration config, int providerIndex, int streamId, string channelId)
+    {
+        // Only the uuid is cached; the URL is built from the current settings, so a changed or
+        // removed Dispatcharr base URL takes effect without waiting for the channel list to reload.
+        if (_dispatcharrUuids.TryGetValue(channelId, out var uuid)
+            && BuildProxyStreamUrl(config, providerIndex, uuid) is { } proxyUrl)
+        {
+            return (proxyUrl, false);
+        }
+
+        var isHls = !string.Equals(config.LiveTvOutputFormat, "ts", StringComparison.OrdinalIgnoreCase);
+        return (BuildStreamUrl(config, providerIndex, streamId), isHls);
+    }
+
+    /// <summary>
+    /// Dispatcharr's channel URL for a channel, or null when it has no uuid or its provider has
+    /// no Dispatcharr base URL.
+    /// </summary>
+    /// <param name="config">Plugin configuration.</param>
+    /// <param name="channel">The channel.</param>
+    /// <returns>The URL, or null.</returns>
+    internal static string? BuildProxyStreamUrl(PluginConfiguration config, LiveStreamInfo channel)
+        => BuildProxyStreamUrl(config, channel.ProviderIndex, channel.DispatcharrUuid);
+
+    private static string? BuildProxyStreamUrl(PluginConfiguration config, int providerIndex, string? uuid)
+    {
+        if (string.IsNullOrEmpty(uuid))
+        {
+            return null;
+        }
+
+        var dispatcharrBase = LiveTvService.ResolveDispatcharrBaseUrl(config, providerIndex);
+        return string.IsNullOrEmpty(dispatcharrBase)
+            ? null
+            : DispatcharrChannelMap.BuildProxyStreamUrl(dispatcharrBase, uuid);
+    }
+
     private static string BuildStreamUrl(PluginConfiguration config, int providerIndex, int streamId)
     {
         var (baseUrl, username, password) = LiveTvService.ResolveLiveTvProvider(config, providerIndex);
@@ -301,30 +364,50 @@ public class XtreamTunerHost : ITunerHost
             : string.Create(CultureInfo.InvariantCulture, $"{ChannelIdPrefix}{providerIndex}_{streamId}");
     }
 
-    private static MediaSourceInfo CreateMediaSourceInfo(string channelId, string streamUrl, StreamStatsInfo? stats, bool isHls, ILogger logger)
+    internal static MediaSourceInfo CreateMediaSourceInfo(string channelId, string streamUrl, StreamStatsInfo? stats, bool isHls, PluginConfiguration config, ILogger logger)
     {
         var sourceId = "xtream_live_" + channelId;
-        bool hasStats = stats?.VideoCodec != null;
+
+        // Stats only with Stream Format TS. A source that skips the probe keeps the container named
+        // here, and Dispatcharr serves MPEG-TS whatever the extension, so with HLS selected Jellyfin
+        // would be told "hls" for a TS stream (homelab-ops #550). With probing it finds out itself.
+        bool hasStats = stats?.VideoCodec != null && !isHls;
 
         var mediaSource = new MediaSourceInfo
         {
             Id = sourceId,
             Path = streamUrl,
             Protocol = MediaProtocol.Http,
-            Container = isHls ? "hls" : "mpegts",
+            // "ts", not "mpegts": Jellyfin adds -bsf:a aac_adtstoasc for copied AAC going into fMP4
+            // segments only when the source container is "ts", "aac" or "hls"
+            // (EncodingHelper.GetAudioBsfArguments). With "mpegts" a copied AAC track made ffmpeg
+            // fail on fMP4 (homelab-ops #550).
+            Container = isHls ? "hls" : "ts",
             SupportsProbing = !hasStats,
 
             // GitHub #107. Jellyfin only probes a live source while opening it, and PlaybackInfo
             // only opens one that asks to be opened (MediaInfoController:223, inside the
             // AutoOpenLiveStream branch). Without this the probe below is unreachable no matter
-            // what SupportsProbing says. A source that came with stats needs neither.
-            RequiresOpening = !hasStats,
+            // what SupportsProbing says. A source with stats is opened too: opening costs nothing
+            // (XtreamLiveStream.Open connects lazily) and a source that was never opened made
+            // Jellyfin wait about 1.7 s before starting ffmpeg (homelab-ops #550).
+            RequiresOpening = true,
             IsRemote = true,
             IsInfiniteStream = true,
+            // No direct play: a client that direct plays (Swiftfin with VLC) opens Path itself, so
+            // it gets the provider URL with the login in it and bypasses Jellyfin, which then
+            // cannot close the connection. On 2026-10-18 Swiftfin opened 2 to 3 connections per
+            // channel that way and the provider blocked the account with HTTP 407 (homelab-ops #550).
             SupportsDirectPlay = false,
-            SupportsDirectStream = true,
+            // No direct stream: for a live source Jellyfin's direct stream is a remux into one
+            // endless fragmented mp4, which the iOS player rejects (AVFoundation -11850, seen on
+            // RTL 5 once the audio codec was declared). Without it Jellyfin uses HLS, which still
+            // copies video and audio when the client accepts them (homelab-ops #550).
+            SupportsDirectStream = false,
             SupportsTranscoding = true,
-            AnalyzeDurationMs = hasStats ? 0 : 500,
+            // 0 leaves it to Jellyfin's FFmpeg:analyzeduration; a positive value wins over it
+            // (EncodingHelper.GetFfmpegAnalyzeDurationArg), and only for these sources.
+            AnalyzeDurationMs = hasStats ? Math.Max(0, config.LiveTvAnalyzeDurationMs) : 500,
             IgnoreDts = true,
             GenPtsInput = true,
         };
@@ -351,24 +434,34 @@ public class XtreamTunerHost : ITunerHost
             var videoStream = new MediaStream
             {
                 Type = MediaStreamType.Video,
-                Index = 0,
+
+                // -1, as Jellyfin's own M3U tuner leaves probed streams: Jellyfin then passes no
+                // -map and ffmpeg picks the video and audio itself. A real index is used verbatim
+                // as -map 0:N, and Dispatcharr's MPEG-TS puts a data stream at 0:0, so index 0/1
+                // mapped data and video and dropped the audio (homelab-ops #550).
+                Index = -1,
                 Codec = videoCodec,
                 Width = width > 0 ? width : null,
                 Height = height > 0 ? height : null,
                 IsInterlaced = false,
                 RealFrameRate = stats.SourceFps.HasValue ? (float)stats.SourceFps.Value : null,
                 AverageFrameRate = stats.SourceFps.HasValue ? (float)stats.SourceFps.Value : null,
-                BitRate = stats.Bitrate.HasValue ? stats.Bitrate.Value * 1000 : null,
+                BitRate = stats.Bitrate.HasValue ? (int)Math.Round(stats.Bitrate.Value * 1000) : null,
             };
             mediaStreams.Add(videoStream);
 
-            // Add audio stream without codec to ensure audio is included in output.
-            // Omitting codec forces Jellyfin to transcode audio (fast) rather than copy,
-            // which avoids the AAC ADTS→fMP4 issue (missing aac_adtstoasc BSF).
+            // Without a codec Jellyfin re-encodes the audio, which avoided the AAC ADTS to fMP4
+            // problem (missing aac_adtstoasc). With LiveTvCopyAudio the codec from the stats is
+            // declared, so Jellyfin can copy it when the client accepts it (homelab-ops #550).
+            var audioCodec = config.LiveTvCopyAudio ? MapAudioCodec(stats.AudioCodec) : null;
             mediaStreams.Add(new MediaStream
             {
                 Type = MediaStreamType.Audio,
-                Index = 1,
+                Index = -1,
+                Codec = audioCodec,
+                Channels = audioCodec is null ? null : stats.AudioChannels,
+                SampleRate = audioCodec is null ? null : stats.AudioSampleRate,
+                BitRate = audioCodec is null || stats.AudioBitrate is null ? null : stats.AudioBitrate * 1000,
             });
 
             mediaSource.MediaStreams = mediaStreams;
@@ -387,9 +480,11 @@ public class XtreamTunerHost : ITunerHost
             // GitHub #113, for whoever routes this path through Dispatcharr next: probing must be
             // switched off for a Dispatcharr proxy URL. The probe opens a short-lived connection
             // that Dispatcharr counts as a client and tears the channel down when it closes, which
-            // turns into a retry storm. That is in direct tension with everything below, so the two
-            // have to be reconciled before a proxy URL ever reaches here. Live TV playlists route
-            // through Dispatcharr today; this tuner does not.
+            // turns into a retry storm. That is in direct tension with everything below. This tuner
+            // now plays matched channels from Dispatcharr's own URL (homelab-ops #550), and before
+            // that a Dispatcharr Xtream endpoint served its /live/ URLs through the same proxy, so
+            // the teardown between probe and playback (about 1.6 s) applies either way. It only
+            // concerns channels without stats; with stats there is no probe.
             //
             // GitHub #107. No stats, so leave this empty and let Jellyfin find out for itself.
             //
@@ -413,6 +508,24 @@ public class XtreamTunerHost : ITunerHost
         }
 
         return mediaSource;
+    }
+
+    private static string? MapAudioCodec(string? dispatcharrCodec)
+    {
+        if (string.IsNullOrWhiteSpace(dispatcharrCodec))
+        {
+            return null;
+        }
+
+        return dispatcharrCodec.ToLowerInvariant() switch
+        {
+            "aac" or "aac_latm" => "aac",
+            "ac3" or "ac-3" => "ac3",
+            "eac3" or "e-ac-3" => "eac3",
+            "mp2" or "mp2float" => "mp2",
+            "mp3" or "mp3float" => "mp3",
+            _ => null, // unknown: leave it to Jellyfin, which then re-encodes
+        };
     }
 
     private static string MapVideoCodec(string dispatcharrCodec)

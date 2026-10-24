@@ -353,9 +353,22 @@ public static class NfoWriter
         }
     }
 
+    /// <summary>
+    /// Whether an image address from the provider may go into an NFO. Only absolute http and https
+    /// URLs: Jellyfin's NFO reader attaches a file path or file:// URI that exists on disk as a
+    /// local image, so a provider that sent "/config/data/jellyfin.db" as a poster would have that
+    /// file served as the item's image to every user of the library.
+    /// </summary>
+    /// <param name="url">The image address.</param>
+    /// <returns>True for an absolute http or https URL.</returns>
+    internal static bool IsWebImageUrl(string? url)
+        => !string.IsNullOrWhiteSpace(url)
+            && Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri)
+            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
     private static void AppendThumb(StringBuilder sb, string? posterUrl)
     {
-        if (!string.IsNullOrWhiteSpace(posterUrl))
+        if (IsWebImageUrl(posterUrl))
         {
             sb.Append("  <thumb aspect=\"poster\">").Append(EscapeXml(posterUrl)).AppendLine("</thumb>");
         }
@@ -363,7 +376,7 @@ public static class NfoWriter
 
     private static void AppendFanart(StringBuilder sb, string? backdropUrl)
     {
-        if (!string.IsNullOrWhiteSpace(backdropUrl))
+        if (IsWebImageUrl(backdropUrl))
         {
             sb.AppendLine("  <fanart>");
             sb.Append("    <thumb>").Append(EscapeXml(backdropUrl)).AppendLine("</thumb>");
@@ -511,7 +524,7 @@ public static class NfoWriter
             return string.Empty;
         }
 
-        return text
+        return XmlText.RemoveInvalidChars(text)
             .Replace("&", "&amp;", StringComparison.Ordinal)
             .Replace("<", "&lt;", StringComparison.Ordinal)
             .Replace(">", "&gt;", StringComparison.Ordinal)

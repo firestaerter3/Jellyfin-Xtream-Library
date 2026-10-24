@@ -27,13 +27,18 @@ const CONFIG_HTML = fs.readFileSync(
     path.join(__dirname, '..', '..',
         'Jellyfin.Xtream.Library', 'Configuration', 'Web', 'config.html'),
     'utf8');
+const CONFIG_JS = fs.readFileSync(
+    path.join(__dirname, '..', '..',
+        'Jellyfin.Xtream.Library', 'Configuration', 'Web', 'config.js'),
+    'utf8');
 
-test('Native Tuner description tells users to add the M3U URL as an M3U Tuner, not HDHomeRun', () => {
+test('the M3U tuner choice tells users to add an M3U Tuner, not HDHomeRun', () => {
     // The old wording paired "manual HDHomeRun tuner" with the M3U URL, which fails because
-    // Jellyfin's HDHomeRun type expects an HDHomeRun device or its discovery JSON.
+    // Jellyfin's HDHomeRun type expects an HDHomeRun device or its discovery JSON. Since the tuner
+    // became a choice, this text is the hint config.js shows for "My own M3U tuner".
     assert.match(
-        CONFIG_HTML,
-        /manual\s*<strong>\s*M3U Tuner\s*<\/strong>\s*\(not HDHomeRun\)/i,
+        CONFIG_JS,
+        /<strong>M3U Tuner<\/strong> \(not HDHomeRun\)/,
         'expected the M3U URL to be added as an M3U Tuner, not an HDHomeRun tuner');
 });
 
@@ -47,21 +52,25 @@ test('Native Tuner description no longer claims the tuner is hidden from the Das
         'old text claimed the plugin tuner is hidden, but it is registered as an ITunerHost');
 });
 
-test('Native Tuner description warns users not to manually add the Xtream Library entry', () => {
-    // Jellyfin lists the registered ITunerHost implementation in the Add Tuner type dropdown.
-    // The plugin already controls it via the checkbox above; manual addition duplicates channels.
+test('the native tuner choice says the plugin lists itself under Tuner Devices', () => {
+    // Jellyfin shows Live TV only once a tuner is listed under Tuner Devices (GitHub #152). The
+    // plugin adds that entry itself, so the hint has to say so, and that a second entry added by
+    // hand is not needed. The choice is only shown while Enable Live TV is on.
     assert.match(
-        CONFIG_HTML,
-        /Xtream Library.*Add Tuner.*Do\s*<strong>\s*not\s*<\/strong>\s*add it manually/is,
-        'expected an explicit warning that the Xtream Library dropdown entry is the plugin itself');
+        CONFIG_JS,
+        /The plugin lists itself under Dashboard &rarr; Live TV &rarr; Tuner Devices/,
+        'expected the hint to say the plugin adds its own tuner entry');
+    assert.match(CONFIG_JS, /Do not add a second one by hand/, 'expected a warning against a second entry');
+    assert.match(CONFIG_HTML, /id="liveTvDependentTop"[\s\S]*id="radTunerNative"/,
+        'expected the tuner choice inside the part that only shows with Live TV on');
 });
 
 test('Setup URLs section explains the three URLs go in three different places', () => {
     // M3U -> Add Tuner
     assert.match(
         CONFIG_HTML,
-        /<strong>M3U Playlist URL<\/strong>.*Add Tuner Device.*M3U Tuner/is,
-        'M3U URL must point users to the M3U Tuner type under Add Tuner Device');
+        /<strong>M3U Playlist URL<\/strong>.*Tuner Devices.*M3U Tuner/is,
+        'M3U URL must point users to the M3U Tuner type under Tuner Devices');
     // EPG -> TV Guide Data Providers
     assert.match(
         CONFIG_HTML,
@@ -70,7 +79,7 @@ test('Setup URLs section explains the three URLs go in three different places', 
     // Catch-up -> not Jellyfin
     assert.match(
         CONFIG_HTML,
-        /<strong>Catch-up M3U URL<\/strong>.*not consumed by Jellyfin itself/is,
+        /<strong>Catch-up M3U URL<\/strong>.*Jellyfin does not use it/is,
         'Catch-up URL must say Jellyfin has no catch-up field');
 });
 

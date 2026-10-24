@@ -39,7 +39,6 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<MetadataCache>();
         serviceCollection.AddSingleton<IMetadataLookupService, MetadataLookupService>();
         serviceCollection.AddSingleton<SnapshotService>();
-        serviceCollection.AddSingleton<DeltaCalculator>();
         serviceCollection.AddSingleton<StrmSyncService>();
         serviceCollection.AddSingleton<LiveTvService>();
         serviceCollection.AddSingleton<ITunerHost, XtreamTunerHost>();
@@ -51,5 +50,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<IChannel, XtreamCatchupChannel>();
         serviceCollection.AddSingleton<IScheduledTask, SyncLibraryTask>();
         serviceCollection.AddHostedService<Service.BetaChannelManager>();
+        serviceCollection.AddHostedService<Service.NativeTunerRegistration>();
+        serviceCollection.AddHostedService<Service.NativeTunerWarmup>();
     }
 }

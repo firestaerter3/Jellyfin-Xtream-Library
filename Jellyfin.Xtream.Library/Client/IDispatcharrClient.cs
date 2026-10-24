@@ -73,30 +73,6 @@ public interface IDispatcharrClient
     Task<VodInfoResponse?> GetMovieProviderInfoAsync(string baseUrl, int movieId, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Gets detailed series metadata from Dispatcharr's own database, refreshing from the
-    /// upstream provider on Dispatcharr's side only if its cache is stale. A drop-in
-    /// replacement for the series metadata half of the classic Xtream get_series_info call
-    /// when Dispatcharr Mode is on. Episode data comes from GetSeriesEpisodesAsync instead.
-    /// </summary>
-    /// <param name="baseUrl">The base URL of the Dispatcharr instance.</param>
-    /// <param name="seriesId">The Dispatcharr series ID.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The series info, or null if unavailable.</returns>
-    Task<SeriesInfo?> GetSeriesProviderInfoAsync(string baseUrl, int seriesId, CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Gets the episode list for a series from Dispatcharr's own database, grouped by season.
-    /// This is a plain database read with no upstream refresh trigger. Each episode's
-    /// stream ID comes from the highest-priority active provider relation Dispatcharr has
-    /// for it, matching the account-priority ordering used elsewhere in Dispatcharr.
-    /// </summary>
-    /// <param name="baseUrl">The base URL of the Dispatcharr instance.</param>
-    /// <param name="seriesId">The Dispatcharr series ID.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>Episodes grouped by season number. Empty if unavailable.</returns>
-    Task<Dictionary<int, ICollection<Episode>>> GetSeriesEpisodesAsync(string baseUrl, int seriesId, CancellationToken cancellationToken);
-
-    /// <summary>
     /// Gets Dispatcharr's own channel listing, with the upstream streams behind each channel
     /// included, so Live TV URLs can be built without credentials in them (GitHub #113).
     /// </summary>

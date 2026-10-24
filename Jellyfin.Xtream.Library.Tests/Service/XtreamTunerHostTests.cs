@@ -15,6 +15,7 @@
 
 #pragma warning disable CS0618 // Legacy config fields used in test setup; Providers[0] is populated separately
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using FluentAssertions;
 using Jellyfin.Xtream.Library.Client;
@@ -295,8 +296,8 @@ public class XtreamTunerHostTests : IDisposable
         source.SupportsProbing.Should().BeTrue();
         source.IsRemote.Should().BeTrue();
         source.IsInfiniteStream.Should().BeTrue();
-        source.SupportsDirectPlay.Should().BeFalse();
-        source.SupportsDirectStream.Should().BeTrue();
+        source.SupportsDirectPlay.Should().BeFalse("no stats, nothing for a client to decide on");
+        source.SupportsDirectStream.Should().BeFalse("a live direct stream is an endless mp4 the iOS player rejects");
         source.SupportsTranscoding.Should().BeTrue();
         source.AnalyzeDurationMs.Should().Be(500);
         source.IgnoreDts.Should().BeTrue();
@@ -372,10 +373,11 @@ public class XtreamTunerHostTests : IDisposable
         var source = result[0];
         source.SupportsProbing.Should().BeFalse();
 
-        // A source that arrived with stats has nothing to find out, so it should not pay for an
-        // open either (GitHub #107).
-        source.RequiresOpening.Should().BeFalse();
+        // Opened anyway: opening connects nothing, and an unopened source made Jellyfin wait
+        // about 1.7 s before starting ffmpeg (homelab-ops #550).
+        source.RequiresOpening.Should().BeTrue();
         source.AnalyzeDurationMs.Should().Be(0);
+        source.SupportsDirectPlay.Should().BeFalse("a direct-play client would open the provider URL, login included, itself");
 
         source.MediaStreams.Should().HaveCount(2);
 
@@ -389,8 +391,35 @@ public class XtreamTunerHostTests : IDisposable
 
         // Audio stream has no codec — forces transcode to avoid AAC ADTS→fMP4 copy issue
         var audio = source.MediaStreams.First(s => s.Type == MediaStreamType.Audio);
-        audio.Index.Should().Be(1);
+        audio.Index.Should().Be(-1);
         audio.Codec.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetChannelStreamMediaSources_WithStatsButHls_StillProbes()
+    {
+        // A source that skips the probe keeps the container named by the plugin. Dispatcharr serves
+        // MPEG-TS whatever the extension, so with HLS selected the stats must not be used, or
+        // Jellyfin is told "hls" for a TS stream (homelab-ops #550).
+        var config = Plugin.Instance.Configuration;
+        config.EnableLiveTv = true;
+        config.EnableNativeTuner = true;
+        config.EnableChannelNameCleaning = false;
+        config.LiveTvOutputFormat = "m3u8";
+
+        _mockClient
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiveStreamInfo>
+            {
+                new() { StreamId = 100, Name = "Test Channel", Num = 1, StreamStats = new StreamStatsInfo { VideoCodec = "h264" } },
+            });
+
+        await _tunerHost.GetChannels(false, CancellationToken.None);
+        var source = (await _tunerHost.GetChannelStreamMediaSources("xtream_100", CancellationToken.None))[0];
+
+        source.SupportsProbing.Should().BeTrue();
+        source.RequiresOpening.Should().BeTrue();
+        source.MediaStreams.Should().BeNullOrEmpty();
     }
 
     [Fact]
@@ -759,4 +788,206 @@ public class XtreamTunerHostTests : IDisposable
     }
 
     #endregion
+
+    [Fact]
+    public void DispatcharrStats_FillChannelsWithoutStats_AndKeepTheProvidersOwn()
+    {
+        var listing = new List<DispatcharrChannel>
+        {
+            new()
+            {
+                Id = 100, Uuid = "u100", Streams = [new DispatcharrChannelSource { StreamId = 900, StreamStatsJson = Newtonsoft.Json.Linq.JToken.Parse("""{"video_codec":"h264"}""") }],
+            },
+            new()
+            {
+                Id = 200, Uuid = "u200", Streams = [new DispatcharrChannelSource { StreamId = 901, StreamStatsJson = Newtonsoft.Json.Linq.JToken.Parse("""{"video_codec":"hevc"}""") }],
+            },
+        };
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 100 },
+            new() { StreamId = 200, StreamStats = new StreamStatsInfo { VideoCodec = "mpeg2video" } },
+            new() { StreamId = 300 },
+        };
+
+        _liveTvService.StampDispatcharrStats(listing, channels);
+
+        channels[0].StreamStats!.VideoCodec.Should().Be("h264");
+        channels[1].StreamStats!.VideoCodec.Should().Be("mpeg2video");
+        channels[2].StreamStats.Should().BeNull();
+    }
+
+    #region Measured tuning (homelab-ops #550)
+
+    private static StreamStatsInfo Stats(string audioJson) =>
+        Newtonsoft.Json.JsonConvert.DeserializeObject<StreamStatsInfo>(
+            "{\"video_codec\":\"h264\",\"resolution\":\"1920x1080\"," + audioJson + "}")!;
+
+    [Fact]
+    public void AnalyzeDuration_ComesFromTheSetting_OnlyForSourcesWithStats()
+    {
+        var config = new PluginConfiguration { LiveTvAnalyzeDurationMs = 3000 };
+        XtreamTunerHost.CreateMediaSourceInfo("xtream_1", "http://x/1.ts", Stats("\"audio_codec\":\"aac\""), false, config, NullLogger.Instance)
+            .AnalyzeDurationMs.Should().Be(3000);
+        XtreamTunerHost.CreateMediaSourceInfo("xtream_1", "http://x/1.ts", null, false, config, NullLogger.Instance)
+            .AnalyzeDurationMs.Should().Be(500);
+        XtreamTunerHost.CreateMediaSourceInfo("xtream_1", "http://x/1.ts", Stats("\"audio_codec\":\"aac\""), false, new PluginConfiguration(), NullLogger.Instance)
+            .AnalyzeDurationMs.Should().Be(0);
+    }
+
+    [Fact]
+    public void ATransportStreamSourceIsNamedTs_SoJellyfinFixesCopiedAacForFmp4()
+    {
+        // EncodingHelper adds -bsf:a aac_adtstoasc only for a source container of ts, aac or hls.
+        XtreamTunerHost.CreateMediaSourceInfo("xtream_1", "http://x/1.ts", Stats("\"audio_codec\":\"aac\""), false, new PluginConfiguration(), NullLogger.Instance)
+            .Container.Should().Be("ts");
+    }
+
+    [Theory]
+    [InlineData("\"audio_codec\":\"ac3\",\"audio_channels\":2,\"audio_sample_rate\":48000,\"audio_bitrate\":448", "ac3", 2, 48000)]
+    [InlineData("\"audio_codec\":\"aac\",\"audio_channels\":\"6\",\"audio_sample_rate\":44100.0", "aac", 6, 44100)]
+    [InlineData("\"audio_codec\":\"mp2\",\"audio_channels\":\"stereo\"", "mp2", null, null)]
+    public void CopyAudio_DeclaresTheCodecFromTheStats(string audioJson, string codec, int? channels, int? sampleRate)
+    {
+        var config = new PluginConfiguration { LiveTvCopyAudio = true };
+        var audio = XtreamTunerHost.CreateMediaSourceInfo("xtream_1", "http://x/1.ts", Stats(audioJson), false, config, NullLogger.Instance)
+            .MediaStreams.Single(m => m.Type == MediaStreamType.Audio);
+
+        audio.Codec.Should().Be(codec);
+        audio.Channels.Should().Be(channels);
+        audio.SampleRate.Should().Be(sampleRate);
+        audio.Index.Should().Be(-1);
+    }
+
+    [Fact]
+    public void CopyAudio_LeavesUnknownCodecsAndTheDefaultToJellyfin()
+    {
+        var unknown = XtreamTunerHost.CreateMediaSourceInfo("xtream_1", "http://x/1.ts", Stats("\"audio_codec\":\"opus\""),
+            false, new PluginConfiguration { LiveTvCopyAudio = true }, NullLogger.Instance);
+        unknown.MediaStreams.Single(m => m.Type == MediaStreamType.Audio).Codec.Should().BeNull();
+
+        var off = XtreamTunerHost.CreateMediaSourceInfo("xtream_1", "http://x/1.ts", Stats("\"audio_codec\":\"aac\""),
+            false, new PluginConfiguration(), NullLogger.Instance);
+        off.MediaStreams.Single(m => m.Type == MediaStreamType.Audio).Codec.Should().BeNull();
+    }
+
+    #endregion
+
+    #region Startup warm-up (homelab-ops #550)
+
+    [Fact]
+    public async Task Warmup_WithNativeTunerOn_LoadsTheChannelsBeforeFirstUse()
+    {
+        var config = Plugin.Instance.Configuration;
+        config.EnableLiveTv = true;
+        config.EnableNativeTuner = true;
+        config.EnableChannelNameCleaning = false;
+        _mockClient
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiveStreamInfo> { new() { StreamId = 100, Name = "BBC One", Num = 1 } });
+
+        using var warmup = new NativeTunerWarmup([_tunerHost], NullLogger<NativeTunerWarmup>.Instance, TimeSpan.Zero);
+        await warmup.StartAsync(CancellationToken.None);
+        await warmup.Running!;
+
+        _mockClient.Verify(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        // The first real request is served from what the warm-up loaded.
+        var channels = await _tunerHost.GetChannels(true, CancellationToken.None);
+        channels.Should().ContainSingle();
+        _mockClient.Verify(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Warmup_WithNativeTunerOff_FetchesNothing()
+    {
+        var config = Plugin.Instance.Configuration;
+        config.EnableLiveTv = true;
+        config.EnableNativeTuner = false;
+
+        using var warmup = new NativeTunerWarmup([_tunerHost], NullLogger<NativeTunerWarmup>.Instance, TimeSpan.Zero);
+        await warmup.StartAsync(CancellationToken.None);
+        await warmup.Running!;
+
+        _mockClient.Verify(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Warmup_WhenTheProviderFails_DoesNotThrow()
+    {
+        var config = Plugin.Instance.Configuration;
+        config.EnableLiveTv = true;
+        config.EnableNativeTuner = true;
+        _mockClient
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("provider down"));
+
+        using var warmup = new NativeTunerWarmup([_tunerHost], NullLogger<NativeTunerWarmup>.Instance, TimeSpan.Zero);
+        await warmup.StartAsync(CancellationToken.None);
+        var act = async () => await warmup.Running!;
+
+        await act.Should().NotThrowAsync();
+    }
+
+    #endregion
+
+    [Fact]
+    public void BuildProxyStreamUrl_WithUuid_ReturnsDispatcharrUrlWithoutCredentials()
+    {
+        // Clients such as Moonfin open the media source Path themselves for live channels, so it
+        // must not carry the provider login (homelab-ops #550).
+        var config = new PluginConfiguration();
+        config.Providers.Add(new ProviderConfig { BaseUrl = "http://xtream.example.com:9191/", Username = "user-a", IsEnabled = true });
+        var channel = new LiveStreamInfo { StreamId = 100, DispatcharrUuid = "086aab97-3c36-41f0-a417-b97f39a69f0f" };
+
+        var url = XtreamTunerHost.BuildProxyStreamUrl(config, channel);
+
+        url.Should().Be("http://xtream.example.com:9191/proxy/ts/stream/086aab97-3c36-41f0-a417-b97f39a69f0f");
+        url.Should().NotContain("user-a");
+    }
+
+    [Fact]
+    public void BuildProxyStreamUrl_UsesTheDispatcharrBaseUrl_WhenSet()
+    {
+        var config = new PluginConfiguration();
+        config.Providers.Add(new ProviderConfig
+        {
+            BaseUrl = "http://xtream.example.com",
+            DispatcharrBaseUrl = "http://dispatcharr.example.com:9191",
+            IsEnabled = true,
+        });
+        var channel = new LiveStreamInfo { StreamId = 100, DispatcharrUuid = "abc" };
+
+        XtreamTunerHost.BuildProxyStreamUrl(config, channel)
+            .Should().Be("http://dispatcharr.example.com:9191/proxy/ts/stream/abc");
+    }
+
+    [Fact]
+    public async Task GetChannelStreamMediaSources_FollowsAChangedDispatcharrBaseUrl_WithoutReloadingChannels()
+    {
+        // Only the uuid is cached, so moving Dispatcharr takes effect at the next play rather than
+        // at the next channel reload (PR #167 review).
+        var config = Plugin.Instance.Configuration;
+        config.EnableLiveTv = true;
+        config.EnableNativeTuner = true;
+        config.Providers[0].DispatcharrBaseUrl = "http://old-dispatcharr:9191";
+        _mockClient
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiveStreamInfo> { new() { StreamId = 100, Name = "Test Channel", Num = 1, DispatcharrUuid = "abc" } });
+        await _tunerHost.GetChannels(false, CancellationToken.None);
+
+        config.Providers[0].DispatcharrBaseUrl = "http://new-dispatcharr:9191";
+        var result = await _tunerHost.GetChannelStreamMediaSources("xtream_100", CancellationToken.None);
+
+        result[0].Path.Should().Be("http://new-dispatcharr:9191/proxy/ts/stream/abc");
+    }
+
+    [Fact]
+    public void BuildProxyStreamUrl_WithoutUuid_ReturnsNull()
+    {
+        var config = new PluginConfiguration();
+        config.Providers.Add(new ProviderConfig { BaseUrl = "http://xtream.example.com", IsEnabled = true });
+
+        XtreamTunerHost.BuildProxyStreamUrl(config, new LiveStreamInfo { StreamId = 100 }).Should().BeNull();
+    }
 }

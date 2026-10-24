@@ -769,6 +769,38 @@ public class LiveTvService : IDisposable
             "Dispatcharr matched {Matched} of {Total} Live TV channels; the rest keep the credentialed URL",
             matched,
             channels.Count);
+
+        StampDispatcharrStats(listing, channels);
+    }
+
+    /// <summary>
+    /// Gives each channel that has none the stream stats Dispatcharr's proxy recorded, so the
+    /// native tuner can describe the stream itself and Jellyfin skips its probe: a fixed 3 s wait
+    /// plus the probe, and Dispatcharr tearing the channel down between probe and playback
+    /// (homelab-ops #550).
+    /// <para>
+    /// The tuner only uses them with Stream Format TS; see CreateMediaSourceInfo.
+    /// </para>
+    /// </summary>
+    /// <param name="listing">Dispatcharr's channel listing.</param>
+    /// <param name="channels">Channels to stamp, modified in place.</param>
+    internal void StampDispatcharrStats(IEnumerable<DispatcharrChannel>? listing, List<LiveStreamInfo> channels)
+    {
+        var stats = DispatcharrChannelMap.BuildStats(listing);
+        int stamped = 0;
+        foreach (var channel in channels)
+        {
+            if (channel.StreamStats?.VideoCodec == null && stats.TryGetValue(channel.StreamId, out var found))
+            {
+                channel.StreamStats = found;
+                stamped++;
+            }
+        }
+
+        _logger.LogInformation(
+            "Dispatcharr had stream stats for {Stamped} of {Total} Live TV channels",
+            stamped,
+            channels.Count);
     }
 
     private async Task<List<LiveStreamInfo>> GetFilteredChannelsForProviderAsync(
@@ -1258,6 +1290,13 @@ public class LiveTvService : IDisposable
 
             sb.Append(CultureInfo.InvariantCulture, $"  <channel id=\"{EscapeXml(channelId)}\">\n");
             sb.Append(CultureInfo.InvariantCulture, $"    <display-name>{EscapeXml(cleanName)}</display-name>\n");
+
+            // The channel number as a second display-name, the usual XMLTV way to carry it; Jellyfin
+            // reads a numeric display-name as the channel number. It matches tvg-chno in LiveTv.m3u,
+            // whose tvg-id is the provider's own id rather than this file's channel id, so the M3U
+            // tuner can line its channels up with this guide by number instead of by name alone,
+            // which picks the wrong guide when two channels clean to the same name (GitHub #147).
+            sb.Append(CultureInfo.InvariantCulture, $"    <display-name>{ChannelNumbering.Resolve(channel, epgStride, epgNumberByCategory)}</display-name>\n");
             var iconUrl = ChannelLogoResolver.ResolveDisplayUrl(channel.StreamIcon, channel.StreamId, baseUrl);
             if (!string.IsNullOrEmpty(iconUrl))
             {
@@ -1434,6 +1473,9 @@ public class LiveTvService : IDisposable
         var written = 0;
         var recordedCount = 0;
         var startLength = sb.Length;
+        var kept = new ProgrammeOverlapFilter();
+        var keptHistory = new ProgrammeOverlapFilter();
+        var duplicates = 0;
         var nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         // Keep programs that ended up to 1 hour ago to be resilient to timezone/clock skews
         var pastGraceUnix = nowUnix - 3600;
@@ -1495,7 +1537,10 @@ public class LiveTvService : IDisposable
                     continue;
                 }
 
-                if (isRecordable)
+                // The recorded guide gets its own overlap filter: a doubled listing must not reach the
+                // history twice, and a past copy read only for history must not hide the copy that
+                // is still inside the window from Epg.xml.
+                if (isRecordable && keptHistory.TryKeep(ourId, element.Element("title")?.Value, startUnix, stopUnix))
                 {
                     history.Add(
                         providerIndex,
@@ -1513,6 +1558,18 @@ public class LiveTvService : IDisposable
                     continue;
                 }
 
+                // A guide that merges two listings for one channel (Tivione's feed through
+                // Dispatcharr carries NPO 1 twice, 15 minutes apart) would show every programme
+                // twice, overlapping. Keep the first of two same-titled programmes that overlap.
+                // Only with both times read: a missing start would otherwise count as 1970 and
+                // swallow every later programme of that title.
+                if (hasStart && hasStop && startUnix < stopUnix
+                    && !kept.TryKeep(ourId, element.Element("title")?.Value, startUnix, stopUnix))
+                {
+                    duplicates++;
+                    continue;
+                }
+
                 element.SetAttributeValue("channel", ourId);
                 sb.Append("  ").Append(element.ToString(SaveOptions.DisableFormatting)).Append('\n');
                 written++;
@@ -1527,6 +1584,13 @@ public class LiveTvService : IDisposable
             _logger.LogWarning(ex, "Failed to parse upstream XMLTV; falling back to JSON EPG");
             sb.Length = startLength;
             return (0, 0);
+        }
+
+        if (duplicates > 0)
+        {
+            _logger.LogInformation(
+                "Left out {Count} upstream programmes that repeat an overlapping programme with the same title on the same channel",
+                duplicates);
         }
 
         return (written, recordedCount);
@@ -1677,7 +1741,7 @@ public class LiveTvService : IDisposable
             return string.Empty;
         }
 
-        return value
+        return XmlText.RemoveInvalidChars(value)
             .Replace("&", "&amp;", StringComparison.Ordinal)
             .Replace("<", "&lt;", StringComparison.Ordinal)
             .Replace(">", "&gt;", StringComparison.Ordinal)

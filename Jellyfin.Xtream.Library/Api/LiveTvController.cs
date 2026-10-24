@@ -75,7 +75,7 @@ public class LiveTvController : ControllerBase
 
         if (!IsCallerAllowed(config))
         {
-            return NotFound();
+            return NotPublished();
         }
 
         if (!config.PublishLiveTvPlaylists)
@@ -83,17 +83,17 @@ public class LiveTvController : ControllerBase
             // Same answer as a route that does not exist. Debug only: this is what an anonymous
             // probe gets, and logging each one louder would let anyone fill the log.
             _logger.LogDebug("{Path} requested but Publish Playlists is off", Request?.Path.Value);
-            return NotFound();
+            return NotPublished();
         }
 
         if (!config.EnableLiveTv)
         {
-            return BadRequest(new { Error = "Live TV is not enabled in plugin settings." });
+            return PlainError(StatusCodes.Status400BadRequest, "Live TV is not enabled in plugin settings.");
         }
 
         if (!HasProviderCredentials(config))
         {
-            return BadRequest(new { Error = "Provider credentials not configured." });
+            return PlainError(StatusCodes.Status400BadRequest, "Provider credentials not configured.");
         }
 
         try
@@ -105,7 +105,7 @@ public class LiveTvController : ControllerBase
         catch (System.Exception ex)
         {
             _logger.LogError(ex, "Failed to generate M3U playlist");
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { Error = "Failed to generate M3U playlist." });
+            return PlainError(StatusCodes.Status503ServiceUnavailable, "Failed to generate M3U playlist.");
         }
     }
 
@@ -127,22 +127,22 @@ public class LiveTvController : ControllerBase
 
         if (!IsCallerAllowed(config))
         {
-            return NotFound();
+            return NotPublished();
         }
 
         if (!config.EnableLiveTv)
         {
-            return BadRequest(new { Error = "Live TV is not enabled in plugin settings." });
+            return PlainError(StatusCodes.Status400BadRequest, "Live TV is not enabled in plugin settings.");
         }
 
         if (!config.EnableEpg)
         {
-            return BadRequest(new { Error = "EPG is not enabled in plugin settings." });
+            return PlainError(StatusCodes.Status400BadRequest, "EPG is not enabled in plugin settings.");
         }
 
         if (!HasProviderCredentials(config))
         {
-            return BadRequest(new { Error = "Provider credentials not configured." });
+            return PlainError(StatusCodes.Status400BadRequest, "Provider credentials not configured.");
         }
 
         try
@@ -153,7 +153,7 @@ public class LiveTvController : ControllerBase
         catch (System.Exception ex)
         {
             _logger.LogError(ex, "Failed to generate XMLTV EPG");
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { Error = "Failed to generate EPG." });
+            return PlainError(StatusCodes.Status503ServiceUnavailable, "Failed to generate EPG.");
         }
     }
 
@@ -175,7 +175,7 @@ public class LiveTvController : ControllerBase
 
         if (!IsCallerAllowed(config))
         {
-            return NotFound();
+            return NotPublished();
         }
 
         if (!config.PublishLiveTvPlaylists)
@@ -183,22 +183,22 @@ public class LiveTvController : ControllerBase
             // Same answer as a route that does not exist. Debug only: this is what an anonymous
             // probe gets, and logging each one louder would let anyone fill the log.
             _logger.LogDebug("{Path} requested but Publish Playlists is off", Request?.Path.Value);
-            return NotFound();
+            return NotPublished();
         }
 
         if (!config.EnableLiveTv)
         {
-            return BadRequest(new { Error = "Live TV is not enabled in plugin settings." });
+            return PlainError(StatusCodes.Status400BadRequest, "Live TV is not enabled in plugin settings.");
         }
 
         if (!config.EnableCatchup)
         {
-            return BadRequest(new { Error = "Catch-up is not enabled in plugin settings." });
+            return PlainError(StatusCodes.Status400BadRequest, "Catch-up is not enabled in plugin settings.");
         }
 
         if (!HasProviderCredentials(config))
         {
-            return BadRequest(new { Error = "Provider credentials not configured." });
+            return PlainError(StatusCodes.Status400BadRequest, "Provider credentials not configured.");
         }
 
         try
@@ -210,7 +210,7 @@ public class LiveTvController : ControllerBase
         catch (System.Exception ex)
         {
             _logger.LogError(ex, "Failed to generate Catchup M3U playlist");
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { Error = "Failed to generate Catchup M3U playlist." });
+            return PlainError(StatusCodes.Status503ServiceUnavailable, "Failed to generate Catchup M3U playlist.");
         }
     }
 
@@ -441,6 +441,28 @@ public class LiveTvController : ControllerBase
         return provider is not null
             && !string.IsNullOrEmpty(provider.BaseUrl)
             && !string.IsNullOrEmpty(provider.Username);
+    }
+
+    // The same answer as a route that does not exist: an empty 404. NotFound() is not that on
+    // an [ApiController]: it becomes a ProblemDetails object, which the [Produces] filter on
+    // these endpoints then turns into an empty 406, telling a prober the endpoint is there.
+    private static ContentResult NotPublished()
+    {
+        return new ContentResult { StatusCode = StatusCodes.Status404NotFound };
+    }
+
+    // The playlist and guide endpoints carry [Produces("audio/x-mpegurl")] or
+    // [Produces("application/xml")]. That filter applies to any ObjectResult, so an error object
+    // returned from them has no formatter that can write it and ASP.NET answers an empty 406
+    // instead. A ContentResult is not affected, so the status and the message reach the caller.
+    private static ContentResult PlainError(int statusCode, string message)
+    {
+        return new ContentResult
+        {
+            StatusCode = statusCode,
+            Content = message,
+            ContentType = "text/plain; charset=utf-8",
+        };
     }
 
     private sealed record ParsedAllowList(string Raw, IReadOnlyList<System.Net.IPNetwork> Networks);

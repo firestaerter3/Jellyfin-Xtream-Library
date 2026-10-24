@@ -77,7 +77,7 @@ test('the setup URLs carry the security warning', () => {
     const block = section.slice(0, 4000);
     assert.match(block, /Treat these URLs like your Xtream password/);
     assert.match(block, /without a Jellyfin login/);
-    assert.match(block, /Native Tuner above avoids this/);
+    assert.match(block, /limit them with the list below or at your reverse proxy/);
 });
 
 test('the Live TV endpoint allow-list is bound and explained', () => {
@@ -90,7 +90,8 @@ test('the Live TV endpoint allow-list is bound and explained', () => {
     // The trap is that the operator's own server has to be on the list, because the URL this page
     // hands out is built from whatever origin the admin is browsing on.
     const section = HTML.slice(HTML.indexOf('id="txtLiveTvEndpointAllowedIps"'));
-    assert.match(section.slice(0, 1800), /Your own server has to be on the list too/);
+    assert.match(section.slice(0, 1800), /Include your own server/);
+    assert.match(section.slice(0, 1800), /127\.0\.0\.1/);
 });
 
 test('the Publish Playlists switch is bound and says what needs it', () => {
@@ -102,8 +103,9 @@ test('the Publish Playlists switch is bound and says what needs it', () => {
     assert.match(JS, /config\.PublishLiveTvPlaylists = document\.getElementById\('chkPublishLiveTvPlaylists'\)\.checked/);
 
     const setup = HTML.slice(HTML.indexOf('Setup URLs'));
-    assert.match(setup, /Only served while <strong>Publish Playlists<\/strong> below is on/);
+    assert.match(setup, /Not needed with the native tuner/);
     const section = HTML.slice(HTML.indexOf('id="chkPublishLiveTvPlaylists"'));
-    assert.match(section.slice(0, 1500), /Native Tuner does not need it/);
+    assert.match(section.slice(0, 1500), /Needed for a manual M3U Tuner/);
+    assert.match(section.slice(0, 1500), /native tuner and the guide work without it/);
     assert.match(section.slice(0, 1500), /Dispatcharr mode/);
 });

@@ -581,7 +581,7 @@ public class StrmNameCollisionTests : IDisposable
 
         MovieFolders().Should().Equal("La bella addormentata nel bosco (1959) [tmdbid-10882]");
         first.MoviesDeferredForGrouping.Should().Be(1);
-        first.FailedItems.Should().ContainSingle(f => f.ItemId == 114677 && f.RetryOnNextSyncOnly);
+        first.FailedItems.Should().ContainSingle(f => f.ItemId == 114677);
         _log.Should().Contain(l => l.StartsWith("[Warning] 1 movies were not written", StringComparison.Ordinal));
 
         VodInfoWithTmdbId(114677, "10882");
@@ -929,7 +929,6 @@ public class StrmNameCollisionTests : IDisposable
             new Mock<ILibraryManager>().Object,
             _lookup.Object,
             new SnapshotService(appPaths.Object, NullLogger<SnapshotService>.Instance),
-            new DeltaCalculator(NullLogger<DeltaCalculator>.Instance),
             new LiveTvService(_client.Object, new Mock<IDispatcharrClient>().Object, appPaths.Object, MockAppHost(), NullLogger<LiveTvService>.Instance),
             appPaths.Object,
             new ListLogger(_log));

@@ -24,6 +24,10 @@ namespace Jellyfin.Xtream.Library.Tests.Client;
 
 public class XtreamClientTests : IDisposable
 {
+    // A non-empty answer: an empty "[]" is now retried, so tests that only need "the provider
+    // answered" must not use it.
+    private const string OneCategoryJson = "[{\"category_id\":\"1\",\"category_name\":\"Movies\",\"parent_id\":0}]";
+
     private readonly HttpClient _httpClient;
     private readonly Mock<ILogger<XtreamClient>> _mockLogger;
     private readonly XtreamClient _client;
@@ -108,7 +112,7 @@ public class XtreamClientTests : IDisposable
             capturedUri = request.RequestUri;
             return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
             {
-                Content = new StringContent("[]", System.Text.Encoding.UTF8, "application/json"),
+                Content = new StringContent(OneCategoryJson, System.Text.Encoding.UTF8, "application/json"),
             };
         });
         var client = new XtreamClient(new HttpClient(handler), _mockLogger.Object);
@@ -132,7 +136,7 @@ public class XtreamClientTests : IDisposable
             capturedUri = request.RequestUri;
             return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
             {
-                Content = new StringContent("[]", System.Text.Encoding.UTF8, "application/json"),
+                Content = new StringContent(OneCategoryJson, System.Text.Encoding.UTF8, "application/json"),
             };
         });
         var client = new XtreamClient(new HttpClient(handler), _mockLogger.Object);
@@ -218,7 +222,8 @@ public class XtreamClientTests : IDisposable
     {
         // First two attempts exceed the timeout, the third answers immediately.
         var handler = new DelayingHttpMessageHandler(
-            attempt => attempt <= 2 ? TimeSpan.FromSeconds(30) : TimeSpan.Zero);
+            attempt => attempt <= 2 ? TimeSpan.FromSeconds(30) : TimeSpan.Zero,
+            body: OneCategoryJson);
         using var httpClient = new HttpClient(handler);
         var client = new XtreamClient(httpClient, _mockLogger.Object)
         {
@@ -231,8 +236,90 @@ public class XtreamClientTests : IDisposable
 
         var result = await client.GetVodCategoryAsync(connectionInfo, CancellationToken.None);
 
-        result.Should().BeEmpty();
+        // The answer has to carry content: an empty list is retried too, so "[]" here would
+        // make the client ask a fourth time.
+        result.Should().ContainSingle().Which.CategoryName.Should().Be("Movies");
         handler.Attempts.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task GetVodCategoryAsync_EmptyThenContent_RetriesAndReturnsContent()
+    {
+        // The provider answers "[]" twice, then the real list.
+        var handler = new SequencedHttpMessageHandler(attempt => attempt <= 2 ? "[]" : OneCategoryJson);
+        using var httpClient = new HttpClient(handler);
+        var client = new XtreamClient(httpClient, _mockLogger.Object)
+        {
+            MaxRetries = 3,
+            RetryDelayMs = 1,
+        };
+        client.UpdateUserAgent(null);
+        var connectionInfo = new ConnectionInfo("http://test.example.com", "user", "secret");
+
+        var result = await client.GetVodCategoryAsync(connectionInfo, CancellationToken.None);
+
+        result.Should().ContainSingle().Which.CategoryName.Should().Be("Movies");
+        handler.Attempts.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task GetVodCategoryAsync_AlwaysEmpty_RetriesThenReturnsEmptyList()
+    {
+        // An empty list can be the truth (empty category), so running out of retries returns it
+        // rather than failing the whole fetch.
+        var handler = new SequencedHttpMessageHandler(_ => "[]");
+        using var httpClient = new HttpClient(handler);
+        var client = new XtreamClient(httpClient, _mockLogger.Object)
+        {
+            MaxRetries = 2,
+            RetryDelayMs = 1,
+        };
+        client.UpdateUserAgent(null);
+        var connectionInfo = new ConnectionInfo("http://test.example.com", "user", "secret");
+
+        var result = await client.GetVodCategoryAsync(connectionInfo, CancellationToken.None);
+
+        result.Should().BeEmpty();
+        handler.Attempts.Should().Be(3); // first request + 2 retries
+    }
+
+    [Fact]
+    public async Task GetVodCategoryAsync_EmptyWithRetriesDisabled_ReturnsEmptyListWithoutRetrying()
+    {
+        var handler = new SequencedHttpMessageHandler(_ => "[]");
+        using var httpClient = new HttpClient(handler);
+        var client = new XtreamClient(httpClient, _mockLogger.Object)
+        {
+            MaxRetries = 0,
+        };
+        client.UpdateUserAgent(null);
+        var connectionInfo = new ConnectionInfo("http://test.example.com", "user", "secret");
+
+        var result = await client.GetVodCategoryAsync(connectionInfo, CancellationToken.None);
+
+        result.Should().BeEmpty();
+        handler.Attempts.Should().Be(1);
+    }
+
+    [Theory]
+    [InlineData("[ ]")]
+    [InlineData("  []\n")]
+    public async Task GetVodCategoryAsync_EmptyArrayWithWhitespace_IsRetried(string emptyBody)
+    {
+        var handler = new SequencedHttpMessageHandler(attempt => attempt == 1 ? emptyBody : OneCategoryJson);
+        using var httpClient = new HttpClient(handler);
+        var client = new XtreamClient(httpClient, _mockLogger.Object)
+        {
+            MaxRetries = 3,
+            RetryDelayMs = 1,
+        };
+        client.UpdateUserAgent(null);
+        var connectionInfo = new ConnectionInfo("http://test.example.com", "user", "secret");
+
+        var result = await client.GetVodCategoryAsync(connectionInfo, CancellationToken.None);
+
+        result.Should().HaveCount(1);
+        handler.Attempts.Should().Be(2);
     }
 
     [Fact]
@@ -314,7 +401,23 @@ public class XtreamClientTests : IDisposable
         }
     }
 
-    private sealed class DelayingHttpMessageHandler(Func<int, TimeSpan> delayForAttempt, Action? onRequest = null)
+    private sealed class SequencedHttpMessageHandler(Func<int, string> bodyForAttempt) : HttpMessageHandler
+    {
+        private int _attempts;
+
+        public int Attempts => _attempts;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var attempt = Interlocked.Increment(ref _attempts);
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(bodyForAttempt(attempt), System.Text.Encoding.UTF8, "application/json"),
+            });
+        }
+    }
+
+    private sealed class DelayingHttpMessageHandler(Func<int, TimeSpan> delayForAttempt, Action? onRequest = null, string body = "[]")
         : HttpMessageHandler
     {
         private int _attempts;
@@ -334,7 +437,7 @@ public class XtreamClientTests : IDisposable
 
             return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
             {
-                Content = new StringContent("[]", System.Text.Encoding.UTF8, "application/json"),
+                Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json"),
             };
         }
     }

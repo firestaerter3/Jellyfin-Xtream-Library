@@ -135,7 +135,6 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             DispatcharrApiPass = config.DispatcharrApiPass,
             EnableIncrementalSync = config.EnableIncrementalSync,
             FullSyncIntervalDays = config.FullSyncIntervalDays,
-            FullSyncChangeThreshold = config.FullSyncChangeThreshold,
             CleanupOrphans = config.CleanupOrphans,
             OrphanSafetyThreshold = config.OrphanSafetyThreshold,
             SyncParallelism = config.SyncParallelism,
@@ -366,7 +365,6 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         target.DispatcharrApiPass = source.DispatcharrApiPass;
         target.EnableIncrementalSync = source.EnableIncrementalSync;
         target.FullSyncIntervalDays = source.FullSyncIntervalDays;
-        target.FullSyncChangeThreshold = source.FullSyncChangeThreshold;
         target.CleanupOrphans = source.CleanupOrphans;
         target.OrphanSafetyThreshold = source.OrphanSafetyThreshold;
         target.SyncParallelism = source.SyncParallelism;

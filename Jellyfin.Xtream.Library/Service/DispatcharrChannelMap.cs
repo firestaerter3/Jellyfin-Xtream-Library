@@ -56,12 +56,15 @@ public static class DispatcharrChannelMap
 
         foreach (var channel in channels)
         {
-            if (string.IsNullOrWhiteSpace(channel?.Uuid))
+            // Only a real uuid. The value goes into the M3U playlist and the media source path as
+            // is, so a line break in it would add a channel of Dispatcharr's choosing to the
+            // playlist the anonymous endpoints serve.
+            if (!IsUuid(channel?.Uuid))
             {
                 continue;
             }
 
-            if (channel.Streams != null)
+            if (channel!.Streams != null)
             {
                 foreach (var stream in channel.Streams)
                 {
@@ -79,6 +82,66 @@ public static class DispatcharrChannelMap
 
         return map;
     }
+
+    /// <summary>
+    /// Builds the lookup from the same listing to the stream stats Dispatcharr's proxy recorded,
+    /// keyed the same two ways as <see cref="Build"/>. Dispatcharr's Xtream emulation never sends
+    /// these, so without this every channel is probed by Jellyfin before it plays (homelab-ops #550).
+    /// <para>
+    /// Under the channel id, the stats of the channel's first stream, because that is the one
+    /// Dispatcharr plays; a later stream's stats describe a failover that may never be used. Under
+    /// an upstream stream id, that stream's own stats.
+    /// </para>
+    /// </summary>
+    /// <param name="channels">The listing, as returned with <c>include_streams=true</c>.</param>
+    /// <returns>Stream or channel id to stats. Ids without readable stats are left out.</returns>
+    public static IReadOnlyDictionary<int, StreamStatsInfo> BuildStats(IEnumerable<DispatcharrChannel>? channels)
+    {
+        var byStream = new Dictionary<int, StreamStatsInfo>();
+        var byChannel = new Dictionary<int, StreamStatsInfo>();
+        if (channels == null)
+        {
+            return byChannel;
+        }
+
+        foreach (var channel in channels)
+        {
+            if (channel?.Streams == null || channel.Streams.Count == 0)
+            {
+                continue;
+            }
+
+            foreach (var stream in channel.Streams)
+            {
+                if (stream?.StreamId is int streamId && !byStream.ContainsKey(streamId) && stream.ReadStreamStats() is { } own)
+                {
+                    byStream[streamId] = own;
+                }
+            }
+
+            if (channel.Streams[0]?.ReadStreamStats() is { } first)
+            {
+                byChannel[channel.Id] = first;
+            }
+        }
+
+        // Channel ids win over stream ids, as in Build.
+        foreach (var pair in byStream)
+        {
+            byChannel.TryAdd(pair.Key, pair.Value);
+        }
+
+        return byChannel;
+    }
+
+    /// <summary>
+    /// Whether a value is a uuid, as Dispatcharr's channel and movie uuids are.
+    /// </summary>
+    /// <param name="value">The value.</param>
+    /// <returns>True for a uuid.</returns>
+    /// <remarks>The length check matters: the parser trims whitespace, so a uuid with a line break
+    /// beside it would otherwise pass and the line break would reach the playlist.</remarks>
+    public static bool IsUuid(string? value) => value?.Length == 36 && Guid.TryParseExact(value, "D", out _);
 
     /// <summary>
     /// The credential-free URL for one channel.

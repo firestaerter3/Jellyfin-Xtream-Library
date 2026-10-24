@@ -46,6 +46,37 @@ public class NfoWriterTests : IDisposable
 
     #region Movie NFO Tests
 
+    [Theory]
+    [InlineData("/config/data/jellyfin.db")]
+    [InlineData("file:///etc/passwd")]
+    [InlineData("C:\\ProgramData\\Jellyfin\\data\\jellyfin.db")]
+    [InlineData("\\\\host\\share\\a.jpg")]
+    [InlineData("ftp://host/a.jpg")]
+    [InlineData("poster.jpg")]
+    public async Task WriteMovieNfo_LeavesOutImagesThatAreNotWebUrls(string image)
+    {
+        // Jellyfin's NFO reader attaches an existing local path as the item's image, which would
+        // serve that file to every user of the library.
+        var nfoPath = Path.Combine(_tempDirectory, "local-image.nfo");
+
+        await NfoWriter.WriteMovieNfoAsync(nfoPath, "Movie", null, null, null, null, null, CancellationToken.None, posterUrl: image, backdropUrl: image);
+
+        var xml = XDocument.Load(nfoPath);
+        xml.Root!.Descendants("thumb").Should().BeEmpty();
+        xml.Root.Element("fanart").Should().BeNull();
+    }
+
+    [Fact]
+    public async Task WriteMovieNfo_KeepsHttpAndHttpsImages()
+    {
+        var nfoPath = Path.Combine(_tempDirectory, "web-image.nfo");
+
+        await NfoWriter.WriteMovieNfoAsync(nfoPath, "Movie", null, null, null, null, null, CancellationToken.None, posterUrl: "https://img.example/p.jpg", backdropUrl: "http://img.example/b.jpg");
+
+        var xml = XDocument.Load(nfoPath);
+        xml.Root!.Descendants("thumb").Select(e => e.Value).Should().Equal("https://img.example/p.jpg", "http://img.example/b.jpg");
+    }
+
     [Fact]
     public async Task WriteMovieNfo_WithVideoAndAudio_WritesValidXml()
     {

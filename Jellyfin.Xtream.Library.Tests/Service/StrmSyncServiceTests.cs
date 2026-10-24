@@ -26,6 +26,36 @@ public class StrmSyncServiceTests
 {
     #region SanitizeFileName Tests
 
+    [Theory]
+    [InlineData("..")]
+    [InlineData(".")]
+    [InlineData("...")]
+    [InlineData(" .. ")]
+    public void SanitizeFileName_DotsOnly_ReturnsUnknown(string input)
+    {
+        // As a folder name ".." is the directory above, which put a title's files outside Movies.
+        StrmSyncService.SanitizeFileName(input).Should().Be("Unknown");
+    }
+
+    [Fact]
+    public void SanitizeFileName_KeepsDotsInsideARealTitle()
+    {
+        StrmSyncService.SanitizeFileName("Mr. Robot").Should().Be("Mr. Robot");
+    }
+
+    [Fact]
+    public void SanitizeFileName_VeryLongTitle_IsQuick()
+    {
+        // AsianBracketedTextPattern took seconds on a title of a few thousand characters.
+        var title = "(" + new string('\u4E00', 20000);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+
+        var name = StrmSyncService.SanitizeFileName(title);
+
+        watch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(1));
+        name.Length.Should().BeLessThanOrEqualTo(StrmSyncService.MaxTitleLength);
+    }
+
     [Fact]
     public void SanitizeFileName_NullInput_ReturnsUnknown()
     {

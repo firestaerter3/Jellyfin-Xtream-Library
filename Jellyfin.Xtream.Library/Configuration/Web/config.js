@@ -90,7 +90,6 @@ var XtreamLibraryConfig = (function () {
             DispatcharrApiPass: '',
             EnableIncrementalSync: true,
             FullSyncIntervalDays: 7,
-            FullSyncChangeThreshold: 0.5,
             CleanupOrphans: true,
             OrphanSafetyThreshold: 0.2,
             SmartSkipExisting: true,
@@ -175,7 +174,6 @@ var XtreamLibraryConfig = (function () {
         document.getElementById('chkDownloadArtworkForUnmatched').checked = p.DownloadArtworkForUnmatched !== false;
         document.getElementById('chkEnableIncrementalSync').checked = p.EnableIncrementalSync !== false;
         document.getElementById('txtFullSyncIntervalDays').value = p.FullSyncIntervalDays || 7;
-        document.getElementById('txtFullSyncChangeThreshold').value = Math.round((p.FullSyncChangeThreshold || 0.50) * 100);
         document.getElementById('chkEnableProactiveMediaInfo').checked = p.EnableProactiveMediaInfo || false;
 
         document.getElementById('chkEnableDispatcharrMode').checked = p.EnableDispatcharrMode || false;
@@ -229,7 +227,7 @@ var XtreamLibraryConfig = (function () {
         p.SeriesFolderMode = seriesMode;
 
         if (movieMode === 'Single') {
-            p.SelectedVodCategoryIds = this.getSelectedCategoryIds('vod');
+            p.SelectedVodCategoryIds = this.getContentCategoryIdsForSave('vod');
             p.MovieFolderMappings = '';
         } else {
             // Multiple folder mode. SelectedVodCategoryIds is the only thing the sync consults to
@@ -245,7 +243,7 @@ var XtreamLibraryConfig = (function () {
         }
 
         if (seriesMode === 'Single') {
-            p.SelectedSeriesCategoryIds = this.getSelectedCategoryIds('series');
+            p.SelectedSeriesCategoryIds = this.getContentCategoryIdsForSave('series');
             p.SeriesFolderMappings = '';
         } else {
             // Same as movies above: the union of the folder-assigned categories, not the hidden
@@ -281,7 +279,6 @@ var XtreamLibraryConfig = (function () {
         p.DownloadArtworkForUnmatched = document.getElementById('chkDownloadArtworkForUnmatched').checked;
         p.EnableIncrementalSync = document.getElementById('chkEnableIncrementalSync').checked;
         p.FullSyncIntervalDays = parseInt(document.getElementById('txtFullSyncIntervalDays').value) || 7;
-        p.FullSyncChangeThreshold = (parseInt(document.getElementById('txtFullSyncChangeThreshold').value) || 50) / 100;
         p.EnableProactiveMediaInfo = document.getElementById('chkEnableProactiveMediaInfo').checked;
 
         p.EnableDispatcharrMode = document.getElementById('chkEnableDispatcharrMode').checked;
@@ -290,6 +287,8 @@ var XtreamLibraryConfig = (function () {
         p.DispatcharrApiUser = document.getElementById('txtDispatcharrApiUser').value.trim();
         p.DispatcharrApiPass = document.getElementById('txtDispatcharrApiPass').value.trim();
     },
+
+    providerTabs: ['provider', 'movies', 'series'],
 
     // Tab switching
     switchTab: function (tabName) {
@@ -304,6 +303,13 @@ var XtreamLibraryConfig = (function () {
         var tabContent = document.getElementById('tab-' + tabName);
         if (tabContent) {
             tabContent.classList.add('active');
+        }
+
+        // Dashboard, Live TV and General are not per provider, so a provider picker there only
+        // suggests they are. The bar starts hidden in the markup, since the page opens on Dashboard.
+        var providerBar = document.getElementById('providerBar');
+        if (providerBar) {
+            providerBar.style.display = this.providerTabs.indexOf(tabName) >= 0 ? '' : 'none';
         }
 
         if (tabName === 'dashboard') {
@@ -335,7 +341,8 @@ var XtreamLibraryConfig = (function () {
 
             // Schedule settings
             document.getElementById('selSyncScheduleType').value = config.SyncScheduleType || 'Interval';
-            document.getElementById('selSyncDailyHour').value = config.SyncDailyHour || 3;
+            // ?? rather than ||: hour 0 is midnight, and || moved it to 03:00 on every save.
+            document.getElementById('selSyncDailyHour').value = config.SyncDailyHour ?? 3;
             document.getElementById('selSyncDailyMinute').value = config.SyncDailyMinute || 0;
             self.updateScheduleVisibility();
 
@@ -382,6 +389,12 @@ var XtreamLibraryConfig = (function () {
             // to the point, would swallow a saved negative correction.
             document.getElementById('txtCatchupTimeShiftMinutes').value =
                 config.CatchupTimeShiftMinutes != null ? config.CatchupTimeShiftMinutes : 0;
+
+            self.updateLiveTvVisibility();
+            self.updateCatchupVisibility();
+            self.showTunerChoice();
+            self.checkDuplicateTuner();
+            self.updateEmptyState();
 
             // Update Live TV URLs
             self.updateLiveTvUrls();
@@ -437,7 +450,8 @@ var XtreamLibraryConfig = (function () {
 
             // Schedule settings
             config.SyncScheduleType = document.getElementById('selSyncScheduleType').value;
-            config.SyncDailyHour = parseInt(document.getElementById('selSyncDailyHour').value) || 3;
+            var dailyHour = parseInt(document.getElementById('selSyncDailyHour').value, 10);
+            config.SyncDailyHour = Number.isNaN(dailyHour) ? 3 : dailyHour;
             config.SyncDailyMinute = parseInt(document.getElementById('selSyncDailyMinute').value) || 0;
 
             // Live TV settings
@@ -477,6 +491,7 @@ var XtreamLibraryConfig = (function () {
             config.CatchupTimeShiftMinutes = isNaN(catchupShift) ? 0 : catchupShift;
 
             ApiClient.updatePluginConfiguration(self.pluginUniqueId, config).then(function () {
+                self.updateEmptyState();
                 Dashboard.processPluginConfigurationUpdateResult();
             });
         });
@@ -891,12 +906,12 @@ var XtreamLibraryConfig = (function () {
                 self.pollForCompletion();
             } else {
                 self.resetSyncButton();
-                statusSpan.innerHTML = '<span style="color: red;">Failed to start sync: ' + (data.Message || 'Unknown error') + '</span>';
+                statusSpan.innerHTML = '<span style="color: red;">Failed to start sync: ' + XtreamLibraryConfig.escapeHtml(data.Message || 'Unknown error') + '</span>';
             }
         }).catch(function (error) {
             self.resetSyncButton();
             console.error('Sync error:', error);
-            statusSpan.innerHTML = '<span style="color: red;">Sync failed: ' + (error.message || 'Check console for details') + '</span>';
+            statusSpan.innerHTML = '<span style="color: red;">Sync failed: ' + XtreamLibraryConfig.escapeHtml(error.message || 'Check console for details') + '</span>';
         });
     },
 
@@ -940,7 +955,7 @@ var XtreamLibraryConfig = (function () {
                             } else if (result.Error && result.Error.toLowerCase().includes('cancel')) {
                                 statusSpan.innerHTML = '<span style="color: orange;">Sync was cancelled.</span>';
                             } else {
-                                statusSpan.innerHTML = '<span style="color: red;">Sync failed: ' + (result.Error || 'Unknown error') + '</span>';
+                                statusSpan.innerHTML = '<span style="color: red;">Sync failed: ' + XtreamLibraryConfig.escapeHtml(result.Error || 'Unknown error') + '</span>';
                             }
                         }
                     });
@@ -1011,13 +1026,13 @@ var XtreamLibraryConfig = (function () {
         const statusSpan = document.getElementById('syncStatus');
         let html = '<br/><span style="color: orange;">';
         if (progress.MoviePhase || progress.SeriesPhase) {
-            if (progress.MoviePhase) html += progress.MoviePhase;
+            if (progress.MoviePhase) html += this.escapeHtml(progress.MoviePhase);
             if (progress.SeriesPhase) {
                 if (progress.MoviePhase) html += '<br/>';
-                html += progress.SeriesPhase;
+                html += this.escapeHtml(progress.SeriesPhase);
             }
         } else {
-            html += progress.Phase;
+            html += this.escapeHtml(progress.Phase);
         }
         if (progress.CurrentItem) {
             html += ': ' + this.escapeHtml(progress.CurrentItem);
@@ -1207,7 +1222,7 @@ var XtreamLibraryConfig = (function () {
             html += '<br/><br/><span style="color: orange;"><strong>Errors:</strong> ' + result.Errors + '</span>';
         }
         if (result.Error) {
-            html += '<br/><span style="color: red;"><strong>Error:</strong> ' + result.Error + '</span>';
+            html += '<br/><span style="color: red;"><strong>Error:</strong> ' + XtreamLibraryConfig.escapeHtml(result.Error) + '</span>';
         }
 
         infoDiv.innerHTML = html;
@@ -1249,6 +1264,7 @@ var XtreamLibraryConfig = (function () {
 
         statusSpan.innerHTML = '<span style="color: orange;">Retrying failed items...</span>';
 
+        // The retry runs as a sync in the background; follow it like a sync.
         fetch(ApiClient.getUrl('XtreamLibrary/RetryFailed'), {
             method: 'POST',
             headers: {
@@ -1257,15 +1273,16 @@ var XtreamLibraryConfig = (function () {
         }).then(function (response) {
             return response.json();
         }).then(function (data) {
-            if (data.Success) {
-                statusSpan.innerHTML = '<span style="color: green;">Retry completed!</span>';
-                self.loadSyncStatus();
+            if (data.Success || (data.Message && data.Message.includes('already in progress'))) {
+                statusSpan.innerHTML = '<span style="color: orange;">Retrying failed items: sync in progress...</span>';
+                self.startProgressPolling();
+                self.pollForCompletion();
             } else {
-                statusSpan.innerHTML = '<span style="color: red;">Retry failed: ' + (data.Error || 'Unknown error') + '</span>';
+                statusSpan.innerHTML = '<span style="color: red;">Retry failed: ' + XtreamLibraryConfig.escapeHtml(data.Message || data.Error || 'Unknown error') + '</span>';
             }
         }).catch(function (error) {
             console.error('Retry error:', error);
-            statusSpan.innerHTML = '<span style="color: red;">Retry failed: ' + (error.message || 'Check console for details') + '</span>';
+            statusSpan.innerHTML = '<span style="color: red;">Retry failed: ' + XtreamLibraryConfig.escapeHtml(error.message || 'Check console for details') + '</span>';
         });
     },
 
@@ -1816,6 +1833,18 @@ var XtreamLibraryConfig = (function () {
         return self.getSelectedCategoryIds('live');
     },
 
+    // The same guard for the Movies and Series lists in Single folder mode. They are only drawn
+    // once the provider has answered, so saving while it is unreachable or still loading used to
+    // write an empty selection, which the sync reads as "every category".
+    getContentCategoryIdsForSave: function (type) {
+        const rendered = document.querySelectorAll('input[data-category-type="' + type + '"]');
+        if (rendered.length === 0) {
+            return (type === 'vod' ? this.selectedVodCategoryIds : this.selectedSeriesCategoryIds).slice();
+        }
+
+        return this.getSelectedCategoryIds(type);
+    },
+
     getSelectedCategoryIds: function (type) {
         const checkboxes = document.querySelectorAll('input[data-category-type="' + type + '"]:checked');
         const ids = [];
@@ -1981,10 +2010,16 @@ var XtreamLibraryConfig = (function () {
         });
     },
 
+    // Escapes all five characters, quotes included: the result also goes into quoted attributes
+    // (data-category-name, value), and the textContent/innerHTML trick it replaced left quotes
+    // alone, so a provider's category name could close the attribute and add an event handler.
     escapeHtml: function (text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        return String(text === null || text === undefined ? '' : text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     },
 
     updateScheduleVisibility: function () {
@@ -1999,6 +2034,100 @@ var XtreamLibraryConfig = (function () {
             intervalSettings.style.display = 'block';
             dailySettings.style.display = 'none';
         }
+    },
+
+    // Hiding only: a switched-off section keeps its values and saves them unchanged.
+    updateLiveTvVisibility: function () {
+        var on = document.getElementById('chkEnableLiveTv').checked;
+        ['liveTvDependentTop', 'liveTvDependentRest'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.style.display = on ? '' : 'none';
+        });
+    },
+
+    updateCatchupVisibility: function () {
+        var el = document.getElementById('catchupDependent');
+        if (el) el.style.display = document.getElementById('chkEnableCatchup').checked ? '' : 'none';
+    },
+
+    // The tuner choice is EnableNativeTuner shown as two options. Loading only reflects the saved
+    // values; nothing changes until the user picks.
+    showTunerChoice: function () {
+        var native = document.getElementById('chkEnableNativeTuner').checked;
+        document.getElementById('radTunerNative').checked = native;
+        document.getElementById('radTunerM3u').checked = !native;
+        this.updateTunerHint();
+    },
+
+    // Picking the M3U tuner turns publishing on, because that tuner reads the published playlist.
+    // Picking the native tuner leaves publishing alone: other apps may still use the playlists.
+    chooseTuner: function (choice) {
+        document.getElementById('chkEnableNativeTuner').checked = choice === 'native';
+        if (choice === 'm3u') {
+            document.getElementById('chkPublishLiveTvPlaylists').checked = true;
+        }
+        this.updateTunerHint();
+    },
+
+    updateTunerHint: function () {
+        var native = document.getElementById('chkEnableNativeTuner').checked;
+        var publishing = document.getElementById('chkPublishLiveTvPlaylists').checked;
+        var hint = document.getElementById('tunerChoiceHint');
+        if (hint) {
+            hint.innerHTML = native
+                ? 'The plugin lists itself under Dashboard &rarr; Live TV &rarr; Tuner Devices as <strong>Xtream '
+                    + 'Library (added by the plugin)</strong>. Do not add a second one by hand, and no M3U tuner '
+                    + 'either, or every channel appears twice. This tuner always transcodes, and a channel can take '
+                    + 'a few seconds longer to start the first time, because Jellyfin examines the stream first.'
+                    + (publishing ? ' <strong>Publish Playlists</strong> is still on, so the playlists with your '
+                        + 'password are still served; turn it off under Setup URLs if no other app uses them.' : '')
+                : 'Add an <strong>M3U Tuner</strong> (not HDHomeRun) under Dashboard &rarr; Live TV &rarr; Tuner '
+                    + 'Devices with the M3U Playlist URL below. It can stream without transcoding, but the '
+                    + 'playlist carries your provider password: see Setup URLs.';
+        }
+        var warning = document.getElementById('tunerChoiceWarning');
+        if (warning) {
+            var publish = document.getElementById('chkPublishLiveTvPlaylists').checked;
+            warning.style.display = (!native && !publish) ? '' : 'none';
+        }
+        var duplicate = document.getElementById('duplicateTunerWarning');
+        if (duplicate) {
+            duplicate.style.display = (native && this.m3uTunerOnPluginPlaylist) ? '' : 'none';
+        }
+    },
+
+    // Asks the server whether Jellyfin also has an M3U tuner reading this plugin's playlist. With
+    // the native tuner chosen as well, every channel appears twice. A failed check shows nothing.
+    m3uTunerOnPluginPlaylist: false,
+
+    checkDuplicateTuner: function () {
+        var self = this;
+        // Reset first: the dashboard keeps this object across visits, and a failed check must not
+        // leave an earlier answer showing.
+        self.m3uTunerOnPluginPlaylist = false;
+        self.updateTunerHint();
+        fetch(ApiClient.getUrl('XtreamLibrary/LiveTv/TunerCheck'), {
+            method: 'GET',
+            headers: {
+                'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
+            }
+        }).then(function (r) {
+            return r.ok ? r.json() : null;
+        }).then(function (data) {
+            self.m3uTunerOnPluginPlaylist = !!(data && data.M3uTunerOnPluginPlaylist);
+            self.updateTunerHint();
+        }).catch(function () {
+            // Leave the warning hidden; the check is advice, not a requirement.
+        });
+    },
+
+    hasProvider: function () {
+        return this.providers.some(function (p) { return p && p.BaseUrl; });
+    },
+
+    updateEmptyState: function () {
+        var card = document.getElementById('emptyStateCard');
+        if (card) card.style.display = this.hasProvider() ? 'none' : '';
     },
 
     updateDispatcharrVisibility: function () {
@@ -2065,30 +2194,53 @@ var XtreamLibraryConfig = (function () {
             return response.json();
         }).then(function (data) {
             if (data.Success) {
-                statusSpan.innerHTML = '<span style="color: green;">' + data.Message + '</span>';
+                statusSpan.innerHTML = '<span style="color: green;">' + XtreamLibraryConfig.escapeHtml(data.Message) + '</span>';
             } else {
                 statusSpan.innerHTML = '<span style="color: red;">Failed to clear cache.</span>';
             }
         }).catch(function (error) {
             console.error('ClearMetadataCache error:', error);
-            statusSpan.innerHTML = '<span style="color: red;">Failed: ' + (error.message || 'Check console for details') + '</span>';
+            statusSpan.innerHTML = '<span style="color: red;">Failed: ' + XtreamLibraryConfig.escapeHtml(error.message || 'Check console for details') + '</span>';
+        });
+    },
+
+    // Built from the saved provider, because that is what the server deletes: the folder under
+    // the saved LibraryPath. The form may hold an edit that has not been saved yet.
+    cleanConfirmMessage: function (folder, saved) {
+        var name = (saved.Name || '').trim() || ('Provider ' + (this.activeProviderIndex + 1));
+        var root = (saved.LibraryPath || '').trim().replace(/\/$/, '');
+        var message = 'Delete every ' + (folder === 'Movies' ? 'movie' : 'series') + ' file of "' + name + '" in '
+            + root + '/' + folder + '?\n\n'
+            + 'The next sync writes them again, but Jellyfin sees them as new items: watched status, '
+            + 'favourites and resume points are lost. This cannot be undone.';
+        var formRoot = document.getElementById('txtLibraryPath').value.trim().replace(/\/$/, '');
+        if (formRoot !== root) {
+            message += '\n\nThe Library Path field has a change that is not saved. This deletes the saved '
+                + 'folder named above, not ' + formRoot + '/' + folder + '.';
+        }
+        return message;
+    },
+
+    confirmAndClean: function (folder, endpoint) {
+        var self = this;
+        ApiClient.getPluginConfiguration(this.pluginUniqueId).then(function (config) {
+            var saved = (config.Providers || [])[self.activeProviderIndex];
+            if (!saved) {
+                Dashboard.alert('This provider has not been saved yet, so there is nothing to delete.');
+                return;
+            }
+            if (confirm(self.cleanConfirmMessage(folder, saved))) {
+                self.cleanLibraryFolder(endpoint);
+            }
         });
     },
 
     cleanMovies: function () {
-        if (!confirm('Are you sure you want to delete ALL Movies content?\n\nThis action cannot be undone.')) {
-            return;
-        }
-
-        this.cleanLibraryFolder('CleanMovies');
+        this.confirmAndClean('Movies', 'CleanMovies');
     },
 
     cleanSeries: function () {
-        if (!confirm('Are you sure you want to delete ALL Series content?\n\nThis action cannot be undone.')) {
-            return;
-        }
-
-        this.cleanLibraryFolder('CleanSeries');
+        this.confirmAndClean('Series', 'CleanSeries');
     },
 
     cleanLibraryFolder: function (endpoint) {
@@ -2104,13 +2256,13 @@ var XtreamLibraryConfig = (function () {
             return response.json();
         }).then(function (data) {
             if (data.Success) {
-                statusDiv.innerHTML = '<span style="color: green;">' + data.Message + '</span>';
+                statusDiv.innerHTML = '<span style="color: green;">' + XtreamLibraryConfig.escapeHtml(data.Message) + '</span>';
             } else {
-                statusDiv.innerHTML = '<span style="color: red;">' + (data.Message || 'Failed to clean library.') + '</span>';
+                statusDiv.innerHTML = '<span style="color: red;">' + XtreamLibraryConfig.escapeHtml(data.Message || 'Failed to clean library.') + '</span>';
             }
         }).catch(function (error) {
             console.error('Clean library error:', error);
-            statusDiv.innerHTML = '<span style="color: red;">Failed: ' + (error.message || 'Check console for details') + '</span>';
+            statusDiv.innerHTML = '<span style="color: red;">Failed: ' + XtreamLibraryConfig.escapeHtml(error.message || 'Check console for details') + '</span>';
         });
     },
 
@@ -2159,18 +2311,6 @@ var XtreamLibraryConfig = (function () {
         }).catch(function (err) {
             console.error('Failed to copy:', err);
         });
-    },
-
-    toggleAdvanced: function () {
-        var section = document.getElementById('advancedSettings');
-        var arrow = document.getElementById('advancedArrow');
-        if (section.style.display === 'none') {
-            section.style.display = 'block';
-            arrow.innerHTML = '&#9662;'; // ▾
-        } else {
-            section.style.display = 'none';
-            arrow.innerHTML = '&#9656;'; // ▸
-        }
     },
 
     // Dashboard methods
@@ -2542,11 +2682,11 @@ var XtreamLibraryConfig = (function () {
                 self.pollForCompletion();
             } else {
                 self.updateDashboardSyncButton(false);
-                if (actionSpan) actionSpan.innerHTML = '<span style="color: red;">' + (data.Message || 'Failed') + '</span>';
+                if (actionSpan) actionSpan.innerHTML = '<span style="color: red;">' + XtreamLibraryConfig.escapeHtml(data.Message || 'Failed') + '</span>';
             }
         }).catch(function (err) {
             self.updateDashboardSyncButton(false);
-            if (actionSpan) actionSpan.innerHTML = '<span style="color: red;">Failed: ' + (err.message || 'Error') + '</span>';
+            if (actionSpan) actionSpan.innerHTML = '<span style="color: red;">Failed: ' + XtreamLibraryConfig.escapeHtml(err.message || 'Error') + '</span>';
         });
     },
 
@@ -2559,15 +2699,16 @@ var XtreamLibraryConfig = (function () {
             method: 'POST',
             headers: { 'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken() }
         }).then(function (r) { return r.json(); }).then(function (data) {
-            if (data.Success) {
-                if (actionSpan) actionSpan.innerHTML = '<span style="color: green;">Retry completed!</span>';
+            if (data.Success || (data.Message && data.Message.includes('already in progress'))) {
+                if (actionSpan) actionSpan.innerHTML = '<span style="color: orange;">Retrying failed items: sync in progress...</span>';
+                self.startDashboardProgressPolling();
+                self.startProgressPolling();
+                self.pollForCompletion();
             } else {
-                if (actionSpan) actionSpan.innerHTML = '<span style="color: red;">Retry failed: ' + (data.Error || 'Unknown') + '</span>';
+                if (actionSpan) actionSpan.innerHTML = '<span style="color: red;">Retry failed: ' + XtreamLibraryConfig.escapeHtml(data.Message || data.Error || 'Unknown') + '</span>';
             }
-            self.loadDashboard();
-            self.loadSyncStatus();
         }).catch(function (err) {
-            if (actionSpan) actionSpan.innerHTML = '<span style="color: red;">Retry failed: ' + (err.message || 'Error') + '</span>';
+            if (actionSpan) actionSpan.innerHTML = '<span style="color: red;">Retry failed: ' + XtreamLibraryConfig.escapeHtml(err.message || 'Error') + '</span>';
         });
     },
 
@@ -2597,7 +2738,7 @@ var XtreamLibraryConfig = (function () {
             statusSpan.innerHTML = '<span style="color: green;">Downloaded!</span>';
         }).catch(function (error) {
             console.error('DownloadLog error:', error);
-            statusSpan.innerHTML = '<span style="color: red;">Failed: ' + (error.message || 'Check console') + '</span>';
+            statusSpan.innerHTML = '<span style="color: red;">Failed: ' + XtreamLibraryConfig.escapeHtml(error.message || 'Check console') + '</span>';
         });
     },
 
@@ -2614,13 +2755,13 @@ var XtreamLibraryConfig = (function () {
             return response.json();
         }).then(function (data) {
             if (data.Success) {
-                statusSpan.innerHTML = '<span style="color: green;">' + data.Message + '</span>';
+                statusSpan.innerHTML = '<span style="color: green;">' + XtreamLibraryConfig.escapeHtml(data.Message) + '</span>';
             } else {
                 statusSpan.innerHTML = '<span style="color: red;">Failed to refresh cache.</span>';
             }
         }).catch(function (error) {
             console.error('RefreshLiveTvCache error:', error);
-            statusSpan.innerHTML = '<span style="color: red;">Failed: ' + (error.message || 'Check console for details') + '</span>';
+            statusSpan.innerHTML = '<span style="color: red;">Failed: ' + XtreamLibraryConfig.escapeHtml(error.message || 'Check console for details') + '</span>';
         });
     }
     };
@@ -2711,18 +2852,49 @@ function initXtreamLibraryConfig() {
         });
     }
 
-    var btnAdvancedToggle = document.getElementById('btnAdvancedToggle');
-    if (btnAdvancedToggle) {
-        btnAdvancedToggle.addEventListener('click', function (e) {
-            e.preventDefault();
-            XtreamLibraryConfig.toggleAdvanced();
-        });
-    }
 
     var chkEnableDispatcharrMode = document.getElementById('chkEnableDispatcharrMode');
     if (chkEnableDispatcharrMode) {
         chkEnableDispatcharrMode.addEventListener('change', function () {
             XtreamLibraryConfig.updateDispatcharrVisibility();
+        });
+    }
+
+    var chkEnableLiveTv = document.getElementById('chkEnableLiveTv');
+    if (chkEnableLiveTv) {
+        chkEnableLiveTv.addEventListener('change', function () {
+            XtreamLibraryConfig.updateLiveTvVisibility();
+        });
+    }
+
+    var chkEnableCatchup = document.getElementById('chkEnableCatchup');
+    if (chkEnableCatchup) {
+        chkEnableCatchup.addEventListener('change', function () {
+            XtreamLibraryConfig.updateCatchupVisibility();
+        });
+    }
+
+    ['radTunerNative', 'radTunerM3u'].forEach(function (id) {
+        var radio = document.getElementById(id);
+        if (radio) {
+            radio.addEventListener('change', function () {
+                if (radio.checked) XtreamLibraryConfig.chooseTuner(radio.value);
+            });
+        }
+    });
+
+    var chkPublishLiveTvPlaylists = document.getElementById('chkPublishLiveTvPlaylists');
+    if (chkPublishLiveTvPlaylists) {
+        chkPublishLiveTvPlaylists.addEventListener('change', function () {
+            XtreamLibraryConfig.updateTunerHint();
+        });
+    }
+
+    var btnGoToProvider = document.getElementById('btnGoToProvider');
+    if (btnGoToProvider) {
+        btnGoToProvider.addEventListener('click', function (e) {
+            e.preventDefault();
+            XtreamLibraryConfig.switchTab('provider');
         });
     }
 

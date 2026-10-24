@@ -83,6 +83,84 @@ public sealed class XmltvPassthroughTests : IDisposable
     private static string XmltvTime(DateTimeOffset t) => t.UtcDateTime.ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture) + " +0000";
 
     [Fact]
+    public async Task AProgrammeListedTwiceWithAnOffsetAppearsOnce()
+    {
+        // Tivione's feed through Dispatcharr lists NPO 1 twice, 15 minutes apart, and Jellyfin
+        // showed every programme twice, overlapping (homelab-ops #550).
+        var t = DateTimeOffset.UtcNow.AddMinutes(-10);
+        _client
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiveStreamInfo> { new() { StreamId = 1, Num = 1, Name = "NPO 1", EpgChannelId = "1" } });
+        string P(int from, int to, string title) =>
+            $"<programme start=\"{XmltvTime(t.AddMinutes(from))}\" stop=\"{XmltvTime(t.AddMinutes(to))}\" channel=\"1\"><title>{title}</title></programme>";
+        _client
+            .Setup(c => c.GetXmltvAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("<tv>"
+                + P(0, 50, "Zussen") + P(50, 105, "Ik Vertrek") + P(105, 125, "Mickey") + P(125, 145, "Mickey")
+                + P(15, 70, "Zussen") + P(70, 120, "Ik Vertrek")
+                + "</tv>");
+
+        var xml = await _liveTvService.GetXmltvEpgAsync(CancellationToken.None);
+
+        var titles = XDocument.Parse(xml).Descendants("programme").Select(p => p.Element("title")!.Value).ToList();
+        titles.Should().Equal(new[] { "Zussen", "Ik Vertrek", "Mickey", "Mickey" },
+            "the second listing repeats overlapping programmes; back-to-back episodes of the same series stay");
+    }
+
+    [Fact]
+    public async Task AProgrammeWithoutAReadableStartIsNotTreatedAsADuplicate()
+    {
+        var t = DateTimeOffset.UtcNow.AddMinutes(-10);
+        _client
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiveStreamInfo> { new() { StreamId = 1, Num = 1, Name = "NPO 1", EpgChannelId = "1" } });
+        _client
+            .Setup(c => c.GetXmltvAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("<tv>"
+                + $"<programme start=\"bad\" stop=\"{XmltvTime(t.AddMinutes(120))}\" channel=\"1\"><title>Nieuws</title></programme>"
+                + $"<programme start=\"{XmltvTime(t.AddMinutes(60))}\" stop=\"{XmltvTime(t.AddMinutes(70))}\" channel=\"1\"><title>Nieuws</title></programme>"
+                + "</tv>");
+
+        var xml = await _liveTvService.GetXmltvEpgAsync(CancellationToken.None);
+
+        XDocument.Parse(xml).Descendants("programme").Should().HaveCount(2,
+            "an unreadable start must not become a span from 1970 that covers the later programme");
+    }
+
+    // GitHub #147. LiveTv.m3u carries the provider's tvg-id, Epg.xml its own xtream_ ids, so
+    // Jellyfin's M3U tuner cannot match them by id and falls back to number, then name. Two
+    // channels that clean to the same name then share one guide. The number has to be in both.
+    [Fact]
+    public async Task EveryEpgChannelCarriesTheSameNumberAsTheM3U()
+    {
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, Num = 5, Name = "Same Name", EpgChannelId = "one.uk" },
+            new() { StreamId = 2, Num = 9, Name = "Same Name", EpgChannelId = "two.uk" },
+        };
+        _client
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(channels);
+        _client
+            .Setup(c => c.GetXmltvAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+
+        var xml = await _liveTvService.GetXmltvEpgAsync(CancellationToken.None);
+        var m3u = LiveTvService.GenerateM3U(channels, Plugin.Instance.Configuration, catchupOnly: false, "http://127.0.0.1:8096", new Dictionary<int, string>());
+
+        var numberByEpgId = XDocument.Parse(xml).Descendants("channel").ToDictionary(
+            c => c.Attribute("id")!.Value,
+            c => c.Elements("display-name").Select(d => d.Value).Last());
+        var m3uNumbers = Regex.Matches(m3u, "tvg-chno=\"([^\"]+)\"").Select(m => m.Groups[1].Value).ToList();
+
+        numberByEpgId.Should().HaveCount(2);
+        numberByEpgId.Values.Should().BeEquivalentTo(m3uNumbers, "the guide and the playlist have to agree on every channel number");
+        numberByEpgId[XtreamTunerHost.BuildChannelId(0, 1)].Should().NotBe(numberByEpgId[XtreamTunerHost.BuildChannelId(0, 2)]);
+        XDocument.Parse(xml).Descendants("channel").Select(c => c.Element("display-name")!.Value)
+            .Should().OnlyContain(n => n == "Same Name", "the first display-name stays the name Jellyfin shows");
+    }
+
+    [Fact]
     public async Task ACutOffXmltvFallsBackToTheJsonGuideInsteadOfHanging()
     {
         var now = DateTimeOffset.UtcNow;

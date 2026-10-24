@@ -110,7 +110,7 @@ public class SyncController : ControllerBase
     public ActionResult TriggerSync()
     {
         // Check if sync is already running
-        if (_syncService.CurrentProgress.IsRunning)
+        if (_syncService.IsSyncActive)
         {
             return Conflict(new { Success = false, Message = "A sync is already in progress." });
         }
@@ -199,23 +199,44 @@ public class SyncController : ControllerBase
     /// <summary>
     /// Retries syncing all failed items from the last sync.
     /// </summary>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The retry result.</returns>
+    /// <returns>Whether the retry started.</returns>
     [HttpPost("RetryFailed")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<SyncResult>> RetryFailed(CancellationToken cancellationToken)
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public ActionResult RetryFailed()
     {
         if (_syncService.FailedItems.Count == 0)
         {
             return BadRequest("No failed items to retry.");
         }
 
+        if (_syncService.IsSyncActive)
+        {
+            return Conflict(new { Success = false, Message = "A sync is already in progress." });
+        }
+
         _logger.LogInformation("Retry failed items triggered via API");
 
-        var result = await _syncService.RetryFailedAsync(cancellationToken).ConfigureAwait(false);
+        // Same as Sync: a click is a request to run, so it lifts the pause a library clean sets.
+        // Without this the sync behind the retry returns at once and nothing is retried.
+        _syncService.ClearSuppression();
 
-        return Ok(result);
+        // A retry is a sync now, and a sync can take minutes. Run it in the background like
+        // Sync does, so a closed browser tab does not cancel it.
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _syncService.RetryFailedAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Background retry failed with unhandled exception");
+            }
+        });
+
+        return Ok(new { Success = true, Message = "Retry started: a sync runs in the background and retries the failed items." });
     }
 
     /// <summary>

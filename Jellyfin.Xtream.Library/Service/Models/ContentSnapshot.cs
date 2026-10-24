@@ -33,6 +33,14 @@ public class ContentSnapshot
     public string ConfigFingerprint { get; set; } = string.Empty;
 
     /// <summary>
+    /// Gets or sets a value indicating whether every series STRM was last written with the ids
+    /// from get_series_info. False in snapshots from before 2.0.12.0: in Dispatcharr Mode those
+    /// versions wrote ids Dispatcharr's /series/ route does not accept (GitHub #153), and smart
+    /// skip would never rewrite them, so the next series pass skips nothing.
+    /// </summary>
+    public bool SeriesIdsFromXtreamApi { get; set; }
+
+    /// <summary>
     /// Gets or sets all movies indexed by StreamId.
     /// </summary>
     public Dictionary<int, MovieSnapshot> Movies { get; set; } = new();
@@ -203,48 +211,6 @@ public class SnapshotMetadata
     /// Incomplete snapshots should not be used for incremental sync.
     /// </summary>
     public bool IsComplete { get; set; } = true;
-}
-
-/// <summary>
-/// Represents the delta between two content snapshots.
-/// Contains lists of new, modified, and removed items.
-/// </summary>
-public class SyncDelta
-{
-    /// <summary>
-    /// Gets or sets movies that are new since the last snapshot.
-    /// </summary>
-    public List<Client.Models.StreamInfo> NewMovies { get; set; } = new();
-
-    /// <summary>
-    /// Gets or sets movies whose metadata has changed since the last snapshot.
-    /// </summary>
-    public List<Client.Models.StreamInfo> ModifiedMovies { get; set; } = new();
-
-    /// <summary>
-    /// Gets or sets stream IDs of movies that have been removed from the provider.
-    /// </summary>
-    public List<int> RemovedMovieIds { get; set; } = new();
-
-    /// <summary>
-    /// Gets or sets series that are new since the last snapshot.
-    /// </summary>
-    public List<Client.Models.Series> NewSeries { get; set; } = new();
-
-    /// <summary>
-    /// Gets or sets series whose metadata has changed since the last snapshot.
-    /// </summary>
-    public List<Client.Models.Series> ModifiedSeries { get; set; } = new();
-
-    /// <summary>
-    /// Gets or sets series IDs of series that have been removed from the provider.
-    /// </summary>
-    public List<int> RemovedSeriesIds { get; set; } = new();
-
-    /// <summary>
-    /// Gets or sets statistics about the delta.
-    /// </summary>
-    public DeltaStatistics Stats { get; set; } = new();
 }
 
 /// <summary>

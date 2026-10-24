@@ -15,6 +15,7 @@
 
 using System.Collections.Generic;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 #pragma warning disable CS1591
 namespace Jellyfin.Xtream.Library.Client.Models;
@@ -85,4 +86,45 @@ public class DispatcharrChannelSource
 
     [JsonProperty("stream_id")]
     public int? StreamId { get; set; }
+
+    // Kept as raw JSON and read through ReadStreamStats, so a field of an unexpected type only
+    // loses this one stream's stats. Deserializing it typed would throw for the whole listing, and
+    // the listing is also what keeps the password out of the Live TV URLs (GitHub #113).
+    [JsonProperty("stream_stats")]
+    public JToken? StreamStatsJson { get; set; }
+
+    /// <summary>
+    /// The stats Dispatcharr's proxy recorded for this stream, or null when there are none or
+    /// they cannot be read.
+    /// </summary>
+    /// <returns>The stats, or null.</returns>
+    public StreamStatsInfo? ReadStreamStats()
+    {
+        if (StreamStatsJson is not JObject obj)
+        {
+            return null;
+        }
+
+        try
+        {
+            var stats = obj.ToObject<StreamStatsInfo>();
+            return string.IsNullOrWhiteSpace(stats?.VideoCodec) ? null : stats;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        catch (System.FormatException)
+        {
+            return null;
+        }
+        catch (System.InvalidCastException)
+        {
+            return null;
+        }
+        catch (System.OverflowException)
+        {
+            return null;
+        }
+    }
 }

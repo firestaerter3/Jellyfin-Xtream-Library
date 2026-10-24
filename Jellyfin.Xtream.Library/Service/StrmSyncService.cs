@@ -60,12 +60,17 @@ public partial class StrmSyncService
     // improves performance by reusing TCP connections. A default User-Agent is set below.
     private static readonly HttpClient ImageHttpClient = CreateImageHttpClient();
 
+    /// <summary>The longest provider title read when building a file name, in characters.</summary>
+    internal const int MaxTitleLength = 500;
+
+    /// <summary>The largest artwork file downloaded, in bytes.</summary>
+    internal const int MaxImageBytes = 20 * 1024 * 1024;
+
     private readonly IXtreamClient _client;
     private readonly IDispatcharrClient _dispatcharrClient;
     private readonly ILibraryManager _libraryManager;
     private readonly IMetadataLookupService _metadataLookup;
     private readonly SnapshotService _snapshotService;
-    private readonly DeltaCalculator _deltaCalculator;
     private readonly LiveTvService _liveTvService;
     private readonly IServerApplicationPaths _appPaths;
     private readonly ILogger<StrmSyncService> _logger;
@@ -75,6 +80,7 @@ public partial class StrmSyncService
     private bool _historyLoaded;
     private CancellationTokenSource? _currentSyncCts;
     private volatile bool _syncSuppressed;
+    private int _syncActive;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StrmSyncService"/> class.
@@ -84,7 +90,6 @@ public partial class StrmSyncService
     /// <param name="libraryManager">The Jellyfin library manager.</param>
     /// <param name="metadataLookup">The metadata lookup service.</param>
     /// <param name="snapshotService">The snapshot persistence service.</param>
-    /// <param name="deltaCalculator">The delta calculator for incremental sync.</param>
     /// <param name="liveTvService">The Live TV service (used to refresh channels at the end of sync).</param>
     /// <param name="appPaths">The application paths service.</param>
     /// <param name="logger">The logger instance.</param>
@@ -94,7 +99,6 @@ public partial class StrmSyncService
         ILibraryManager libraryManager,
         IMetadataLookupService metadataLookup,
         SnapshotService snapshotService,
-        DeltaCalculator deltaCalculator,
         LiveTvService liveTvService,
         IServerApplicationPaths appPaths,
         ILogger<StrmSyncService> logger)
@@ -104,7 +108,6 @@ public partial class StrmSyncService
         _libraryManager = libraryManager;
         _metadataLookup = metadataLookup;
         _snapshotService = snapshotService;
-        _deltaCalculator = deltaCalculator;
         _liveTvService = liveTvService;
         _appPaths = appPaths;
         _logger = logger;
@@ -135,6 +138,11 @@ public partial class StrmSyncService
     /// Gets the current sync progress.
     /// </summary>
     public SyncProgress CurrentProgress { get; } = new SyncProgress();
+
+    /// <summary>
+    /// Gets a value indicating whether a sync is running or about to start.
+    /// </summary>
+    public bool IsSyncActive => Volatile.Read(ref _syncActive) != 0 || CurrentProgress.IsRunning;
 
     private string SyncHistoryPath => Path.Combine(_appPaths.DataPath, "xtream-library", "sync_history.json");
 
@@ -201,240 +209,17 @@ public partial class StrmSyncService
     }
 
     /// <summary>
-    /// Retries syncing all failed items from the last sync.
+    /// Retries the failed items of the last sync by running a sync. Failed items are left out of
+    /// the snapshot, so the next sync treats them as new and handles them exactly like any other
+    /// item: right extension, folder mapping, TMDB grouping and NFO. A separate retry path wrote
+    /// them differently and drifted from the sync.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The retry result with statistics.</returns>
-    public async Task<SyncResult> RetryFailedAsync(CancellationToken cancellationToken)
+    /// <returns>The sync result.</returns>
+    public Task<SyncResult> RetryFailedAsync(CancellationToken cancellationToken)
     {
-        var config = Plugin.Instance.Configuration;
-        var result = new SyncResult { StartTime = DateTime.UtcNow };
-
-        var itemsToRetry = FailedItems.Where(i => !i.RetryOnNextSyncOnly).ToList();
-        int leftForSync = FailedItems.Count - itemsToRetry.Count;
-        if (leftForSync > 0)
-        {
-            _logger.LogInformation("Leaving {Count} failed items for the next sync, which retries them with TMDB grouping", leftForSync);
-        }
-
-        if (itemsToRetry.Count == 0)
-        {
-            result.EndTime = DateTime.UtcNow;
-            result.Success = true;
-            return result;
-        }
-
-        _logger.LogInformation("Retrying {Count} failed items", itemsToRetry.Count);
-
-        CurrentProgress.IsRunning = true;
-        CurrentProgress.StartTime = DateTime.UtcNow;
-        CurrentProgress.Phase = "Retrying failed items";
-        CurrentProgress.TotalItems = itemsToRetry.Count;
-        CurrentProgress.ItemsProcessed = 0;
-
-        try
-        {
-            var byProvider = itemsToRetry.GroupBy(i => i.ProviderIndex).ToList();
-            foreach (var group in byProvider)
-            {
-                var provider = config.Providers.ElementAtOrDefault(group.Key);
-                if (provider == null)
-                {
-                    _logger.LogWarning("Provider index {Index} not found — skipping {Count} failed items", group.Key, group.Count());
-                    continue;
-                }
-
-                string moviesPath = Path.Combine(provider.LibraryPath, "Movies");
-                string seriesPath = Path.Combine(provider.LibraryPath, "Series");
-
-                foreach (var item in group)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    try
-                    {
-                        CurrentProgress.CurrentItem = item.Name;
-
-                        if (item.ItemType == "Movie")
-                        {
-                            await RetryMovieAsync(provider, moviesPath, item, result, cancellationToken).ConfigureAwait(false);
-                        }
-                        else if (item.ItemType == "Series")
-                        {
-                            await RetrySingleSeriesAsync(provider, seriesPath, item, result, cancellationToken).ConfigureAwait(false);
-                        }
-                    }
-                    catch (HttpRequestException ex) when (ex.Message.Contains("404", StringComparison.Ordinal))
-                    {
-                        // Item ID no longer exists - try to find by name (may have been re-added with new ID)
-                        if (item.ItemType == "Series")
-                        {
-                            var foundSeries = await FindSeriesByNameAsync(provider, item.Name, cancellationToken).ConfigureAwait(false);
-                            if (foundSeries != null)
-                            {
-                                _logger.LogInformation(
-                                    "Found series with new ID {NewId} (was {OldId}): {SeriesName}",
-                                    foundSeries.SeriesId,
-                                    item.ItemId,
-                                    item.Name);
-
-                                try
-                                {
-                                    var newItem = new FailedItem
-                                    {
-                                        ItemType = "Series",
-                                        ItemId = foundSeries.SeriesId,
-                                        Name = foundSeries.Name,
-                                    };
-                                    await RetrySingleSeriesAsync(provider, seriesPath, newItem, result, cancellationToken).ConfigureAwait(false);
-                                }
-                                catch (Exception retryEx)
-                                {
-                                    _logger.LogWarning(retryEx, "Failed to sync series with new ID: {SeriesName}", foundSeries.Name);
-                                    result.Errors++;
-                                    result.AddFailedItem(new FailedItem
-                                    {
-                                        ItemType = "Series",
-                                        ItemId = foundSeries.SeriesId,
-                                        Name = foundSeries.Name,
-                                        ErrorMessage = retryEx.Message,
-                                    });
-                                }
-                            }
-                            else
-                            {
-                                _logger.LogWarning(
-                                    "Series still returning 404 and not findable by name, keeping in failed list: {SeriesName}",
-                                    item.Name);
-                                result.Errors++;
-                                result.AddFailedItem(new FailedItem
-                                {
-                                    ItemType = item.ItemType,
-                                    ItemId = item.ItemId,
-                                    Name = item.Name,
-                                    ErrorMessage = "404 Not Found (provider may be temporarily unavailable)",
-                                });
-                            }
-                        }
-                        else
-                        {
-                            _logger.LogWarning(
-                                "Movie still returning 404, keeping in failed list: {ItemName}",
-                                item.Name);
-                            result.Errors++;
-                            result.AddFailedItem(new FailedItem
-                            {
-                                ItemType = item.ItemType,
-                                ItemId = item.ItemId,
-                                Name = item.Name,
-                                ErrorMessage = "404 Not Found (provider may be temporarily unavailable)",
-                            });
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Retry failed for {ItemType}: {ItemName}", item.ItemType, item.Name);
-                        result.Errors++;
-                        result.AddFailedItem(new FailedItem
-                        {
-                            ItemType = item.ItemType,
-                            ItemId = item.ItemId,
-                            Name = item.Name,
-                            SeriesId = item.SeriesId,
-                            SeasonNumber = item.SeasonNumber,
-                            EpisodeNumber = item.EpisodeNumber,
-                            ErrorMessage = ex.Message,
-                        });
-                    }
-                    finally
-                    {
-                        CurrentProgress.IncrementItemsProcessed();
-                    }
-                }
-            }
-
-            result.EndTime = DateTime.UtcNow;
-            result.Success = true;
-
-            _logger.LogInformation(
-                "Retry completed: {MoviesCreated} movies, {EpisodesCreated} episodes created; {Errors} still failed",
-                result.MoviesCreated,
-                result.EpisodesCreated,
-                result.Errors);
-
-            // Update last sync result to remove successfully retried items
-            if (LastSyncResult != null)
-            {
-                LastSyncResult.MoviesCreated += result.MoviesCreated;
-                LastSyncResult.EpisodesCreated += result.EpisodesCreated;
-                LastSyncResult.SeriesCreated += result.SeriesCreated;
-                LastSyncResult.SeasonsCreated += result.SeasonsCreated;
-                LastSyncResult.SetFailedItems(result.FailedItems);
-                LastSyncResult.Errors = result.FailedItems.Count;
-            }
-
-            // Trigger library scan if enabled and items were created or updated
-            if (config.TriggerLibraryScan && (result.MoviesCreated > 0 || result.MoviesUpdated > 0 || result.EpisodesCreated > 0 || result.EpisodesUpdated > 0))
-            {
-                _logger.LogWarning("Triggering full Jellyfin library scan after retry. Consider disabling this option for large libraries.");
-                await TriggerLibraryScanAsync().ConfigureAwait(false);
-            }
-        }
-        catch (Exception ex)
-        {
-            result.EndTime = DateTime.UtcNow;
-            result.Success = false;
-            result.Error = ex.Message;
-            _logger.LogError(ex, "Retry operation failed");
-        }
-        finally
-        {
-            CurrentProgress.IsRunning = false;
-        }
-
-        return result;
-    }
-
-    private async Task RetryMovieAsync(
-        ProviderConfig provider,
-        string moviesPath,
-        FailedItem item,
-        SyncResult result,
-        CancellationToken cancellationToken)
-    {
-        // Use stored item info to build the STRM file directly
-        string movieName = SanitizeFileName(item.Name, provider.CustomTitleRemoveTerms);
-        int? year = ExtractYear(item.Name);
-        string folderName = year.HasValue ? $"{movieName} ({year})" : movieName;
-        string? versionLabel = ExtractVersionLabel(item.Name);
-        string movieFolder = Path.Combine(moviesPath, folderName);
-        string strmFileName = BuildMovieStrmFileName(folderName, versionLabel, provider.RegexRemovalPatterns);
-        string strmPath = Path.Combine(movieFolder, strmFileName);
-
-        // Build stream URL using stored item ID (assume mp4 as default extension)
-        string streamUrl = $"{provider.BaseUrl}/movie/{provider.Username}/{provider.Password}/{item.ItemId}.mp4";
-
-        if (File.Exists(strmPath))
-        {
-            if (StrmContentMatches(strmPath, streamUrl))
-            {
-                result.MoviesSkipped++;
-                return;
-            }
-
-            // Stream URL changed, update the STRM file
-            await File.WriteAllTextAsync(strmPath, streamUrl, cancellationToken).ConfigureAwait(false);
-            result.MoviesUpdated++;
-            _logger.LogInformation("Updated stale STRM for movie: {MovieName}", item.Name);
-            return;
-        }
-
-        Directory.CreateDirectory(movieFolder);
-
-        await File.WriteAllTextAsync(strmPath, streamUrl, cancellationToken).ConfigureAwait(false);
-        result.MoviesCreated++;
-
-        _logger.LogInformation("Retry successful for movie: {MovieName}", item.Name);
+        _logger.LogInformation("Retrying {Count} failed items with a sync", FailedItems.Count);
+        return SyncAsync(cancellationToken);
     }
 
     /// <summary>
@@ -470,221 +255,32 @@ public partial class StrmSyncService
     }
 
     /// <summary>
-    /// Gets series metadata and its episode list. Same Dispatcharr-Mode-first, classic-fallback
-    /// shape as <see cref="GetMovieAdvancedInfoAsync"/>. The Dispatcharr path needs two calls
-    /// (series metadata, then episodes) since Dispatcharr's own provider-info response nests an
-    /// episode list that lacks the per-provider stream_id needed to build a playable STRM URL.
-    /// Falls back to the single classic call as a whole if either Dispatcharr call comes back
-    /// empty, rather than mixing metadata from one source with episodes from the other.
-    /// </summary>
-    /// <param name="provider">The provider config, used for EffectiveDispatcharrBaseUrl.</param>
-    /// <param name="connectionInfo">Connection info for the classic Xtream fallback call.</param>
-    /// <param name="enableDispatcharrMode">Whether Dispatcharr Mode is on for this provider.</param>
-    /// <param name="seriesId">The series' Xtream/Dispatcharr series ID.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The series' metadata and episode list.</returns>
-    internal async Task<SeriesStreamInfo> GetSeriesAdvancedInfoAsync(
-        ProviderConfig provider,
-        ConnectionInfo connectionInfo,
-        bool enableDispatcharrMode,
-        int seriesId,
-        CancellationToken cancellationToken)
-    {
-        if (enableDispatcharrMode)
-        {
-            var info = await _dispatcharrClient.GetSeriesProviderInfoAsync(provider.EffectiveDispatcharrBaseUrl, seriesId, cancellationToken).ConfigureAwait(false);
-            if (info != null)
-            {
-                var episodes = await _dispatcharrClient.GetSeriesEpisodesAsync(provider.EffectiveDispatcharrBaseUrl, seriesId, cancellationToken).ConfigureAwait(false);
-                if (episodes.Count > 0)
-                {
-                    return new SeriesStreamInfo { Info = info, Episodes = episodes };
-                }
-            }
-        }
-
-        return await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, seriesId, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task RetrySingleSeriesAsync(
-        ProviderConfig provider,
-        string seriesPath,
-        FailedItem item,
-        SyncResult result,
-        CancellationToken cancellationToken)
-    {
-        var connectionInfo = new ConnectionInfo(provider.BaseUrl, provider.Username, provider.Password);
-        var enableDispatcharrMode = provider.EnableDispatcharrMode && !string.IsNullOrEmpty(provider.DispatcharrApiUser);
-        if (enableDispatcharrMode)
-        {
-            _dispatcharrClient.RequestDelayMs = provider.RequestDelayMs;
-            _dispatcharrClient.Configure(provider.DispatcharrApiUser, provider.DispatcharrApiPass);
-        }
-
-        var seriesInfo = await GetSeriesAdvancedInfoAsync(provider, connectionInfo, enableDispatcharrMode, item.ItemId, cancellationToken).ConfigureAwait(false);
-
-        if (seriesInfo.Episodes == null || seriesInfo.Episodes.Count == 0)
-        {
-            _logger.LogWarning("Series has no episodes: {SeriesName}", item.Name);
-            return;
-        }
-
-        string seriesName = SanitizeFileName(item.Name, provider.CustomTitleRemoveTerms);
-        int? year = ExtractYear(item.Name);
-        string seriesFolderName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
-        string seriesFolder = Path.Combine(seriesPath, seriesFolderName);
-        bool isNewSeries = !Directory.Exists(seriesFolder);
-        bool createdEpisodes = false;
-
-        foreach (var seasonEntry in seriesInfo.Episodes)
-        {
-            int seasonNumber = seasonEntry.Key;
-            var episodes = seasonEntry.Value;
-            string seasonFolder = Path.Combine(seriesFolder, $"Season {seasonNumber}");
-            bool isNewSeason = !Directory.Exists(seasonFolder);
-            bool seasonCreatedEpisodes = false;
-
-            foreach (var episode in episodes)
-            {
-                string episodeFileName = BuildEpisodeFileName(seriesName, seasonNumber, episode, provider.CustomTitleRemoveTerms, provider.RegexRemovalPatterns);
-                string strmPath = Path.Combine(seasonFolder, episodeFileName);
-
-                string extension = string.IsNullOrEmpty(episode.ContainerExtension) ? "mkv" : episode.ContainerExtension;
-                string streamUrl = $"{provider.BaseUrl}/series/{provider.Username}/{provider.Password}/{episode.EpisodeId}.{extension}";
-
-                if (File.Exists(strmPath))
-                {
-                    if (StrmContentMatches(strmPath, streamUrl))
-                    {
-                        result.EpisodesSkipped++;
-                        continue;
-                    }
-
-                    // Stream URL changed, update the STRM file
-                    await File.WriteAllTextAsync(strmPath, streamUrl, cancellationToken).ConfigureAwait(false);
-                    result.EpisodesUpdated++;
-                    continue;
-                }
-
-                Directory.CreateDirectory(seasonFolder);
-
-                await File.WriteAllTextAsync(strmPath, streamUrl, cancellationToken).ConfigureAwait(false);
-                result.EpisodesCreated++;
-                seasonCreatedEpisodes = true;
-                createdEpisodes = true;
-            }
-
-            if (isNewSeason && seasonCreatedEpisodes)
-            {
-                result.SeasonsCreated++;
-            }
-        }
-
-        if (isNewSeries && createdEpisodes)
-        {
-            result.SeriesCreated++;
-        }
-
-        _logger.LogInformation("Retry successful for series: {SeriesName}", item.Name);
-    }
-
-    /// <summary>
-    /// Searches for a series by name in the selected categories.
-    /// Used to find series that may have been re-added with a new ID.
-    /// </summary>
-    private async Task<Series?> FindSeriesByNameAsync(
-        ProviderConfig provider,
-        string seriesName,
-        CancellationToken cancellationToken)
-    {
-        var connectionInfo = new ConnectionInfo(provider.BaseUrl, provider.Username, provider.Password);
-        var selection = ResolveCategorySelection(
-            provider.SeriesFolderMode,
-            provider.SeriesFolderMappings,
-            provider.SelectedSeriesCategoryIds,
-            provider.SeriesCategoriesMode);
-
-        // This is the fallback path after a lookup has already failed, and it costs one
-        // GetSeriesByCategoryAsync call per category it walks. Only a selection that actually
-        // narrows the catalogue makes that worth doing: with nothing configured every category is
-        // in scope, and scanning all of them would hammer a provider that is already misbehaving.
-        // A selection that resolves to nothing has nowhere to search either, so it takes the same
-        // exit rather than fetching the category list first.
-        // Bailing out here also keeps the GetSeriesCategoryAsync call below off the common path.
-        if (!selection.NarrowsSelection)
-        {
-            _logger.LogDebug("No series categories configured, cannot search for series by name");
-            return null;
-        }
-
-        var allSeriesCategories = await _client.GetSeriesCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
-        var categoryIds = allSeriesCategories
-            .Where(c => selection.ShouldSync(c.CategoryId))
-            .Select(c => c.CategoryId)
-            .ToArray();
-
-        if (categoryIds.Length == 0)
-        {
-            _logger.LogDebug("Series category selection resolves to nothing, cannot search for series by name");
-            return null;
-        }
-
-        // Normalize the name for comparison (remove special chars, lowercase)
-        string normalizedSearchName = NormalizeSeriesName(seriesName);
-
-        foreach (var categoryId in categoryIds)
-        {
-            try
-            {
-                var seriesList = await _client.GetSeriesByCategoryAsync(connectionInfo, categoryId, cancellationToken)
-                    .ConfigureAwait(false);
-
-                foreach (var series in seriesList)
-                {
-                    string normalizedSeriesName = NormalizeSeriesName(series.Name);
-                    if (string.Equals(normalizedSearchName, normalizedSeriesName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        return series;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "Error searching category {CategoryId} for series", categoryId);
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Normalizes a series name for comparison by removing prefixes, special characters, and extra whitespace.
-    /// </summary>
-    private static string NormalizeSeriesName(string name)
-    {
-        if (string.IsNullOrEmpty(name))
-        {
-            return string.Empty;
-        }
-
-        // Remove common prefixes like "|UK|", "┃US┃", etc.
-        var normalized = Regex.Replace(name, @"^[\|\┃][A-Z]+[\|\┃]\s*", string.Empty, RegexOptions.None, TimeSpan.FromSeconds(1));
-
-        // Remove year suffix like "(2024)" for comparison
-        normalized = Regex.Replace(normalized, @"\s*\(\d{4}\)\s*$", string.Empty, RegexOptions.None, TimeSpan.FromSeconds(1));
-
-        // Normalize whitespace
-        normalized = Regex.Replace(normalized, @"\s+", " ", RegexOptions.None, TimeSpan.FromSeconds(1)).Trim();
-
-        return normalized;
-    }
-
-    /// <summary>
     /// Performs a full sync of all content from all configured Xtream providers.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The aggregated sync result across all providers.</returns>
     public async Task<SyncResult> SyncAsync(CancellationToken cancellationToken)
+    {
+        // One sync at a time, whoever starts it: the Sync and Retry buttons, a double click, or
+        // the scheduled task. The buttons check CurrentProgress.IsRunning first, but that is set
+        // a little way into the sync, so two requests close together could both get through.
+        if (Interlocked.CompareExchange(ref _syncActive, 1, 0) != 0)
+        {
+            _logger.LogInformation("A sync is already running; not starting another");
+            return new SyncResult { StartTime = DateTime.UtcNow, EndTime = DateTime.UtcNow, Error = "A sync is already in progress." };
+        }
+
+        try
+        {
+            return await SyncOnceAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            Volatile.Write(ref _syncActive, 0);
+        }
+    }
+
+    private async Task<SyncResult> SyncOnceAsync(CancellationToken cancellationToken)
     {
         var config = Plugin.Instance.Configuration;
         config.Validate();
@@ -2338,7 +1934,6 @@ public partial class StrmSyncService
                                 ItemId = stream.StreamId,
                                 Name = stream.Name,
                                 ErrorMessage = $"Provider did not return movie info. Not written, so it can join the TMDB {autoLookupTmdbId.Value} group on the next sync",
-                                RetryOnNextSyncOnly = true,
                             });
                             return;
                         }
@@ -2362,8 +1957,11 @@ public partial class StrmSyncService
 
                     // Build STRM URLs and filenames — Dispatcharr multi-stream or standard single-stream
                     var strmEntries = new List<(string StreamUrl, string StrmFileName)>();
+                    // A value that is not a uuid would go into the STRM URL as is; fall back to
+                    // the Xtream URL instead.
                     if (enableDispatcharrMode &&
-                        dispatcharrCache.TryGetValue(stream.StreamId, out var movieProviderInfo))
+                        dispatcharrCache.TryGetValue(stream.StreamId, out var movieProviderInfo) &&
+                        DispatcharrChannelMap.IsUuid(movieProviderInfo.Uuid))
                     {
                         var providers = movieProviderInfo.Providers;
                         string uuid = movieProviderInfo.Uuid;
@@ -2719,11 +2317,17 @@ public partial class StrmSyncService
         var globalConfig = Plugin.Instance.Configuration;
         var categories = await _client.GetSeriesCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
         var processedSeriesIds = new ConcurrentDictionary<int, bool>();
+
+        // In Dispatcharr Mode, versions before 2.0.12.0 wrote series STRMs with ids Dispatcharr's
+        // /series/ route does not accept (GitHub #153). The incremental filter and every smart
+        // skip below decide from the snapshot or from what is on disk, so none of them would ever
+        // rewrite those files. One pass with all of them off reads every series again.
         var enableDispatcharrMode = provider.EnableDispatcharrMode && !string.IsNullOrEmpty(provider.DispatcharrApiUser);
-        if (enableDispatcharrMode)
+        var repairSeriesIds = SeriesIdsNeedRepair(provider, hintSnapshot);
+        var smartSkipSeries = provider.SmartSkipExisting && !repairSeriesIds;
+        if (repairSeriesIds)
         {
-            _dispatcharrClient.RequestDelayMs = provider.RequestDelayMs;
-            _dispatcharrClient.Configure(provider.DispatcharrApiUser, provider.DispatcharrApiPass);
+            _logger.LogInformation("Re-reading every series once to correct episode ids written in Dispatcharr Mode by earlier versions (GitHub #153)");
         }
 
         // Parse folder mappings (category ID → folder names) - only in Multiple folder mode.
@@ -2985,7 +2589,7 @@ public partial class StrmSyncService
             }
 
             // Incremental sync: filter to only new/modified series
-            if (previousSnapshot != null)
+            if (previousSnapshot != null && !repairSeriesIds)
             {
                 var unchangedSeries = new List<(Series Series, HashSet<int> CategoryIds)>();
                 batchSeries = batchSeries.Where(s =>
@@ -3076,7 +2680,7 @@ public partial class StrmSyncService
                 // Determine which series will NOT be smart-skipped (need API call)
                 var seriesToPreFetch = batchSeries.Where(s =>
                 {
-                    if (!provider.SmartSkipExisting || hintSnapshot == null)
+                    if (!smartSkipSeries || hintSnapshot == null)
                     {
                         return true;
                     }
@@ -3140,7 +2744,7 @@ public partial class StrmSyncService
                         {
                             try
                             {
-                                var info = await GetSeriesAdvancedInfoAsync(provider, connectionInfo, enableDispatcharrMode, seriesEntry.Series.SeriesId, ct).ConfigureAwait(false);
+                                var info = await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, seriesEntry.Series.SeriesId, ct).ConfigureAwait(false);
                                 seriesInfoCache[seriesEntry.Series.SeriesId] = info;
                             }
                             catch (Exception ex)
@@ -3187,7 +2791,7 @@ public partial class StrmSyncService
                     // Check if all target folders already have this series with matching episode count
                     // Also verify LastModified hasn't changed to catch new episodes
                     // Compare at second precision since LastModified comes from Unix timestamp
-                    if (provider.SmartSkipExisting && hintSnapshot != null &&
+                    if (smartSkipSeries && hintSnapshot != null &&
                         hintSnapshot.Series.TryGetValue(series.SeriesId, out var hintEntry) &&
                         hintEntry.EpisodeCount > 0 &&
                         Math.Abs((series.LastModified.GetValueOrDefault() - hintEntry.LastModified).TotalSeconds) < 1)
@@ -3280,7 +2884,7 @@ public partial class StrmSyncService
                     }
                     else
                     {
-                        seriesInfo = await GetSeriesAdvancedInfoAsync(provider, connectionInfo, enableDispatcharrMode, series.SeriesId, ct).ConfigureAwait(false);
+                        seriesInfo = await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, series.SeriesId, ct).ConfigureAwait(false);
                     }
 
                     // Track for snapshot building
@@ -3352,8 +2956,12 @@ public partial class StrmSyncService
                         targetFolders.Add(string.Empty);
                     }
 
-                    // Smart skip check with exact folder name (skip when no existing folders - initial scan)
-                    if (provider.SmartSkipExisting && existingSeriesFolderCounts.Count > 0)
+                    // Smart skip check with exact folder name (skip when no existing folders - initial scan).
+                    // Not in Dispatcharr Mode: it compares file counts only, so a series whose STRMs
+                    // carry the episode ids earlier versions wrote there (GitHub #153) would keep
+                    // them. Without it the write loop below compares each file's contents and
+                    // rewrites only the ones that differ.
+                    if (smartSkipSeries && !enableDispatcharrMode && existingSeriesFolderCounts.Count > 0)
                     {
                         bool anyNeedsSync = false;
                         foreach (var targetFolder in targetFolders)
@@ -3672,6 +3280,10 @@ public partial class StrmSyncService
                     _logger.LogWarning(ex, "Failed to sync series: {SeriesName}", series.Name);
                     Interlocked.Increment(ref errors);
                     Interlocked.Increment(ref seriesSkipped);
+
+                    // A series that could not be read this run is not gone. Without this its
+                    // existing STRMs count as orphans and cleanup deletes them.
+                    KeepExistingSeriesFiles(series.Name, provider, seriesPath, categoryIds, folderMappings, seriesFolderLookup, syncedFiles);
                     failedItems.Add(new FailedItem
                     {
                         ItemType = "Series",
@@ -3767,6 +3379,47 @@ public partial class StrmSyncService
         return TruncateFileNameToFsLimit(ApplyFileNameRegexPatterns(fileName, regexRemovalPatterns));
     }
 
+    private static void KeepExistingSeriesFiles(
+        string seriesTitle,
+        ProviderConfig provider,
+        string seriesPath,
+        IEnumerable<int> categoryIds,
+        Dictionary<int, List<string>> folderMappings,
+        Dictionary<string, (string Path, int Count)> seriesFolderLookup,
+        ConcurrentDictionary<string, byte> syncedFiles)
+    {
+        string seriesName = SanitizeFileName(seriesTitle, provider.CustomTitleRemoveTerms);
+        int? year = ExtractYear(seriesTitle);
+        string baseName = year.HasValue ? $"{seriesName} ({year})" : seriesName;
+
+        foreach (var targetFolder in BuildSeriesTargetFolders(categoryIds, folderMappings))
+        {
+            string seriesBasePath = string.IsNullOrEmpty(targetFolder)
+                ? seriesPath
+                : Path.Combine(seriesPath, targetFolder);
+            if (!seriesFolderLookup.TryGetValue(seriesBasePath + "|" + baseName, out var match))
+            {
+                continue;
+            }
+
+            try
+            {
+                foreach (var strm in Directory.GetFiles(match.Path, "*.strm", SearchOption.AllDirectories))
+                {
+                    syncedFiles.TryAdd(strm, 0);
+                }
+            }
+            catch (IOException)
+            {
+                // Best effort, as for the skipped series above.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Best effort, as for the skipped series above.
+            }
+        }
+    }
+
     internal static bool HasCompleteExistingSeriesFolders(
         string seriesPath,
         string baseName,
@@ -3827,7 +3480,12 @@ public partial class StrmSyncService
             return "Unknown";
         }
 
-        string cleanName = name;
+        // No real title comes near this, and the file name is cut to 255 bytes later anyway. A
+        // longer one only makes the patterns below slow: AsianBracketedTextPattern takes seconds on
+        // a title of a few thousand characters, and this runs several times per movie.
+        string cleanName = name.Length > MaxTitleLength
+            ? name[..(char.IsHighSurrogate(name[MaxTitleLength - 1]) ? MaxTitleLength - 1 : MaxTitleLength)]
+            : name;
 
         // Apply user-defined custom removal terms first
         if (!string.IsNullOrWhiteSpace(customRemoveTerms))
@@ -3896,7 +3554,9 @@ public partial class StrmSyncService
         cleanName = MultipleUnderscoresPattern().Replace(cleanName, "_");
         cleanName = cleanName.Trim('_', ' ', '-');
 
-        return string.IsNullOrEmpty(cleanName) ? "Unknown" : cleanName;
+        // "." and ".." are not names: as a folder they mean this directory or the one above it, so
+        // a title of ".." would put its files next to the Movies or Series folder.
+        return string.IsNullOrEmpty(cleanName) || cleanName.Trim('.').Length == 0 ? "Unknown" : cleanName;
     }
 
     internal static string? ExtractVersionLabel(string? name)
@@ -4462,6 +4122,36 @@ public partial class StrmSyncService
     }
 
     /// <summary>
+    /// Episode count to record for a series in the new snapshot. A series smart-skipped this run
+    /// has no fetched info, so it keeps the previous count while its last_modified is unchanged.
+    /// Recording 0 instead makes the next sync fetch every skipped series again. A series that was
+    /// fetched but came back without episodes stays at 0, so the next sync reads it again.
+    /// </summary>
+    /// <param name="seriesInfo">Series info fetched during this run.</param>
+    /// <param name="previousSnapshot">Snapshot from the previous run, may be null.</param>
+    /// <param name="series">Series to look up.</param>
+    /// <returns>The episode count, or 0 when it is not known.</returns>
+    internal static int EffectiveEpisodeCount(
+        ConcurrentDictionary<int, SeriesStreamInfo> seriesInfo,
+        ContentSnapshot? previousSnapshot,
+        Series series)
+    {
+        if (seriesInfo.TryGetValue(series.SeriesId, out var info))
+        {
+            return info.Episodes?.Values.Sum(eps => eps.Count) ?? 0;
+        }
+
+        if (previousSnapshot != null &&
+            previousSnapshot.Series.TryGetValue(series.SeriesId, out var earlier) &&
+            Math.Abs((series.LastModified.GetValueOrDefault() - earlier.LastModified).TotalSeconds) < 1)
+        {
+            return earlier.EpisodeCount;
+        }
+
+        return 0;
+    }
+
+    /// <summary>
     /// Whether a metadata id is worth acting on. Providers routinely send 0 for "no id", and a
     /// grouping feature that treats 0 as an id would put every such film in one folder and then
     /// offer that folder for an irreversible merge (GitHub #88).
@@ -4813,9 +4503,20 @@ public partial class StrmSyncService
 
         try
         {
-            using var response = await ImageHttpClient.GetAsync(imageUrl, cancellationToken).ConfigureAwait(false);
+            // One deadline for headers and body: the client's own timeout ends once the headers are
+            // in, and a host that then sends a byte now and then would hold a download slot forever.
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(TimeSpan.FromSeconds(30));
+            using var response = await ImageHttpClient.GetAsync(imageUrl, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
+                return false;
+            }
+
+            var imageBytes = await ReadImageResponseAsync(response, deadline.Token).ConfigureAwait(false);
+            if (imageBytes is null)
+            {
+                _logger.LogDebug("Skipped image from {Url}: not an image, or larger than {Max} bytes", StreamUrlRedactor.Redact(imageUrl), MaxImageBytes);
                 return false;
             }
 
@@ -4826,17 +4527,57 @@ public partial class StrmSyncService
                 Directory.CreateDirectory(directory);
             }
 
-            // Save image
-            var imageBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
             await File.WriteAllBytesAsync(destinationPath, imageBytes, cancellationToken).ConfigureAwait(false);
 
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to download image from {Url}", imageUrl);
+            _logger.LogDebug(ex, "Failed to download image from {Url}", StreamUrlRedactor.Redact(imageUrl));
             return false;
         }
+    }
+
+    /// <summary>
+    /// Reads an artwork response, or returns null when it is not an image or is too large. The
+    /// address comes from the provider, so without a limit one answer could fill the server's memory
+    /// (five downloads run at once), and an HTML or JSON page would be saved as poster.jpg.
+    /// </summary>
+    /// <param name="response">The response, read with headers only.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The image bytes, or null.</returns>
+    internal static async Task<byte[]?> ReadImageResponseAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        // A missing type or octet-stream is common for image hosts and kept; a named non-image type is not.
+        var mediaType = response.Content.Headers.ContentType?.MediaType;
+        if (mediaType is not null
+            && !mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(mediaType, "application/octet-stream", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(mediaType, "binary/octet-stream", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (response.Content.Headers.ContentLength > MaxImageBytes)
+        {
+            return null;
+        }
+
+        using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        int read;
+        while ((read = await stream.ReadAsync(chunk, cancellationToken).ConfigureAwait(false)) > 0)
+        {
+            if (buffer.Length + read > MaxImageBytes)
+            {
+                return null;
+            }
+
+            await buffer.WriteAsync(chunk.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+        }
+
+        return buffer.Length == 0 ? null : buffer.ToArray();
     }
 
     /// <summary>
@@ -4924,6 +4665,31 @@ public partial class StrmSyncService
     [GeneratedRegex(@"\[\s*\]|\(\s*\)")]
     private static partial Regex EmptyBracketsPattern();
 
+    /// <summary>
+    /// Whether this provider's series STRMs may still carry the episode ids that versions before
+    /// 2.0.12.0 wrote in Dispatcharr Mode (GitHub #153). Without a snapshot nothing is skipped
+    /// anyway, so there is nothing to undo.
+    /// </summary>
+    /// <param name="provider">The provider.</param>
+    /// <param name="snapshot">The snapshot the last run saved, if any.</param>
+    /// <returns>True when the next series pass must not skip anything.</returns>
+    internal static bool SeriesIdsNeedRepair(ProviderConfig provider, ContentSnapshot? snapshot)
+        => snapshot != null
+            && !snapshot.SeriesIdsFromXtreamApi
+            && provider.EnableDispatcharrMode
+            && !string.IsNullOrEmpty(provider.DispatcharrApiUser);
+
+    /// <summary>
+    /// The <see cref="ContentSnapshot.SeriesIdsFromXtreamApi"/> value for the snapshot a run
+    /// saves. Only a run that synced series has rewritten them; otherwise what the previous
+    /// snapshot recorded still holds.
+    /// </summary>
+    /// <param name="syncedSeries">Whether this run synced series.</param>
+    /// <param name="previous">The snapshot the previous run saved, if any.</param>
+    /// <returns>The value to store.</returns>
+    internal static bool SeriesIdsFromXtreamApiAfterRun(bool syncedSeries, ContentSnapshot? previous)
+        => syncedSeries || (previous?.SeriesIdsFromXtreamApi ?? false);
+
     private async Task SaveSnapshotAsync(
         ProviderConfig provider,
         string providerKey,
@@ -4947,7 +4713,8 @@ public partial class StrmSyncService
             var snapshot = new ContentSnapshot
             {
                 ProviderUrl = provider.BaseUrl,
-                ConfigFingerprint = SnapshotService.CalculateConfigFingerprint(provider, Plugin.Instance.Configuration.EnableMetadataLookup)
+                ConfigFingerprint = SnapshotService.CalculateConfigFingerprint(provider, Plugin.Instance.Configuration.EnableMetadataLookup),
+                SeriesIdsFromXtreamApi = SeriesIdsFromXtreamApiAfterRun(provider.SyncSeries, carryForwardFrom),
             };
 
             // Movies were not synced this run, so allMovies is empty and rebuilding from it would
@@ -5005,12 +4772,7 @@ public partial class StrmSyncService
             {
                 if (processedSeriesIds.Add(series.SeriesId) && !failedSeriesIds.Contains(series.SeriesId))
                 {
-                    var episodeCount = 0;
-                    if (seriesInfoDict.TryGetValue(series.SeriesId, out var info) && info.Episodes != null)
-                    {
-                        episodeCount = info.Episodes.Values.Sum(eps => eps.Count);
-                    }
-
+                    var episodeCount = EffectiveEpisodeCount(seriesInfoDict, carryForwardFrom, series);
                     var seriesIdentity = EffectiveSeriesIdentity(seriesIdentities, carryForwardFrom, series.SeriesId);
                     snapshot.Series[series.SeriesId] = new SeriesSnapshot
                     {
@@ -5654,11 +5416,4 @@ public class FailedItem
     /// Defaults to 0 for backward compatibility with persisted history.
     /// </summary>
     public int ProviderIndex { get; set; }
-
-    /// <summary>
-    /// Gets or sets a value indicating whether only a sync may retry this item. Retry Failed
-    /// writes a plain folder named from the title, which for a movie deferred to join a TMDB
-    /// group would create the very split the deferral exists to prevent (GitHub #88).
-    /// </summary>
-    public bool RetryOnNextSyncOnly { get; set; }
 }

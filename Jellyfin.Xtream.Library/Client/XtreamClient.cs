@@ -29,6 +29,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Xtream.Library.Client.Models;
+using Jellyfin.Xtream.Library.Service;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
@@ -262,19 +263,35 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
             string trimmedJson = jsonContent.TrimStart();
             if (trimmedJson.StartsWith('[') && typeof(T) == typeof(SeriesStreamInfo))
             {
-                logger.LogWarning("Xtream API returned array instead of object for SeriesStreamInfo (URL: {Url}). Returning empty object.", uri);
+                logger.LogWarning("Xtream API returned array instead of object for SeriesStreamInfo (URL: {Url}). Returning empty object.", StreamUrlRedactor.Redact(uri));
                 return (T)(object)new SeriesStreamInfo();
             }
 
             return JsonConvert.DeserializeObject<T>(jsonContent, _serializerSettings)
-                ?? throw new JsonException($"Xtream API returned null for {typeof(T).Name} from {uri}");
+                ?? throw new JsonException($"Xtream API returned null for {typeof(T).Name} from {StreamUrlRedactor.Redact(uri)}");
         }
         catch (JsonException ex)
         {
-            string jsonSample = jsonContent.Length > 500 ? string.Concat(jsonContent.AsSpan(0, 500), "...") : jsonContent;
-            logger.LogError(ex, "Failed to deserialize response from Xtream API (URL: {Url}). JSON content: {Json}", uri, jsonSample);
+            // Redacted before it is cut: player_api.php returns the username and password in
+            // user_info, and a cut could leave half a value the pattern no longer recognises.
+            string redacted = StreamUrlRedactor.Redact(jsonContent);
+            string jsonSample = redacted.Length > 500 ? string.Concat(redacted.AsSpan(0, 500), "...") : redacted;
+            logger.LogError(ex, "Failed to deserialize response from Xtream API (URL: {Url}). JSON content: {Json}", StreamUrlRedactor.Redact(uri), jsonSample);
             throw;
         }
+    }
+
+    private static bool IsEmptyJsonArray(string body)
+    {
+        // A blank body is deliberately not matched: GetStringWithRetryAsync also serves XMLTV,
+        // and only a literal empty JSON list is the symptom handled here.
+        ReadOnlySpan<char> span = body.AsSpan().Trim();
+        if (span.Length < 2 || span[0] != '[' || span[^1] != ']')
+        {
+            return false;
+        }
+
+        return span[1..^1].IsWhiteSpace(); // "[]" or "[  ]"
     }
 
     private async Task<string> GetStringWithRetryAsync(Uri uri, CancellationToken cancellationToken)
@@ -301,21 +318,54 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
                 using var response = await client.GetAsync(uri, timeoutCts.Token).ConfigureAwait(false);
                 response.EnsureSuccessStatusCode();
 
-                return await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
+                string body = await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
+
+                // Some providers answer an otherwise valid request with an empty list when they are
+                // overloaded; treat it like a transient failure and let the retry loop handle it.
+                if (IsEmptyJsonArray(body))
+                {
+                    throw new EmptyResponseException();
+                }
+
+                return body;
             }
             catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests ||
                 (ex.StatusCode.HasValue && (int)ex.StatusCode.Value >= 500))
             {
                 if (retryCount >= MaxRetries)
                 {
-                    logger.LogError("HTTP {StatusCode} after {Retries} retries for URL: {Url}", (int?)ex.StatusCode, retryCount, uri);
+                    logger.LogError("HTTP {StatusCode} after {Retries} retries for URL: {Url}", (int?)ex.StatusCode, retryCount, StreamUrlRedactor.Redact(uri));
                     throw;
                 }
 
-                logger.LogWarning("HTTP {StatusCode} for URL: {Url}. Retry {Retry}/{MaxRetries} after {Delay}ms", (int?)ex.StatusCode, uri, retryCount + 1, MaxRetries, currentDelay);
+                logger.LogWarning("HTTP {StatusCode} for URL: {Url}. Retry {Retry}/{MaxRetries} after {Delay}ms", (int?)ex.StatusCode, StreamUrlRedactor.Redact(uri), retryCount + 1, MaxRetries, currentDelay);
 
                 // Every request to this host waits out the backoff, not only this one; the retry
                 // below takes its turn after it like everything else.
+                RequestGate.Pause(uri, currentDelay);
+                retryCount++;
+                currentDelay = Math.Min(currentDelay * 2, MaxRetryDelayMs); // Exponential backoff, capped
+            }
+            catch (EmptyResponseException)
+            {
+                if (retryCount >= MaxRetries)
+                {
+                    // An empty list can be a legitimate answer (empty category, account without
+                    // series), so after the last attempt hand it back instead of failing the fetch.
+                    logger.LogWarning(
+                        "Still empty after {Retries} retries for URL: {Url}, returning empty result",
+                        retryCount,
+                        StreamUrlRedactor.Redact(uri));
+                    return "[]";
+                }
+
+                logger.LogWarning(
+                    "Empty response for URL: {Url}. Retry {Retry}/{MaxRetries} after {Delay}ms",
+                    StreamUrlRedactor.Redact(uri),
+                    retryCount + 1,
+                    MaxRetries,
+                    currentDelay);
+
                 RequestGate.Pause(uri, currentDelay);
                 retryCount++;
                 currentDelay = Math.Min(currentDelay * 2, MaxRetryDelayMs); // Exponential backoff, capped
@@ -335,7 +385,7 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
                         "Timed out after {Timeout} and {Retries} retries for URL: {Url}",
                         Timeout,
                         retryCount,
-                        uri);
+                        StreamUrlRedactor.Redact(uri));
 
                     // Message deliberately carries no query string: Xtream URLs embed the
                     // provider username and password.
@@ -348,7 +398,7 @@ public class XtreamClient(HttpClient client, ILogger<XtreamClient> logger) : IXt
                 logger.LogWarning(
                     "Timed out after {Timeout} for URL: {Url}. Retry {Retry}/{MaxRetries} after {Delay}ms",
                     Timeout,
-                    uri,
+                    StreamUrlRedactor.Redact(uri),
                     retryCount + 1,
                     MaxRetries,
                     currentDelay);
