@@ -201,10 +201,10 @@ public class XtreamTunerHost : ITunerHost
 
         var config = Plugin.Instance.Configuration;
         var canonicalChannelId = BuildChannelId(providerIndex, streamId);
-        var (streamUrl, isHls) = ResolveStreamUrl(config, providerIndex, streamId, canonicalChannelId);
+        var (streamUrl, isHls, isDispatcharrUrl) = ResolveStreamUrl(config, providerIndex, streamId, canonicalChannelId);
         _streamStats.TryGetValue(canonicalChannelId, out var stats);
 
-        var mediaSource = CreateMediaSourceInfo(canonicalChannelId, streamUrl, stats, isHls, config, _logger);
+        var mediaSource = CreateMediaSourceInfo(canonicalChannelId, streamUrl, stats, isHls, config, _logger, isDispatcharrUrl);
 
         return new List<MediaSourceInfo> { mediaSource };
     }
@@ -221,10 +221,10 @@ public class XtreamTunerHost : ITunerHost
 
         var config = Plugin.Instance.Configuration;
         var canonicalChannelId = BuildChannelId(providerIndex, parsedStreamId);
-        var (streamUrl, isHls) = ResolveStreamUrl(config, providerIndex, parsedStreamId, canonicalChannelId);
+        var (streamUrl, isHls, isDispatcharrUrl) = ResolveStreamUrl(config, providerIndex, parsedStreamId, canonicalChannelId);
         _streamStats.TryGetValue(canonicalChannelId, out var stats);
 
-        var mediaSource = CreateMediaSourceInfo(canonicalChannelId, streamUrl, stats, isHls, config, _logger);
+        var mediaSource = CreateMediaSourceInfo(canonicalChannelId, streamUrl, stats, isHls, config, _logger, isDispatcharrUrl);
 
         var httpClient = _httpClientFactory.CreateClient();
         ILiveStream liveStream = new XtreamLiveStream(mediaSource, httpClient, _logger);
@@ -313,18 +313,18 @@ public class XtreamTunerHost : ITunerHost
     /// the M3U playlist uses it (GitHub #113). It always serves MPEG-TS, so it is never HLS.
     /// </para>
     /// </summary>
-    private (string Url, bool IsHls) ResolveStreamUrl(PluginConfiguration config, int providerIndex, int streamId, string channelId)
+    private (string Url, bool IsHls, bool IsDispatcharr) ResolveStreamUrl(PluginConfiguration config, int providerIndex, int streamId, string channelId)
     {
         // Only the uuid is cached; the URL is built from the current settings, so a changed or
         // removed Dispatcharr base URL takes effect without waiting for the channel list to reload.
         if (_dispatcharrUuids.TryGetValue(channelId, out var uuid)
             && BuildProxyStreamUrl(config, providerIndex, uuid) is { } proxyUrl)
         {
-            return (proxyUrl, false);
+            return (proxyUrl, false, true);
         }
 
         var isHls = !string.Equals(config.LiveTvOutputFormat, "ts", StringComparison.OrdinalIgnoreCase);
-        return (BuildStreamUrl(config, providerIndex, streamId), isHls);
+        return (BuildStreamUrl(config, providerIndex, streamId), isHls, false);
     }
 
     /// <summary>
@@ -364,7 +364,7 @@ public class XtreamTunerHost : ITunerHost
             : string.Create(CultureInfo.InvariantCulture, $"{ChannelIdPrefix}{providerIndex}_{streamId}");
     }
 
-    internal static MediaSourceInfo CreateMediaSourceInfo(string channelId, string streamUrl, StreamStatsInfo? stats, bool isHls, PluginConfiguration config, ILogger logger)
+    internal static MediaSourceInfo CreateMediaSourceInfo(string channelId, string streamUrl, StreamStatsInfo? stats, bool isHls, PluginConfiguration config, ILogger logger, bool isDispatcharrUrl = false)
     {
         var sourceId = "xtream_live_" + channelId;
 
@@ -401,7 +401,9 @@ public class XtreamTunerHost : ITunerHost
             // HTTP 407 (homelab-ops #550). Dispatcharr's own channel URL carries no login, and
             // Dispatcharr shares one upstream connection between everyone watching a channel, so
             // there it is offered behind LiveTvDirectPlayDispatcharr, while that is measured.
-            SupportsDirectPlay = hasStats && config.LiveTvDirectPlayDispatcharr && IsDispatcharrChannelUrl(streamUrl),
+            // Decided by which branch built the URL, not by its text: a provider base URL that
+            // happens to contain /proxy/ts/stream/ must not pass for Dispatcharr (CodeRabbit).
+            SupportsDirectPlay = hasStats && config.LiveTvDirectPlayDispatcharr && isDispatcharrUrl,
             // No direct stream: for a live source Jellyfin's direct stream is a remux into one
             // endless fragmented mp4, which the iOS player rejects (AVFoundation -11850, seen on
             // RTL 5 once the audio codec was declared). Without it Jellyfin uses HLS, which still
@@ -512,14 +514,6 @@ public class XtreamTunerHost : ITunerHost
 
         return mediaSource;
     }
-
-    /// <summary>
-    /// Whether a stream URL is Dispatcharr's own channel URL, which carries no login.
-    /// </summary>
-    /// <param name="streamUrl">The stream URL.</param>
-    /// <returns>True for a /proxy/ts/stream/ URL.</returns>
-    internal static bool IsDispatcharrChannelUrl(string streamUrl)
-        => streamUrl.Contains("/proxy/ts/stream/", StringComparison.OrdinalIgnoreCase);
 
     private static string? MapAudioCodec(string? dispatcharrCodec)
     {
