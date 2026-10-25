@@ -527,15 +527,16 @@ public class LiveTvService : IDisposable
     /// <summary>
     /// Drops the rendered playlists when a provider's Dispatcharr settings changed since they were
     /// built. Saving the settings does not touch this cache, so after switching Dispatcharr Mode off
-    /// the cached playlist kept proxy URLs until it expired (BUG-038, CodeRabbit). Called under
-    /// <c>_m3uLock</c>.
+    /// the cached playlist kept proxy URLs until it expired (BUG-038, CodeRabbit). The API user
+    /// counts too. Channel uuids belong to the Dispatcharr instance, not the account, so the
+    /// stored snapshot stays valid as long as the base URL does. Called under <c>_m3uLock</c>.
     /// </summary>
     /// <param name="config">The current configuration.</param>
     private void DropPlaylistsBuiltForOtherDispatcharrSettings(PluginConfiguration config)
     {
         var state = string.Join(
             '|',
-            config.Providers.Select(p => UsesDispatcharrUrls(p) ? p.EffectiveDispatcharrBaseUrl : "-"));
+            config.Providers.Select(p => UsesDispatcharrUrls(p) ? p.EffectiveDispatcharrBaseUrl + "|" + p.DispatcharrApiUser : "-"));
         if (_playlistsDispatcharrState is not null && !string.Equals(_playlistsDispatcharrState, state, StringComparison.Ordinal))
         {
             _cachedM3U = null;
