@@ -394,11 +394,14 @@ public class XtreamTunerHost : ITunerHost
             RequiresOpening = true,
             IsRemote = true,
             IsInfiniteStream = true,
-            // No direct play: a client that direct plays (Swiftfin with VLC) opens Path itself, so
-            // it gets the provider URL with the login in it and bypasses Jellyfin, which then
-            // cannot close the connection. On 2026-10-18 Swiftfin opened 2 to 3 connections per
-            // channel that way and the provider blocked the account with HTTP 407 (homelab-ops #550).
-            SupportsDirectPlay = false,
+            // No direct play with an Xtream URL: a client that direct plays (Swiftfin with VLC)
+            // opens Path itself, so it got the provider URL with the login in it and bypassed
+            // Jellyfin, which then could not close the connection. On 2026-10-18 Swiftfin opened 2
+            // to 3 connections per channel that way and the provider blocked the account with
+            // HTTP 407 (homelab-ops #550). Dispatcharr's own channel URL carries no login, and
+            // Dispatcharr shares one upstream connection between everyone watching a channel, so
+            // there it is offered behind LiveTvDirectPlayDispatcharr, while that is measured.
+            SupportsDirectPlay = hasStats && config.LiveTvDirectPlayDispatcharr && IsDispatcharrChannelUrl(streamUrl),
             // No direct stream: for a live source Jellyfin's direct stream is a remux into one
             // endless fragmented mp4, which the iOS player rejects (AVFoundation -11850, seen on
             // RTL 5 once the audio codec was declared). Without it Jellyfin uses HLS, which still
@@ -509,6 +512,14 @@ public class XtreamTunerHost : ITunerHost
 
         return mediaSource;
     }
+
+    /// <summary>
+    /// Whether a stream URL is Dispatcharr's own channel URL, which carries no login.
+    /// </summary>
+    /// <param name="streamUrl">The stream URL.</param>
+    /// <returns>True for a /proxy/ts/stream/ URL.</returns>
+    internal static bool IsDispatcharrChannelUrl(string streamUrl)
+        => streamUrl.Contains("/proxy/ts/stream/", StringComparison.OrdinalIgnoreCase);
 
     private static string? MapAudioCodec(string? dispatcharrCodec)
     {

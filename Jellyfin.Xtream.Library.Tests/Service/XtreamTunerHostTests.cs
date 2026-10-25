@@ -279,6 +279,32 @@ public class XtreamTunerHostTests : IDisposable
 
     #region GetChannelStreamMediaSources
 
+    [Theory]
+    [InlineData(true, "http://dispatcharr:9191/proxy/ts/stream/086aab97-3c36-41f0-a417-b97f39a69f0f", true)]
+    [InlineData(false, "http://dispatcharr:9191/proxy/ts/stream/086aab97-3c36-41f0-a417-b97f39a69f0f", false)]
+    [InlineData(true, "http://provider/live/user/pass/100.ts", false)]
+    public void CreateMediaSourceInfo_OffersDirectPlayOnlyForDispatcharrUrlsWhenAskedTo(bool setting, string url, bool expected)
+    {
+        // A direct-play client opens Path itself: never with an Xtream URL, which carries the login
+        // and bypasses Jellyfin's connection handling (homelab-ops #550).
+        var stats = new StreamStatsInfo { VideoCodec = "h264", Resolution = "1920x1080" };
+        var config = new PluginConfiguration { LiveTvDirectPlayDispatcharr = setting };
+
+        var source = XtreamTunerHost.CreateMediaSourceInfo("xtream_1", url, stats, false, config, NullLogger.Instance);
+
+        source.SupportsDirectPlay.Should().Be(expected);
+    }
+
+    [Fact]
+    public void CreateMediaSourceInfo_NoDirectPlayWithoutStats()
+    {
+        var config = new PluginConfiguration { LiveTvDirectPlayDispatcharr = true };
+
+        var source = XtreamTunerHost.CreateMediaSourceInfo("xtream_1", "http://d/proxy/ts/stream/x", null, false, config, NullLogger.Instance);
+
+        source.SupportsDirectPlay.Should().BeFalse("without stats the client has nothing to decide on");
+    }
+
     [Fact]
     public async Task GetChannelStreamMediaSources_WithoutStats_ReturnsSingleSource_WithProbingEnabled()
     {

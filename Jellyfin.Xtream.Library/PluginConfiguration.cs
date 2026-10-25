@@ -209,6 +209,13 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool LiveTvCopyAudio { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether a native-tuner channel played from Dispatcharr's own
+    /// channel URL (no login in it) offers direct play, so a client that plays MPEG-TS itself skips
+    /// ffmpeg and HLS. Not on the settings page; for measuring (homelab-ops #550).
+    /// </summary>
+    public bool LiveTvDirectPlayDispatcharr { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether to include adult channels.
     /// </summary>
     public bool IncludeAdultChannels { get; set; }
