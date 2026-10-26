@@ -59,6 +59,7 @@ public class XtreamTunerHost : ITunerHost
     private List<ChannelInfo>? _cachedChannels;
     private DateTime _cacheTime = DateTime.MinValue;
     private bool _cachedNumberByCategory;
+    private bool _cachedCategoryAsTag;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="XtreamTunerHost"/> class.
@@ -98,9 +99,11 @@ public class XtreamTunerHost : ITunerHost
         // Return cached channels if available and not expired
         // The numbering flag is part of the cache identity: flipping it changes every number, and
         // serving the previous list would leave the numbers and the resolver map disagreeing.
+        // The category tag flag is too: a list cached under the other setting carries the wrong tags.
         if (enableCache
             && _cachedChannels != null
             && _cachedNumberByCategory == config.LiveTvNumberByCategory
+            && _cachedCategoryAsTag == config.LiveTvCategoryAsTag
             && DateTime.UtcNow - _cacheTime < CacheDuration)
         {
             _logger.LogDebug("Returning cached channel list ({Count} channels)", _cachedChannels.Count);
@@ -192,6 +195,7 @@ public class XtreamTunerHost : ITunerHost
         _cachedChannels = result;
         _cacheTime = DateTime.UtcNow;
         _cachedNumberByCategory = config.LiveTvNumberByCategory;
+        _cachedCategoryAsTag = config.LiveTvCategoryAsTag;
         _logger.LogInformation(
             "Channel list cached with {Count} channels ({StatsCount} with stream stats, {ProxyCount} with a Dispatcharr URL without credentials)",
             result.Count,

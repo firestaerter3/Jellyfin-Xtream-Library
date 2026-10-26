@@ -351,6 +351,35 @@ public class XtreamTunerHostTests : IDisposable
         result[3].Tags.Should().NotBeNull().And.BeEmpty();
     }
 
+    // PR #183 review: the cached channel list was built under one setting, so serving it after the
+    // setting flips would hand Jellyfin the old tags for up to five minutes.
+    [Fact]
+    public async Task GetChannels_RebuildsTheCachedList_WhenCategoryAsTagChanges()
+    {
+        var config = Plugin.Instance.Configuration;
+        config.EnableLiveTv = true;
+        config.EnableNativeTuner = true;
+        config.EnableChannelNameCleaning = false;
+        config.LiveTvCategoryAsTag = false;
+
+        _mockClient
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiveStreamInfo>
+            {
+                new() { StreamId = 100, Name = "Kids One", Num = 1, CategoryId = 10 },
+            });
+        _mockClient
+            .Setup(c => c.GetLiveCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Category> { new() { CategoryId = 10, CategoryName = "Kinderen" } });
+
+        var before = await _tunerHost.GetChannels(true, CancellationToken.None);
+        config.LiveTvCategoryAsTag = true;
+        var after = await _tunerHost.GetChannels(true, CancellationToken.None);
+
+        before[0].Tags.Should().BeNull();
+        after[0].Tags.Should().Equal("Kinderen");
+    }
+
     [Fact]
     public async Task GetChannels_FailsClosed_WhenCategoriesFailToLoad()
     {

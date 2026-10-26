@@ -1104,6 +1104,10 @@
                                     Jellyfin then replaces each channel's tags on every guide refresh, so tags you set
                                     by hand on a channel are lost. A channel with tags in Channel Overrides keeps
                                     exactly those tags and gets no category tag. Refresh the guide after changing this.
+                                    <br />
+                                    Turning this off again does not remove the category tags: Jellyfin keeps a channel's
+                                    tags when the tuner sends none. Remove them by hand, or give the channels override
+                                    tags, before relying on allowed tags again.
                                 </div>
                             </div>
                         </div>
@@ -1138,13 +1142,15 @@
                                 <textarea is="emby-textarea" id="txtChannelOverrides" rows="6"
                                     placeholder="123=BBC One&#10;456=CNN|2&#10;789=Sky News|5|http://logo.png&#10;321=Fox|7|/media/logos/fox.png&#10;101=|10|" style="width: 100%; font-family: monospace;"></textarea>
                                 <div class="fieldDescription">
-                                    Override channel name, number, or logo. Format: StreamId=Name|Number|Logo<br/>
+                                    Override channel name, number, logo or tags. Format: StreamId=Name|Number|Logo|Tags<br/>
                                     Examples:<br/>
                                     <code>123=BBC One</code> - Just rename<br/>
                                     <code>456=CNN|2</code> - Rename and set channel number<br/>
                                     <code>789=Sky News|5|http://logo.png</code> - All fields (remote logo URL)<br/>
                                     <code>321=Fox|7|/media/logos/fox.png</code> - Local logo file<br/>
                                     <code>101=|10|</code> - Just channel number (keep original name)<br/>
+                                    <code>300=|||adult</code> - Just tags, comma-separated. These replace the category tag
+                                    when "Tag channels with their category" is on<br/>
                                     The logo can be an http(s) URL or a local file path. A local path must be readable by the
                                     Jellyfin server itself - for Docker installs, bind-mount the logo folder into the container.
                                 </div>
