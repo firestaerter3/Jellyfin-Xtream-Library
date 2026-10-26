@@ -241,6 +241,22 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool LiveTvNumberByCategory { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether the native tuner puts each channel's category name
+    /// on the channel as a tag (homelab-ops #550).
+    /// <para>
+    /// With Dispatcharr the category is the channel group, so a parental-control account can be
+    /// limited to one group through Jellyfin's allowed tags.
+    /// </para>
+    /// <para>
+    /// Off by default because Jellyfin replaces a channel's tags with the tuner's tags on every
+    /// guide refresh once the tuner sends any, so tags set by hand or by a script are lost.
+    /// Override tags still win: a channel with tags in <see cref="ChannelOverrides"/> gets exactly
+    /// those and no category tag, which is how a channel is kept out of its group's tag.
+    /// </para>
+    /// </summary>
+    public bool LiveTvCategoryAsTag { get; set; }
+
+    /// <summary>
     /// Gets or sets custom terms to remove from channel names. One term per line.
     /// </summary>
     public string ChannelRemoveTerms { get; set; } = string.Empty;

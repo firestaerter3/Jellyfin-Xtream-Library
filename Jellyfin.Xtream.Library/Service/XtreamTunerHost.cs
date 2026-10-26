@@ -170,7 +170,13 @@ public class XtreamTunerHost : ITunerHost
                 ChannelGroup = channel.CategoryId is int catId && categoryNames.TryGetValue(catId, out var categoryName)
                     ? categoryName
                     : null,
-                Tags = channel.Tags,
+                Tags = ResolveChannelTags(
+                    channel.Tags,
+                    channel.CategoryId is int tagCatId && categoryNames.TryGetValue(tagCatId, out var tagCategoryName)
+                        ? tagCategoryName
+                        : null,
+                    categoryNames.Count > 0,
+                    config.LiveTvCategoryAsTag),
             });
         }
 
@@ -355,6 +361,38 @@ public class XtreamTunerHost : ITunerHost
         var (baseUrl, username, password) = LiveTvService.ResolveLiveTvProvider(config, providerIndex);
         var extension = string.Equals(config.LiveTvOutputFormat, "ts", StringComparison.OrdinalIgnoreCase) ? "ts" : "m3u8";
         return string.Create(CultureInfo.InvariantCulture, $"{baseUrl}/live/{username}/{password}/{streamId}.{extension}");
+    }
+
+    /// <summary>
+    /// The tags the tuner hands Jellyfin for one channel (homelab-ops #550).
+    /// <para>
+    /// Jellyfin's guide refresh replaces a channel's tags whenever this is non-null and leaves them
+    /// alone when it is null, so null and an empty array mean different things:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>Override tags win, unchanged, whatever the option says.</item>
+    /// <item>Option off: the override tags or null, exactly as before.</item>
+    /// <item>The category list did not load (fetch failed, or more than one provider): null, so a
+    /// passing error never strips a tag from every channel.</item>
+    /// <item>The list loaded: the category name, or an empty array when the channel has no known
+    /// category, so a channel moved out of a group loses that group's tag. For an allowed-tags
+    /// account a missing tag hides a channel, it never shows one.</item>
+    /// </list>
+    /// </summary>
+    /// <param name="overrideTags">Tags from the channel overrides, or null.</param>
+    /// <param name="categoryName">The channel's category name, or null when unknown.</param>
+    /// <param name="categoryMapLoaded">Whether the category list was read.</param>
+    /// <param name="categoryAsTag">The <see cref="PluginConfiguration.LiveTvCategoryAsTag"/> setting.</param>
+    /// <returns>The tags for <see cref="ChannelInfo.Tags"/>.</returns>
+    internal static string[]? ResolveChannelTags(string[]? overrideTags, string? categoryName, bool categoryMapLoaded, bool categoryAsTag)
+    {
+        if (overrideTags != null || !categoryAsTag || !categoryMapLoaded)
+        {
+            return overrideTags;
+        }
+
+        var name = categoryName?.Trim();
+        return string.IsNullOrEmpty(name) ? Array.Empty<string>() : new[] { name };
     }
 
     internal static string BuildChannelId(int providerIndex, int streamId)

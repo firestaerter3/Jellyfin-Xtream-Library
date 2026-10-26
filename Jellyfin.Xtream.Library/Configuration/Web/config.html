@@ -1091,6 +1091,21 @@
                                     Every channel gets a new number, so refresh the guide after changing this.
                                 </div>
                             </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkLiveTvCategoryAsTag" name="LiveTvCategoryAsTag" />
+                                    <span>Tag channels with their category</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Puts the category name (with Dispatcharr: the channel group) on each channel as a
+                                    tag, so a user can be limited to one category with Jellyfin's allowed tags.
+                                    Native tuner only.
+                                    <br />
+                                    Jellyfin then replaces each channel's tags on every guide refresh, so tags you set
+                                    by hand on a channel are lost. A channel with tags in Channel Overrides keeps
+                                    exactly those tags and gets no category tag. Refresh the guide after changing this.
+                                </div>
+                            </div>
                         </div>
                         <div class="verticalSection">
                             <h3 class="sectionTitle">Title Cleaning</h3>

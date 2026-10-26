@@ -92,6 +92,7 @@ function fixture() {
         LiveChannelMode: 'ExcludeSelected',
         EnableChannelNameCleaning: false,
         LiveTvNumberByCategory: true,
+        LiveTvCategoryAsTag: true,
         ChannelRemoveTerms: 'HD\nFHD',
         ChannelOverrides: '123=Name',
         LiveTvEndpointAllowedIps: '127.0.0.1\n::1',
