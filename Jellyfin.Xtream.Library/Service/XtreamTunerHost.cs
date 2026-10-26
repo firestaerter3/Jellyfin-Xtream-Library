@@ -112,6 +112,12 @@ public class XtreamTunerHost : ITunerHost
         var channels = await _liveTvService.GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
         var categoryNames = await _liveTvService.GetCategoryNameMapAsync(cancellationToken).ConfigureAwait(false);
 
+        if (config.LiveTvCategoryAsTag && categoryNames.Count == 0)
+        {
+            _logger.LogWarning(
+                "Tag channels with their category is on, but the category list could not be read (fetch failed, or more than one Live TV provider); channels get only their override tags this refresh");
+        }
+
         int stride = ChannelNumbering.ComputeStride(channels);
         var newMap = new Dictionary<string, string>(channels.Count);
         var newStats = new Dictionary<string, StreamStatsInfo>(channels.Count);
@@ -372,11 +378,13 @@ public class XtreamTunerHost : ITunerHost
     /// <list type="bullet">
     /// <item>Override tags win, unchanged, whatever the option says.</item>
     /// <item>Option off: the override tags or null, exactly as before.</item>
-    /// <item>The category list did not load (fetch failed, or more than one provider): null, so a
-    /// passing error never strips a tag from every channel.</item>
     /// <item>The list loaded: the category name, or an empty array when the channel has no known
-    /// category, so a channel moved out of a group loses that group's tag. For an allowed-tags
-    /// account a missing tag hides a channel, it never shows one.</item>
+    /// category, so a channel moved out of a group loses that group's tag.</item>
+    /// <item>The category list did not load (fetch failed, or more than one provider): an empty
+    /// array. Null would keep the tags from the last refresh, and a stale group tag would keep
+    /// showing a channel that has left the group. For an allowed-tags account a missing tag hides
+    /// a channel, it never shows one, so this fails closed: such an account may see nothing until
+    /// the next refresh that loads the list.</item>
     /// </list>
     /// </summary>
     /// <param name="overrideTags">Tags from the channel overrides, or null.</param>
@@ -386,9 +394,14 @@ public class XtreamTunerHost : ITunerHost
     /// <returns>The tags for <see cref="ChannelInfo.Tags"/>.</returns>
     internal static string[]? ResolveChannelTags(string[]? overrideTags, string? categoryName, bool categoryMapLoaded, bool categoryAsTag)
     {
-        if (overrideTags != null || !categoryAsTag || !categoryMapLoaded)
+        if (overrideTags != null || !categoryAsTag)
         {
             return overrideTags;
+        }
+
+        if (!categoryMapLoaded)
+        {
+            return Array.Empty<string>();
         }
 
         var name = categoryName?.Trim();

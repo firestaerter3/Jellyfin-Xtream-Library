@@ -285,7 +285,7 @@ public class XtreamTunerHostTests : IDisposable
 
     [Theory]
     [InlineData(false, true, "Kinderen", null)]          // option off: unchanged (null)
-    [InlineData(true, false, "Kinderen", null)]          // categories not loaded: null, never strip
+    [InlineData(true, false, "Kinderen", "")]            // categories not loaded: empty, fail closed
     [InlineData(true, true, "Kinderen", "Kinderen")]     // the category name
     [InlineData(true, true, "  Kinderen ", "Kinderen")]  // trimmed
     [InlineData(true, true, null, "")]                   // loaded, no category: empty array
@@ -352,19 +352,21 @@ public class XtreamTunerHostTests : IDisposable
     }
 
     [Fact]
-    public async Task GetChannels_LeavesTagsNull_WhenCategoriesFailToLoad()
+    public async Task GetChannels_FailsClosed_WhenCategoriesFailToLoad()
     {
         var config = Plugin.Instance.Configuration;
         config.EnableLiveTv = true;
         config.EnableNativeTuner = true;
         config.EnableChannelNameCleaning = false;
         config.LiveTvCategoryAsTag = true;
+        config.ChannelOverrides = "200=|||news";
 
         _mockClient
             .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<LiveStreamInfo>
             {
                 new() { StreamId = 100, Name = "Kids One", Num = 1, CategoryId = 10 },
+                new() { StreamId = 200, Name = "News", Num = 2, CategoryId = 10 },
             });
         _mockClient
             .Setup(c => c.GetLiveCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
@@ -372,8 +374,10 @@ public class XtreamTunerHostTests : IDisposable
 
         var result = await _tunerHost.GetChannels(false, CancellationToken.None);
 
-        // A non-null empty array would make Jellyfin strip the tag from every channel.
-        result[0].Tags.Should().BeNull();
+        // Null would keep last refresh's tags, so a channel that left the group stays visible to
+        // an allowed-tags account. An empty array hides it instead (homelab-ops #550, option A).
+        result[0].Tags.Should().NotBeNull().And.BeEmpty();
+        result[1].Tags.Should().Equal("news");
     }
 
     [Fact]
