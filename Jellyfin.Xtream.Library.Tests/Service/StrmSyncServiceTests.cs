@@ -347,6 +347,10 @@ public class StrmSyncServiceTests
     [InlineData("┃UK┃ Ascendance of a Bookworm", "Ascendance of a Bookworm")]
     [InlineData("┃UK┃Campfire Cooking", "Campfire Cooking")]
     [InlineData("| EN | Some Show", "Some Show")]
+    [InlineData("EN - Narcos", "Narcos")]
+    [InlineData("NL - De Luizenmoeder", "De Luizenmoeder")]
+    [InlineData("AI - Artificial Intelligence", "AI - Artificial Intelligence")]
+    [InlineData("Up - The Movie", "Up - The Movie")]
     public void SanitizeFileName_PrefixLanguageTags_RemovesThem(string input, string expected)
     {
         var result = StrmSyncService.SanitizeFileName(input);

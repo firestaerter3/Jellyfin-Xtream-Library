@@ -41,4 +41,10 @@ public class MetadataCacheEntry
     /// Gets or sets when this lookup was performed.
     /// </summary>
     public DateTime LastLookup { get; set; }
+
+    /// <summary>
+    /// Gets or sets the version of the search that produced this entry. Entries written before
+    /// the field existed read as 0. See MetadataLookupService.SeriesSearchVersion.
+    /// </summary>
+    public int SearchVersion { get; set; }
 }

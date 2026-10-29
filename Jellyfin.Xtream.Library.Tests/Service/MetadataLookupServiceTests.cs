@@ -26,6 +26,7 @@ using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Providers;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Providers;
 using MediaBrowser.Model.Serialization;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -607,5 +608,150 @@ public class MetadataLookupServiceTests
             pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(
                 It.IsAny<RemoteSearchQuery<SeriesInfo>>(), It.IsAny<CancellationToken>()),
             Times.Exactly(2));
+    }
+
+    // === GitHub #185: results of all providers come back one provider after another ===
+
+    private static RemoteSearchResult Result(string name, int year, string idName, string id) => new()
+    {
+        Name = name,
+        ProductionYear = year,
+        ProviderIds = new Dictionary<string, string> { [idName] = id },
+    };
+
+    [Fact]
+    public async Task LookupSeriesTvdbIdAsync_TheMovieDbAnswersFirst_UsesTheTvdbResultFurtherDown()
+    {
+        InitPlugin(new PluginConfiguration { EnableMetadataLookup = true, LibraryPath = string.Empty });
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .Setup(pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(It.IsAny<RemoteSearchQuery<SeriesInfo>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[]
+            {
+                // What Jellyfin returns with TheMovieDb ahead of TheTVDB: its hits carry no TVDb ID.
+                Result("Fuller House", 2016, "Tmdb", "63623"),
+                Result("Full House", 1987, "Tmdb", "4313"),
+                Result("Fuller House", 2016, "Tvdb", "301236"),
+            });
+        var svc = new MetadataLookupService(mockProvider.Object, new MetadataCache(NullLogger<MetadataCache>.Instance), NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupSeriesTvdbIdAsync("Fuller House", null, CancellationToken.None);
+
+        result.Should().Be(301236, "the old code read only the first result and gave up");
+    }
+
+    [Fact]
+    public async Task LookupSeriesTvdbIdAsync_TheChosenResultIsStillCheckedForAFalsePositive()
+    {
+        InitPlugin(new PluginConfiguration { EnableMetadataLookup = true, LibraryPath = string.Empty });
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .Setup(pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(It.IsAny<RemoteSearchQuery<SeriesInfo>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[]
+            {
+                Result("Ghostwriter", 2019, "Tmdb", "90000"),
+                Result("Ghostwriter", 1992, "Tvdb", "70000"),
+            });
+        var svc = new MetadataLookupService(mockProvider.Object, new MetadataCache(NullLogger<MetadataCache>.Instance), NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupSeriesTvdbIdAsync("Ghostwriter", 2019, CancellationToken.None);
+
+        result.Should().BeNull("the first TVDb result is 27 years off, and skipping on to a later one would invite wrong matches");
+    }
+
+    [Fact]
+    public async Task LookupMovieTmdbIdAsync_AnotherProviderAnswersFirst_UsesTheTmdbResult()
+    {
+        InitPlugin(new PluginConfiguration { EnableMetadataLookup = true, LibraryPath = string.Empty });
+        var provider = new Mock<IProviderManager>();
+        provider
+            .Setup(pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(It.IsAny<RemoteSearchQuery<MovieInfo>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[]
+            {
+                Result("Narcos", 2015, "Imdb", "tt2707408"),
+                Result("Narcos", 2015, "Tmdb", "63351"),
+            });
+        var svc = new MetadataLookupService(provider.Object, new MetadataCache(NullLogger<MetadataCache>.Instance), NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupMovieTmdbIdAsync("Narcos", 2015, null, null, CancellationToken.None);
+
+        result.Should().Be(63351);
+    }
+
+    [Fact]
+    public void FirstResultWithId_SkipsResultsWithoutANumericId()
+    {
+        var results = new[]
+        {
+            new RemoteSearchResult { Name = "No ids" },
+            Result("Bad id", 2000, "Tvdb", "abc"),
+            Result("Good", 2000, "Tvdb", "42"),
+        };
+
+        var found = MetadataLookupService.FirstResultWithId(results, MetadataProvider.Tvdb, out var id);
+
+        found!.Name.Should().Be("Good");
+        id.Should().Be(42);
+        MetadataLookupService.FirstResultWithId(results, MetadataProvider.Tmdb, out _).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task LookupSeriesTvdbIdAsync_NoYear_PrefersTheTvdbResultFromTheBestRankedYear()
+    {
+        InitPlugin(new PluginConfiguration { EnableMetadataLookup = true, LibraryPath = string.Empty });
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .Setup(pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(It.IsAny<RemoteSearchQuery<SeriesInfo>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[]
+            {
+                // The order Jellyfin 12.1 returned for "Ghostwriter" on a test server.
+                Result("Ghostwriter", 2019, "Tmdb", "90000"),
+                Result("Ghostwriter", 1992, "Tmdb", "4000"),
+                Result("Ghostwriter", 1992, "Tvdb", "70000"),
+                Result("Ghostwriter", 2019, "Tvdb", "360000"),
+            });
+        var svc = new MetadataLookupService(mockProvider.Object, new MetadataCache(NullLogger<MetadataCache>.Instance), NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupSeriesTvdbIdAsync("Ghostwriter", null, CancellationToken.None);
+
+        result.Should().Be(360000);
+    }
+
+    [Fact]
+    public void FirstResultWithId_FallsBackToTheFirstWithTheId_WhenNoneMatchesThePreferredYear()
+    {
+        var results = new[] { Result("A", 1990, "Tvdb", "1"), Result("B", 1995, "Tvdb", "2") };
+
+        MetadataLookupService.FirstResultWithId(results, MetadataProvider.Tvdb, out var id, 2019);
+
+        id.Should().Be(1);
+    }
+
+    [Fact]
+    public void IsSeriesMissFromBeforeFix_OnlyOldMissesAreSearchedAgain()
+    {
+        var current = MetadataLookupService.SeriesSearchVersion;
+
+        MetadataLookupService.IsSeriesMissFromBeforeFix(new MetadataCacheEntry { TvdbId = null, SearchVersion = 0 }).Should().BeTrue();
+        MetadataLookupService.IsSeriesMissFromBeforeFix(new MetadataCacheEntry { TvdbId = null, SearchVersion = current }).Should().BeFalse();
+        MetadataLookupService.IsSeriesMissFromBeforeFix(new MetadataCacheEntry { TvdbId = 123, SearchVersion = 0 }).Should().BeFalse();
+        MetadataLookupService.IsSeriesMissFromBeforeFix(null).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task LookupSeriesTvdbIdAsync_MissCachedByTheOldSearch_IsSearchedAgain()
+    {
+        InitPlugin(new PluginConfiguration { EnableMetadataLookup = true, LibraryPath = string.Empty });
+        var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
+        cache.Set(MetadataCache.GetSeriesKey("Harlots", null), new MetadataCacheEntry { TvdbId = null });
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .Setup(pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(It.IsAny<RemoteSearchQuery<SeriesInfo>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { Result("Harlots", 2017, "Tmdb", "71694"), Result("Harlots", 2017, "Tvdb", "318434") });
+        var svc = new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupSeriesTvdbIdAsync("Harlots", null, CancellationToken.None);
+
+        result.Should().Be(318434);
     }
 }
