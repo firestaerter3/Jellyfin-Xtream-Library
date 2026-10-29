@@ -295,6 +295,7 @@ public class StrmSyncServiceTests
     [InlineData("V2: Escape from Hell")]
     [InlineData("[V2]")]
     [InlineData("(V2)")]
+    [InlineData("EN - V2")]
     public void ExtractVersionLabel_VersionTagIsTheTitle_ReturnsNull(string input)
     {
         var result = StrmSyncService.ExtractVersionLabel(input);

@@ -371,9 +371,10 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
             new RemoteSearchQuery<SeriesInfo> { SearchInfo = new SeriesInfo { Name = title, Year = year } },
             cancellationToken).ConfigureAwait(false);
 
-        // Without a year, the year of the best-ranked result of any provider decides between
-        // same-name series, so "Ghostwriter" does not become the 1992 show when the first result
-        // is the 2019 one (GitHub #185).
+        // A result within a year of the searched year comes first; without a year, within a year
+        // of the best-ranked result of any provider, so "Ghostwriter" does not become the 1992
+        // show when the first result is the 2019 one (GitHub #185). With a known year, a result
+        // from that year is a better guess than a higher-ranked same-name show from two years off.
         var resultList = results.ToList();
         var firstResult = FirstResultWithId(resultList, MetadataProvider.Tvdb, out var parsedId, year ?? resultList.FirstOrDefault()?.ProductionYear);
         if (firstResult == null)

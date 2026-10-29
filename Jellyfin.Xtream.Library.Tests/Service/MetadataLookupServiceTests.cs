@@ -754,4 +754,25 @@ public class MetadataLookupServiceTests
 
         result.Should().Be(318434);
     }
+
+    [Fact]
+    public async Task LookupSeriesTvdbIdAsync_WithAYear_PrefersTheResultFromThatYear()
+    {
+        InitPlugin(new PluginConfiguration { EnableMetadataLookup = true, LibraryPath = string.Empty });
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .Setup(pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(It.IsAny<RemoteSearchQuery<SeriesInfo>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[]
+            {
+                // Both would pass the two-year false-positive check; the one from the searched
+                // year is chosen over the higher-ranked one (PR #187 review).
+                Result("Foo", 2018, "Tvdb", "1"),
+                Result("Foo", 2020, "Tvdb", "2"),
+            });
+        var svc = new MetadataLookupService(mockProvider.Object, new MetadataCache(NullLogger<MetadataCache>.Instance), NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupSeriesTvdbIdAsync("Foo", 2020, CancellationToken.None);
+
+        result.Should().Be(2);
+    }
 }

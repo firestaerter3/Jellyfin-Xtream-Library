@@ -3622,6 +3622,7 @@ public partial class StrmSyncService
 
         // Strip prefix language tags first (same as SanitizeFileName step 1)
         string cleanName = PrefixLanguageTagPattern().Replace(name, string.Empty);
+        cleanName = PrefixLanguageDashPattern().Replace(cleanName, string.Empty);
 
         var labels = new List<string>();
 
