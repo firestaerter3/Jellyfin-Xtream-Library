@@ -294,6 +294,7 @@ public class StrmSyncServiceTests
     [InlineData("V2: Escape from Hell")]
     [InlineData("[V2]")]
     [InlineData("(V2)")]
+    [InlineData("EN - V2")]
     public void ExtractVersionLabel_VersionTagIsTheTitle_ReturnsNull(string input)
     {
         var result = StrmSyncService.ExtractVersionLabel(input);
@@ -346,6 +347,8 @@ public class StrmSyncServiceTests
     [InlineData("┃UK┃ Ascendance of a Bookworm", "Ascendance of a Bookworm")]
     [InlineData("┃UK┃Campfire Cooking", "Campfire Cooking")]
     [InlineData("| EN | Some Show", "Some Show")]
+    [InlineData("EN - Narcos", "Narcos")]
+    [InlineData("AI - Artificial Intelligence", "AI - Artificial Intelligence")]
     public void SanitizeFileName_PrefixLanguageTags_RemovesThem(string input, string expected)
     {
         var result = StrmSyncService.SanitizeFileName(input);

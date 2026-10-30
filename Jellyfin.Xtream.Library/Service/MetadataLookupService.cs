@@ -17,6 +17,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -36,6 +37,14 @@ namespace Jellyfin.Xtream.Library.Service;
 /// </summary>
 public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
 {
+    /// <summary>
+    /// The version of the series search, stored on each series cache entry. Until GitHub #185
+    /// (version 0) the search read only the first result, which is usually TheMovieDb's and has
+    /// no TVDb ID, so almost every series was cached as a miss. Such a miss is searched again
+    /// instead of waiting out the cache age. Found IDs are kept whatever their version.
+    /// </summary>
+    internal const int SeriesSearchVersion = 1;
+
     private readonly IProviderManager _providerManager;
     private readonly MetadataCache _cache;
     private readonly ILogger<MetadataLookupService> _logger;
@@ -118,12 +127,10 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
                 new RemoteSearchQuery<MovieInfo> { SearchInfo = searchInfo },
                 cancellationToken).ConfigureAwait(false);
 
-            var firstResult = results.FirstOrDefault();
+            var firstResult = FirstResultWithId(results, MetadataProvider.Tmdb, out var parsedId);
             int? tmdbId = null;
 
-            if (firstResult?.ProviderIds != null &&
-                firstResult.ProviderIds.TryGetValue(MetadataProvider.Tmdb.ToString(), out var tmdbIdStr) &&
-                int.TryParse(tmdbIdStr, out var parsedId))
+            if (firstResult != null)
             {
                 // Validate the match to reject obvious false positives
                 if (IsLikelyFalsePositive(title, firstResult.Name, year, firstResult.ProductionYear))
@@ -174,10 +181,8 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
                         new RemoteSearchQuery<MovieInfo> { SearchInfo = fallbackInfo },
                         cancellationToken).ConfigureAwait(false);
 
-                    var fallbackFirst = fallbackResults.FirstOrDefault();
-                    if (fallbackFirst?.ProviderIds != null &&
-                        fallbackFirst.ProviderIds.TryGetValue(MetadataProvider.Tmdb.ToString(), out var fbStr) &&
-                        int.TryParse(fbStr, out var fbId) &&
+                    var fallbackFirst = FirstResultWithId(fallbackResults, MetadataProvider.Tmdb, out var fbId);
+                    if (fallbackFirst != null &&
                         !IsLikelyFalsePositive(title, fallbackFirst.Name, null, fallbackFirst.ProductionYear))
                     {
                         tmdbId = fbId;
@@ -221,7 +226,7 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
         await InitializeAsync().ConfigureAwait(false);
 
         var cacheKey = MetadataCache.GetSeriesKey(title, year);
-        if (_cache.TryGet(cacheKey, out var cached, config.MetadataCacheAgeDays))
+        if (_cache.TryGet(cacheKey, out var cached, config.MetadataCacheAgeDays) && !IsSeriesMissFromBeforeFix(cached))
         {
             _logger.LogDebug("Cache hit for series: {Title} ({Year}) -> TVDb {Id}", title, year, cached?.TvdbId);
             return cached?.TvdbId;
@@ -245,12 +250,13 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
                 new RemoteSearchQuery<SeriesInfo> { SearchInfo = searchInfo },
                 cancellationToken).ConfigureAwait(false);
 
-            var firstResult = results.FirstOrDefault();
+            // A result within a year of the searched year comes first; without a year, within a
+            // year of the best-ranked result of any provider (GitHub #185).
+            var resultList = results.ToList();
+            var firstResult = FirstResultWithId(resultList, MetadataProvider.Tvdb, out var parsedId, year ?? resultList.FirstOrDefault()?.ProductionYear);
             int? tvdbId = null;
 
-            if (firstResult?.ProviderIds != null &&
-                firstResult.ProviderIds.TryGetValue(MetadataProvider.Tvdb.ToString(), out var tvdbIdStr) &&
-                int.TryParse(tvdbIdStr, out var parsedId))
+            if (firstResult != null)
             {
                 // Validate the match to reject obvious false positives
                 if (IsLikelyFalsePositive(title, firstResult.Name, year, firstResult.ProductionYear))
@@ -277,6 +283,7 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
             {
                 TvdbId = tvdbId,
                 Confidence = firstResult != null && tvdbId.HasValue ? 100 : 0,
+                SearchVersion = SeriesSearchVersion,
             });
 
             // Fallback: retry without year if primary failed and feature is enabled.
@@ -288,7 +295,7 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
                     year);
 
                 var fallbackKey = MetadataCache.GetSeriesKey(title, null);
-                if (_cache.TryGet(fallbackKey, out var fallbackCached, config.MetadataCacheAgeDays))
+                if (_cache.TryGet(fallbackKey, out var fallbackCached, config.MetadataCacheAgeDays) && !IsSeriesMissFromBeforeFix(fallbackCached))
                 {
                     tvdbId = fallbackCached?.TvdbId;
                     _logger.LogDebug("Fallback cache hit for series: {Title} -> TVDb {Id}", title, tvdbId);
@@ -300,10 +307,9 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
                         new RemoteSearchQuery<SeriesInfo> { SearchInfo = fallbackInfo },
                         cancellationToken).ConfigureAwait(false);
 
-                    var fallbackFirst = fallbackResults.FirstOrDefault();
-                    if (fallbackFirst?.ProviderIds != null &&
-                        fallbackFirst.ProviderIds.TryGetValue(MetadataProvider.Tvdb.ToString(), out var fbStr) &&
-                        int.TryParse(fbStr, out var fbId) &&
+                    var fallbackList = fallbackResults.ToList();
+                    var fallbackFirst = FirstResultWithId(fallbackList, MetadataProvider.Tvdb, out var fbId, fallbackList.FirstOrDefault()?.ProductionYear);
+                    if (fallbackFirst != null &&
                         !IsLikelyFalsePositive(title, fallbackFirst.Name, null, fallbackFirst.ProductionYear))
                     {
                         tvdbId = fbId;
@@ -318,6 +324,7 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
                     {
                         TvdbId = tvdbId,
                         Confidence = tvdbId.HasValue ? 100 : 0,
+                        SearchVersion = SeriesSearchVersion,
                     });
                 }
             }
@@ -333,6 +340,62 @@ public sealed class MetadataLookupService : IMetadataLookupService, IDisposable
         {
             _rateLimiter.Release();
         }
+    }
+
+    /// <summary>
+    /// Whether a cached series entry is a miss from an older version of the search.
+    /// </summary>
+    /// <param name="entry">The cached entry, or null.</param>
+    /// <returns>True when the entry should be searched again.</returns>
+    internal static bool IsSeriesMissFromBeforeFix(MetadataCacheEntry? entry)
+        => entry is { TvdbId: null } && entry.SearchVersion < SeriesSearchVersion;
+
+    /// <summary>
+    /// The first search result that carries a usable ID from <paramref name="provider"/>
+    /// (GitHub #185).
+    /// <para>
+    /// The search does not name a provider, so Jellyfin asks every enabled one and returns their
+    /// results one provider after another, merging only results that share an ID. TheMovieDb's
+    /// hits, which carry no TVDb ID, can come first; taking only the very first result then
+    /// failed for almost every series.
+    /// </para>
+    /// </summary>
+    /// <param name="results">The search results, in the order Jellyfin returned them.</param>
+    /// <param name="provider">The provider whose ID is wanted.</param>
+    /// <param name="id">The parsed ID of the returned result, or 0.</param>
+    /// <param name="preferredYear">When set, a result with the ID within a year of this is taken
+    /// before an earlier one from another year; otherwise the first result with the ID.</param>
+    /// <returns>The result, or null when none has a numeric ID from that provider.</returns>
+    internal static RemoteSearchResult? FirstResultWithId(IEnumerable<RemoteSearchResult> results, MetadataProvider provider, out int id, int? preferredYear = null)
+    {
+        var idName = provider.ToString();
+        RemoteSearchResult? first = null;
+        int firstId = 0;
+        foreach (var result in results)
+        {
+            if (result?.ProviderIds == null
+                || !result.ProviderIds.TryGetValue(idName, out var value)
+                || !int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed))
+            {
+                continue;
+            }
+
+            if (!preferredYear.HasValue
+                || (result.ProductionYear.HasValue && Math.Abs(result.ProductionYear.Value - preferredYear.Value) <= 1))
+            {
+                id = parsed;
+                return result;
+            }
+
+            if (first == null)
+            {
+                first = result;
+                firstId = parsed;
+            }
+        }
+
+        id = firstId;
+        return first;
     }
 
     /// <inheritdoc />
