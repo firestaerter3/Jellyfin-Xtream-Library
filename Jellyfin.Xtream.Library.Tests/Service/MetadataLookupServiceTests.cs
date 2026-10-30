@@ -24,6 +24,7 @@ using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Providers;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Providers;
 using MediaBrowser.Model.Serialization;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -441,5 +442,92 @@ public class MetadataLookupServiceTests
             pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(
                 It.IsAny<RemoteSearchQuery<SeriesInfo>>(), It.IsAny<CancellationToken>()),
             Times.Exactly(2));
+    }
+
+    // === GitHub #185: results of all providers come back one provider after another ===
+
+    private static RemoteSearchResult Result(string name, int year, string idName, string id) => new()
+    {
+        Name = name,
+        ProductionYear = year,
+        ProviderIds = new Dictionary<string, string> { [idName] = id },
+    };
+
+    private static MetadataLookupService SeriesService(MetadataCache cache, params RemoteSearchResult[] results)
+    {
+        var mockProvider = new Mock<IProviderManager>();
+        mockProvider
+            .Setup(pm => pm.GetRemoteSearchResults<Series, SeriesInfo>(It.IsAny<RemoteSearchQuery<SeriesInfo>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(results);
+        return new MetadataLookupService(mockProvider.Object, cache, NullLogger<MetadataLookupService>.Instance);
+    }
+
+    [Fact]
+    public async Task LookupSeriesTvdbIdAsync_TheMovieDbAnswersFirst_UsesTheTvdbResultFurtherDown()
+    {
+        InitPlugin(new PluginConfiguration { EnableMetadataLookup = true, LibraryPath = string.Empty });
+        var svc = SeriesService(
+            new MetadataCache(NullLogger<MetadataCache>.Instance),
+            Result("Fuller House", 2016, "Tmdb", "63623"),
+            Result("Full House", 1987, "Tmdb", "4313"),
+            Result("Fuller House", 2016, "Tvdb", "301236"));
+
+        var result = await svc.LookupSeriesTvdbIdAsync("Fuller House", null, CancellationToken.None);
+
+        result.Should().Be(301236);
+    }
+
+    [Fact]
+    public async Task LookupSeriesTvdbIdAsync_NoYear_PrefersTheTvdbResultFromTheBestRankedYear()
+    {
+        InitPlugin(new PluginConfiguration { EnableMetadataLookup = true, LibraryPath = string.Empty });
+        var svc = SeriesService(
+            new MetadataCache(NullLogger<MetadataCache>.Instance),
+            Result("Ghostwriter", 2019, "Tmdb", "90000"),
+            Result("Ghostwriter", 1992, "Tvdb", "70000"),
+            Result("Ghostwriter", 2019, "Tvdb", "360000"));
+
+        var result = await svc.LookupSeriesTvdbIdAsync("Ghostwriter", null, CancellationToken.None);
+
+        result.Should().Be(360000);
+    }
+
+    [Fact]
+    public async Task LookupSeriesTvdbIdAsync_MissCachedByTheOldSearch_IsSearchedAgain()
+    {
+        InitPlugin(new PluginConfiguration { EnableMetadataLookup = true, LibraryPath = string.Empty });
+        var cache = new MetadataCache(NullLogger<MetadataCache>.Instance);
+        cache.Set(MetadataCache.GetSeriesKey("Harlots", null), new MetadataCacheEntry { TvdbId = null });
+        var svc = SeriesService(cache, Result("Harlots", 2017, "Tmdb", "71694"), Result("Harlots", 2017, "Tvdb", "318434"));
+
+        var result = await svc.LookupSeriesTvdbIdAsync("Harlots", null, CancellationToken.None);
+
+        result.Should().Be(318434);
+    }
+
+    [Fact]
+    public async Task LookupMovieTmdbIdAsync_AnotherProviderAnswersFirst_UsesTheTmdbResult()
+    {
+        InitPlugin(new PluginConfiguration { EnableMetadataLookup = true, LibraryPath = string.Empty });
+        var provider = new Mock<IProviderManager>();
+        provider
+            .Setup(pm => pm.GetRemoteSearchResults<Movie, MovieInfo>(It.IsAny<RemoteSearchQuery<MovieInfo>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { Result("Narcos", 2015, "Imdb", "tt2707408"), Result("Narcos", 2015, "Tmdb", "63351") });
+        var svc = new MetadataLookupService(provider.Object, new MetadataCache(NullLogger<MetadataCache>.Instance), NullLogger<MetadataLookupService>.Instance);
+
+        var result = await svc.LookupMovieTmdbIdAsync("Narcos", 2015, CancellationToken.None);
+
+        result.Should().Be(63351);
+    }
+
+    [Fact]
+    public void FirstResultWithId_SkipsResultsWithoutANumericId()
+    {
+        var results = new[] { new RemoteSearchResult { Name = "No ids" }, Result("Bad", 2000, "Tvdb", "abc"), Result("Good", 2000, "Tvdb", "42") };
+
+        var found = MetadataLookupService.FirstResultWithId(results, MetadataProvider.Tvdb, out var id);
+
+        found!.Name.Should().Be("Good");
+        id.Should().Be(42);
     }
 }

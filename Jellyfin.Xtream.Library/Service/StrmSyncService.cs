@@ -3790,6 +3790,9 @@ public partial class StrmSyncService
         // Remove prefix language tags like "┃UK┃" or "| EN |" at start of name
         cleanName = PrefixLanguageTagPattern().Replace(cleanName, string.Empty);
 
+        // Remove a dash-style language prefix like "EN - " at start of name (GitHub #185)
+        cleanName = PrefixLanguageDashPattern().Replace(cleanName, string.Empty);
+
         // Remove language/country tags like "| UK |", "┃EN┃", "[DE]", "| FR |", etc.
         cleanName = LanguageTagPattern().Replace(cleanName, string.Empty);
 
@@ -3859,6 +3862,7 @@ public partial class StrmSyncService
 
         // Strip prefix language tags first (same as SanitizeFileName step 1)
         string cleanName = PrefixLanguageTagPattern().Replace(name, string.Empty);
+        cleanName = PrefixLanguageDashPattern().Replace(cleanName, string.Empty);
 
         var labels = new List<string>();
 
@@ -4659,6 +4663,12 @@ public partial class StrmSyncService
     // Matches prefix language tags like "┃UK┃" or "| EN |" at start of name
     [GeneratedRegex(@"^[\|\┃]\s*[A-Z]{2,3}\s*[\|\┃]\s*", RegexOptions.IgnoreCase)]
     private static partial Regex PrefixLanguageTagPattern();
+
+    // Matches a dash-style language prefix like "EN - " or "NL - " at start of name (GitHub #185).
+    // Case-sensitive and limited to language codes, so "AI - Artificial Intelligence" keeps its
+    // first word.
+    [GeneratedRegex(@"^(?:EN|NL|DE|FR|ES|IT|PT|TR|AR|PL|RU|UK|US|SE|DK|NO|FI|BE)\s+-\s+")]
+    private static partial Regex PrefixLanguageDashPattern();
 
     // Matches language tags like "| UK |", "┃US┃", "[EN]", "| DE |", "| FR |", etc.
     [GeneratedRegex(@"[\|\┃\[]\s*[A-Z]{2,3}\s*[\|\┃\]]", RegexOptions.IgnoreCase)]
