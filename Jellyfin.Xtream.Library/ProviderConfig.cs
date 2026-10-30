@@ -65,6 +65,21 @@ public class ProviderConfig
     /// </summary>
     public string LibraryPath { get; set; } = "/config/xtream-library";
 
+    /// <summary>
+    /// Gets <see cref="LibraryPath"/> in the form used to tell whether two providers write to the
+    /// same folder: trimmed, without trailing separators, so "/media" and "/media/" are the same
+    /// folder. A path made only of separators stays "/", and a blank path stays empty. Never saved.
+    /// </summary>
+    public string EffectiveLibraryPath
+    {
+        get
+        {
+            string path = (LibraryPath ?? string.Empty).Trim();
+            string trimmed = path.TrimEnd('/', '\\');
+            return trimmed.Length == 0 && path.Length > 0 ? "/" : trimmed;
+        }
+    }
+
     // =====================
     // Content
     // =====================

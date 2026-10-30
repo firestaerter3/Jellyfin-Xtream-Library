@@ -223,6 +223,33 @@ public class UnreadCategoryKeepTests : IDisposable
     }
 
     [Fact]
+    public async Task AMovieKeptForAnUnreadCategory_KeepsItsPrimary_WhenANewStreamSharesTheName()
+    {
+        // 101 holds the plain file. Its category then comes back empty, and in the same run a new
+        // stream 202 with the same name appears and writes an alternative next to it. 101 is kept
+        // for its unread category, so it is not gone, and 202 must not take its primary over
+        // (#175 merged with #178).
+        _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<StreamInfo> { Movie(101, "Shared (2020)", 1) });
+        _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 2, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<StreamInfo> { Movie(201, "Gamma (2019)", 2) });
+        await RunSyncAsync(syncMovies: true, syncSeries: false, forceFullSync: true).ConfigureAwait(true);
+
+        var folder = Path.GetDirectoryName(MovieFile("Shared (2020)"))!;
+        var primary = Path.Combine(folder, "Shared (2020).strm");
+        File.ReadAllText(primary).Should().EndWith("/101.mp4");
+
+        _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<StreamInfo>());
+        _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 2, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<StreamInfo> { Movie(201, "Gamma (2019)", 2), Movie(202, "Shared (2020)", 2) });
+        await RunSyncAsync(syncMovies: true, syncSeries: false, forceFullSync: true).ConfigureAwait(true);
+
+        File.ReadAllText(primary).Should().EndWith("/101.mp4", "101 was kept for its unread category, so it still holds its primary");
+        File.Exists(Path.Combine(folder, "Shared (2020) - 202.strm")).Should().BeTrue("the new stream sits next to it");
+    }
+
+    [Fact]
     public async Task IncrementalSync_KeepsTheFilesToo()
     {
         // Same exclusion list each run, so the second run is incremental: the default setup, where

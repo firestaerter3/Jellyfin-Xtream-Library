@@ -178,6 +178,40 @@ public class PluginConfigurationTests
         config.HasDuplicateLibraryPaths.Should().BeTrue();
     }
 
+    [Theory]
+    [InlineData("/media", "/media/")]
+    [InlineData("/media/", "/media//")]
+    [InlineData("/media", " /MEDIA ")]
+    [InlineData("C:\\media", "C:\\media\\")]
+    public void Validate_DuplicateLibraryPaths_IgnoresSeparatorsCaseAndWhitespace(string first, string second)
+    {
+        var config = new PluginConfiguration();
+        config.Providers.Add(new ProviderConfig { BaseUrl = "http://p1.com", LibraryPath = first });
+        config.Providers.Add(new ProviderConfig { BaseUrl = "http://p2.com", LibraryPath = second });
+        config.Validate();
+        config.HasDuplicateLibraryPaths.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_BlankLibraryPaths_AreNotDuplicates()
+    {
+        var config = new PluginConfiguration();
+        config.Providers.Add(new ProviderConfig { BaseUrl = "http://p1.com", LibraryPath = string.Empty });
+        config.Providers.Add(new ProviderConfig { BaseUrl = "http://p2.com", LibraryPath = "  " });
+        config.Validate();
+        config.HasDuplicateLibraryPaths.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("/media", "/media")]
+    [InlineData("/media/", "/media")]
+    [InlineData("  /media//  ", "/media")]
+    [InlineData("/", "/")]
+    [InlineData("C:\\media\\", "C:\\media")]
+    [InlineData("  ", "")]
+    public void EffectiveLibraryPath_DropsWhitespaceAndTrailingSeparators(string configured, string expected)
+        => new ProviderConfig { LibraryPath = configured }.EffectiveLibraryPath.Should().Be(expected);
+
     [Fact]
     public void Validate_NoDuplicateLibraryPaths_WhenPathsDistinct()
     {
