@@ -5604,6 +5604,35 @@ public partial class StrmSyncService
     private static partial Regex EmptyBracketsPattern();
 
     /// <summary>
+    /// Clears what the incremental filter and the series smart skip compare, so the next run that
+    /// lists the item rewrites its files. Used on entries carried over after a login change.
+    /// </summary>
+    /// <param name="condition">Whether to clear them.</param>
+    /// <param name="entry">The carried entry; changed in place.</param>
+    /// <returns>The entry.</returns>
+    private static MovieSnapshot MarkRewriteIf(bool condition, MovieSnapshot entry)
+    {
+        if (condition)
+        {
+            entry.Checksum = string.Empty;
+        }
+
+        return entry;
+    }
+
+    /// <inheritdoc cref="MarkRewriteIf(bool, MovieSnapshot)"/>
+    private static SeriesSnapshot MarkRewriteIf(bool condition, SeriesSnapshot entry)
+    {
+        if (condition)
+        {
+            entry.Checksum = string.Empty;
+            entry.EpisodeCount = 0;
+        }
+
+        return entry;
+    }
+
+    /// <summary>
     /// Whether the provider login differs from the one the snapshot was written with. A snapshot
     /// from before the login was recorded says nothing, so it counts as unchanged rather than
     /// sending every existing library through a full re-read on upgrade.
@@ -5669,13 +5698,20 @@ public partial class StrmSyncService
                 SeriesIdsFromXtreamApi = SeriesIdsFromXtreamApiAfterRun(provider.SyncSeries, carryForwardFrom),
             };
 
+            // Entries carried over below were not written this run. After a login change their
+            // files still hold the old login, while the snapshot now records the new one, so no
+            // later run would see a reason to rewrite them. They go in without a checksum (and a
+            // series without an episode count), which makes the next run that lists them treat
+            // them as changed and rewrite their files (CodeRabbit on #190).
+            bool carriedFilesHoldOldLogin = LoginChanged(provider, carryForwardFrom);
+
             // Movies were not synced this run, so allMovies is empty and rebuilding from it would
             // drop every identity the previous run recorded, taking the grouping map with it.
             if (!provider.SyncMovies && carryForwardFrom != null)
             {
                 foreach (var carried in carryForwardFrom.Movies)
                 {
-                    snapshot.Movies[carried.Key] = carried.Value;
+                    snapshot.Movies[carried.Key] = MarkRewriteIf(carriedFilesHoldOldLogin, carried.Value);
                 }
 
                 snapshot.UnreadMovieCategoriesSince = new Dictionary<int, DateTime>(carryForwardFrom.UnreadMovieCategoriesSince);
@@ -5685,7 +5721,7 @@ public partial class StrmSyncService
             {
                 foreach (var carried in carryForwardFrom.Series)
                 {
-                    snapshot.Series[carried.Key] = carried.Value;
+                    snapshot.Series[carried.Key] = MarkRewriteIf(carriedFilesHoldOldLogin, carried.Value);
                 }
 
                 snapshot.UnreadSeriesCategoriesSince = new Dictionary<int, DateTime>(carryForwardFrom.UnreadSeriesCategoriesSince);
@@ -5754,12 +5790,12 @@ public partial class StrmSyncService
             // the next run that the category had items (GitHub #171).
             foreach (var (streamId, kept) in unread.KeptMovies)
             {
-                snapshot.Movies.TryAdd(streamId, kept);
+                snapshot.Movies.TryAdd(streamId, MarkRewriteIf(carriedFilesHoldOldLogin, kept));
             }
 
             foreach (var (seriesId, kept) in unread.KeptSeries)
             {
-                snapshot.Series.TryAdd(seriesId, kept);
+                snapshot.Series.TryAdd(seriesId, MarkRewriteIf(carriedFilesHoldOldLogin, kept));
             }
 
             if (provider.SyncMovies)

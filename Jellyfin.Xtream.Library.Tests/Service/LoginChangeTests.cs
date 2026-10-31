@@ -107,6 +107,23 @@ public class LoginChangeTests : IDisposable
         StrmUrls().Should().OnlyContain(u => u.StartsWith("http://new-provider.test/", StringComparison.Ordinal) && u.Contains("/u/new-pass/", StringComparison.Ordinal), "the files must not keep the old provider").And.HaveCount(2);
     }
 
+    /// <summary>
+    /// A run with movie and series sync off writes no files but still records the new login, and
+    /// carries the old entries over. Without marking those entries, the run that turns sync back on
+    /// saw the same login and unchanged items, and kept every file on the old one (CodeRabbit on #190).
+    /// </summary>
+    [Fact]
+    public async Task ANewPassword_SavedWhileSyncIsOff_StillReachesEveryFile_WhenSyncIsBackOn()
+    {
+        await RunSyncAsync("old-pass", smartSkip: true).ConfigureAwait(true);
+        await RunSyncAsync("new-pass", smartSkip: true, syncContent: false).ConfigureAwait(true);
+        StrmUrls().Should().OnlyContain(u => u.Contains("/u/old-pass/", StringComparison.Ordinal), "nothing is written while sync is off");
+
+        await RunSyncAsync("new-pass", smartSkip: true).ConfigureAwait(true);
+
+        StrmUrls().Should().OnlyContain(u => u.Contains("/u/new-pass/", StringComparison.Ordinal), "the carried-over entries were never rewritten").And.HaveCount(2);
+    }
+
     [Fact]
     public async Task TheSameLogin_LeavesTheNextSyncIncremental()
     {
@@ -132,7 +149,7 @@ public class LoginChangeTests : IDisposable
             .Select(f => File.ReadAllText(f).Trim())
             .ToList();
 
-    private async Task<SyncResult> RunSyncAsync(string password, bool smartSkip, string baseUrl = "http://provider.test")
+    private async Task<SyncResult> RunSyncAsync(string password, bool smartSkip, string baseUrl = "http://provider.test", bool syncContent = true)
     {
         var appPaths = new Mock<IServerApplicationPaths>();
         appPaths.Setup(p => p.PluginConfigurationsPath).Returns(_libraryPath);
@@ -152,8 +169,8 @@ public class LoginChangeTests : IDisposable
                 Username = "u",
                 Password = password,
                 LibraryPath = _libraryPath,
-                SyncMovies = true,
-                SyncSeries = true,
+                SyncMovies = syncContent,
+                SyncSeries = syncContent,
                 CleanupOrphans = true,
                 OrphanSafetyThreshold = 1.0,
 
