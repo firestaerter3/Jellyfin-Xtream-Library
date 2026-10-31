@@ -317,16 +317,39 @@ public class StrmSyncServiceTests
     [InlineData("Jackass 3D (2010)", "Jackass 3D", null)]
     [InlineData("Step Up 3D", "Step Up 3D", null)]
     [InlineData("3D", "3D", null)]
+    [InlineData("3D_Avatar", "Avatar", "3D")]
+    [InlineData("Avatar_HSBS", "Avatar", "HSBS")]
+    [InlineData("Subsbsidiary", "Subsbsidiary", null)]
     public void StereoTags_LeaveTheTitle_AndBecomeTheVersionLabel(string input, string expectedName, string? expectedLabel)
     {
-        StrmSyncService.SanitizeFileName(input).Should().Be(expectedName);
+        StrmSyncService.SanitizeFileName(input, isMovie: true).Should().Be(expectedName);
         StrmSyncService.ExtractVersionLabel(input).Should().Be(expectedLabel);
     }
 
     [Fact]
     public void AStereoVersion_GetsTheSameFolderNameAsThePlainMovie()
-        => StrmSyncService.SanitizeFileName("3D Spider-Man: Far from Home (2019)")
-            .Should().Be(StrmSyncService.SanitizeFileName("Spider-Man: Far from Home (2019)"));
+        => StrmSyncService.SanitizeFileName("3D Spider-Man: Far from Home (2019)", isMovie: true)
+            .Should().Be(StrmSyncService.SanitizeFileName("Spider-Man: Far from Home (2019)", isMovie: true));
+
+    // CodeRabbit on #191: the year sat before the tag, out of reach of the end-anchored year match.
+    [Theory]
+    [InlineData("Avatar (2009) HSBS")]
+    [InlineData("Avatar (2009) [3D]")]
+    [InlineData("3D Avatar (2009)")]
+    public void AStereoTag_DoesNotHideTheYear(string input)
+        => StrmSyncService.ExtractYear(input).Should().Be(2009);
+
+    // CodeRabbit on #191: a tag with nothing but a year or quality tag beside it is the whole title.
+    [Theory]
+    [InlineData("3D (2024)", "3D")]
+    [InlineData("3D 1080p", "3D")]
+    public void AStereoTagWithOnlyMetadataBesideIt_StaysTheTitle(string input, string expected)
+        => StrmSyncService.SanitizeFileName(input, isMovie: true).Should().Be(expected);
+
+    // CodeRabbit on #191: a series has no version picker, so "3D Show" and "Show" stay two series.
+    [Fact]
+    public void SeriesTitles_KeepTheirStereoTag()
+        => StrmSyncService.SanitizeFileName("3D Show").Should().Be("3D Show");
 
     [Theory]
     [InlineData("Movie BluRay", "Movie")]

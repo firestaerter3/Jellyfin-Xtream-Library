@@ -1604,7 +1604,7 @@ public partial class StrmSyncService
             {
                 var moviesToPreFetch = batchMovies.Where(m =>
                 {
-                    string movieName = SanitizeFileName(m.Stream.Name, provider.CustomTitleRemoveTerms);
+                    string movieName = SanitizeFileName(m.Stream.Name, provider.CustomTitleRemoveTerms, isMovie: true);
                     int? year = ExtractYear(m.Stream.Name);
                     string baseName = year.HasValue ? $"{movieName} ({year})" : movieName;
                     if (tmdbOverrides.ContainsKey(baseName))
@@ -1660,7 +1660,7 @@ public partial class StrmSyncService
                             finally
                             {
                                 var count = Interlocked.Increment(ref preFetched);
-                                string name = SanitizeFileName(movieEntry.Stream.Name, provider.CustomTitleRemoveTerms);
+                                string name = SanitizeFileName(movieEntry.Stream.Name, provider.CustomTitleRemoveTerms, isMovie: true);
                                 CurrentProgress.MoviePhase = $"Fetching movie info (batch {batchIndex + 1}/{totalBatches}): {name} ({count}/{preFetchTotal})";
                             }
                         }).ConfigureAwait(false);
@@ -1730,7 +1730,7 @@ public partial class StrmSyncService
                 // depend on how the parallel loop below happened to schedule them.
                 foreach (var candidate in batchMovies.OrderBy(m => m.Stream.StreamId))
                 {
-                    string candidateName = SanitizeFileName(candidate.Stream.Name, provider.CustomTitleRemoveTerms);
+                    string candidateName = SanitizeFileName(candidate.Stream.Name, provider.CustomTitleRemoveTerms, isMovie: true);
                     int? candidateYear = ExtractYear(candidate.Stream.Name);
                     string candidateBaseName = candidateYear.HasValue ? $"{candidateName} ({candidateYear})" : candidateName;
 
@@ -1779,7 +1779,7 @@ public partial class StrmSyncService
 
                 try
                 {
-                    string movieName = SanitizeFileName(stream.Name, provider.CustomTitleRemoveTerms);
+                    string movieName = SanitizeFileName(stream.Name, provider.CustomTitleRemoveTerms, isMovie: true);
                     int? year = ExtractYear(stream.Name);
                     string baseName = year.HasValue ? $"{movieName} ({year})" : movieName;
                     string? versionLabel = ExtractVersionLabel(stream.Name);
@@ -3732,7 +3732,7 @@ public partial class StrmSyncService
         return targetFolders;
     }
 
-    internal static string SanitizeFileName(string? name, string? customRemoveTerms = null)
+    internal static string SanitizeFileName(string? name, string? customRemoveTerms = null, bool isMovie = false)
     {
         if (string.IsNullOrEmpty(name))
         {
@@ -3761,8 +3761,12 @@ public partial class StrmSyncService
         // Remove a dash-style language prefix like "EN - " at start of name (GitHub #185)
         cleanName = PrefixLanguageDashPattern().Replace(cleanName, string.Empty);
 
-        // Remove 3D and side-by-side tags; they become the version label (GitHub #186)
-        cleanName = StripStereoTags(cleanName, null);
+        // Remove 3D and side-by-side tags; they become the version label (GitHub #186). Movies
+        // only: a series has no version picker, and "3D Show" and "Show" must stay two series.
+        if (isMovie)
+        {
+            cleanName = StripStereoTags(cleanName, null);
+        }
 
         // Remove language/country tags like "| UK |", "┃EN┃", "[DE]", "| FR |", etc.
         cleanName = LanguageTagPattern().Replace(cleanName, string.Empty);
@@ -3900,7 +3904,14 @@ public partial class StrmSyncService
             return string.Empty;
         });
 
-        if (found.Count == 0 || string.IsNullOrWhiteSpace(EmptyBracketsPattern().Replace(cleaned, string.Empty)))
+        // Judge what is left without the year and the other tags, which cleanup removes later anyway:
+        // "3D (2024)" or "3D 1080p" has no title besides the tag either (CodeRabbit on #191).
+        string rest = YearPattern().Replace(cleaned, string.Empty);
+        rest = DashYearSuffixPattern().Replace(rest, string.Empty);
+        rest = CodecTagPattern().Replace(rest, string.Empty);
+        rest = QualityTagPattern().Replace(rest, string.Empty);
+        rest = SourceTagPattern().Replace(rest, string.Empty);
+        if (found.Count == 0 || string.IsNullOrWhiteSpace(EmptyBracketsPattern().Replace(rest, string.Empty)))
         {
             return name;
         }
@@ -3912,7 +3923,7 @@ public partial class StrmSyncService
     private static string NormaliseStereoTag(string tag)
         => tag.Equals("3D", StringComparison.OrdinalIgnoreCase)
             ? "3D"
-            : tag.Replace("-", string.Empty, StringComparison.Ordinal).Replace(" ", string.Empty, StringComparison.Ordinal).ToUpperInvariant() switch
+            : tag.Replace("-", string.Empty, StringComparison.Ordinal).Replace(" ", string.Empty, StringComparison.Ordinal).Replace("_", string.Empty, StringComparison.Ordinal).ToUpperInvariant() switch
             {
                 "SBS" => "SBS",
                 _ => "HSBS",
@@ -4075,7 +4086,7 @@ public partial class StrmSyncService
 
     /// <summary>
     /// Cleans the provider's original title for use as a search term. Not
-    /// <see cref="SanitizeFileName(string?, string?)"/>: that one is for file names, turns "Face/Off"
+    /// <see cref="SanitizeFileName(string?, string?, bool)"/>: that one is for file names, turns "Face/Off"
     /// into "Face_Off" and a colon into " - ", and returns "Unknown" for a placeholder, which
     /// would then be searched as a title. Only a trailing year is removed here.
     /// </summary>
@@ -4098,6 +4109,10 @@ public partial class StrmSyncService
         {
             return null;
         }
+
+        // A stereo tag after the year ("Avatar (2009) HSBS") would hide it from the end-anchored
+        // patterns below, and the movie would land in a folder without its year (CodeRabbit on #191).
+        name = StripStereoTags(name, null);
 
         // Try parenthetical year first: "Movie (2025)"
         var match = YearPattern().Match(name);
@@ -4353,7 +4368,7 @@ public partial class StrmSyncService
         StrmOwnerResolver owners,
         bool ownFilesOnly = false)
     {
-        string movieName = SanitizeFileName(title, provider.CustomTitleRemoveTerms);
+        string movieName = SanitizeFileName(title, provider.CustomTitleRemoveTerms, isMovie: true);
         int? year = ExtractYear(title);
         string baseName = year.HasValue ? $"{movieName} ({year})" : movieName;
 
@@ -5630,12 +5645,13 @@ public partial class StrmSyncService
     private static partial Regex QualityTagPattern();
 
     // A 3D or side-by-side tag at the start of a title: "3D Spider-Man", "SBS - Avatar" (GitHub #186).
-    [GeneratedRegex(@"^\s*(?<tag>3D|H-?SBS|Half[- ]SBS|SBS)\b\s*[-:|]?\s*", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^[\s_]*(?<tag>3D|H-?SBS|Half[- _]SBS|SBS)(?![A-Za-z0-9])[\s_]*[-:|]?[\s_]*", RegexOptions.IgnoreCase)]
     private static partial Regex StereoPrefixPattern();
 
     // A side-by-side tag anywhere, or 3D in brackets: "Avatar HSBS", "Avatar [3D]". A bare 3D at the
     // end is left alone, because it is usually part of the title ("Jackass 3D").
-    [GeneratedRegex(@"\b(?<tag>H-?SBS|Half[- ]SBS|SBS)\b|[\[\(]\s*(?<tag>3D)\s*[\]\)]", RegexOptions.IgnoreCase)]
+    // Underscores count as separators too ("Avatar_HSBS"), but a tag inside a word does not.
+    [GeneratedRegex(@"(?<![A-Za-z0-9])(?<tag>H-?SBS|Half[- _]SBS|SBS)(?![A-Za-z0-9])|[\[\(]\s*(?<tag>3D)\s*[\]\)]", RegexOptions.IgnoreCase)]
     private static partial Regex StereoTagPattern();
 
     // Matches source tags like "BluRay", "BRRip", "WEBRip", "WEB-DL", "HDTV", "DVDRip", "REMUX", etc.
