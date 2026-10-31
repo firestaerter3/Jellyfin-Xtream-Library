@@ -63,6 +63,7 @@ test('the question says what stays behind only when the last provider goes', () 
     assert.match(last, /^Remove "Old"\?/);
     assert.match(last, /click Save/);
     assert.match(last, /Delete Movies\/Series Library/);
+    assert.match(last, /Orphan Safety Threshold, and a library of ten files or fewer has no such limit/);
     assert.match(last, /Channel Overrides/);
 
     const one = withProviders([{ Name: 'A' }, { Name: 'B' }], 0).removeProviderPrompt();

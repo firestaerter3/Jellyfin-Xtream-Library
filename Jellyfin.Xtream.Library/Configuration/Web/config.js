@@ -127,7 +127,7 @@ var XtreamLibraryConfig = (function () {
         if (this.providers.length <= 1) {
             // GitHub #184: the only provider can be removed too, to start over with another one.
             text += '\n\nIt is replaced by an empty provider using the same library path. Fill in the new provider and click Save to keep the change. '
-                + 'The movie and series files already there are not removed now. Use Delete Movies/Series Library for a clean start: the next sync only removes old files as orphans while they are a small part of the library. '
+                + 'The movie and series files already there are not removed now. Use Delete Movies/Series Library for a clean start: the next sync only removes old files as orphans while they stay under the Orphan Safety Threshold, and a library of ten files or fewer has no such limit. '
                 + 'Live TV channel selection and Channel Overrides are kept; they refer to channel ids, so with another provider they usually need to be set again.';
         }
 
