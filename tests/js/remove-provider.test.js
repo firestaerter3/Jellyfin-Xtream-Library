@@ -105,3 +105,39 @@ test('a category answer for the previous provider is dropped', async () => {
     assert.deepStrictEqual(config.vodCategories, []);
     assert.strictEqual(rendered, false);
 });
+
+// CodeRabbit on #189: the same for the movies or series of an expanded category. A request still
+// running for the previous provider wrote its items into the next provider's cache, where a
+// category with the same id would show them.
+test('an item answer for the previous provider is dropped', async () => {
+    const config = loadConfig();
+    config.providers = [{ Name: 'Old' }];
+    config.activeProviderIndex = 0;
+    config.categoryLoadGeneration = 1;
+    config.contentItemsByCategory = { vod: {}, series: {} };
+
+    let answer;
+    const previous = { fetch: global.fetch, ApiClient: global.ApiClient };
+    global.ApiClient = { getUrl: (path) => path, accessToken: () => 'token' };
+    global.fetch = () => new Promise((resolve) => { answer = resolve; });
+    const restore = withDocument({}, { '.content-item-list[data-content-type="vod"][data-cat-id="7"]': [element()] });
+    let rendered = false;
+    config.renderContentItems = () => { rendered = true; };
+    try {
+        config.fetchContentItemsForCategory('vod', 7);
+
+        // The provider changes while the request is out, as loadProviderIntoUI does.
+        config.categoryLoadGeneration++;
+        config.contentItemsByCategory = { vod: {}, series: {} };
+
+        answer({ ok: true, json: () => [{ StreamId: 1, Name: 'Old provider film' }] });
+        await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+        restore();
+        global.fetch = previous.fetch;
+        global.ApiClient = previous.ApiClient;
+    }
+
+    assert.deepStrictEqual(config.contentItemsByCategory.vod, {});
+    assert.strictEqual(rendered, false);
+});

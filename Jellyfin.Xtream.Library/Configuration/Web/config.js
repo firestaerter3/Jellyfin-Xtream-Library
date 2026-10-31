@@ -1767,6 +1767,7 @@ var XtreamLibraryConfig = (function () {
 
         const endpoint = type === 'vod' ? 'XtreamLibrary/Streams/Vod' : 'XtreamLibrary/Series/List';
         const label = type === 'vod' ? 'movies' : 'series';
+        const generation = self.categoryLoadGeneration;
         panel.innerHTML = '<div class="fieldDescription" style="padding: 4px 0;">Loading ' + label + '...</div>';
 
         fetch(ApiClient.getUrl(endpoint) + '?categoryId=' + encodeURIComponent(categoryId) + '&providerIndex=' + self.activeProviderIndex, {
@@ -1777,10 +1778,19 @@ var XtreamLibraryConfig = (function () {
                 return r.json();
             })
             .then(function (items) {
+                // Items of the provider shown before must not land in this one's cache.
+                if (generation !== self.categoryLoadGeneration) {
+                    return;
+                }
+
                 self.contentItemsByCategory[type][categoryId] = items || [];
                 self.renderContentItems(type, categoryId);
             })
             .catch(function (error) {
+                if (generation !== self.categoryLoadGeneration) {
+                    return;
+                }
+
                 console.error('Failed to load ' + label + ' for category ' + categoryId + ':', error);
                 panel.innerHTML = '<div style="color: #d33; padding: 4px 0;">Failed to load ' + label + '. ' +
                     '<button type="button" class="content-item-retry" data-cat-id="' + categoryId + '" data-content-type="' + type + '" ' +
