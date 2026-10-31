@@ -1010,6 +1010,14 @@ public partial class StrmSyncService
                     previousSnapshot = null;
                 }
 
+                // Force full sync if the login changed: every STRM URL carries it, and an incremental
+                // run would leave the unchanged items pointing at the old one.
+                if (previousSnapshot != null && LoginChanged(provider, previousSnapshot))
+                {
+                    _logger.LogInformation("Provider login changed, forcing full sync so every STRM file gets the new one");
+                    previousSnapshot = null;
+                }
+
                 // Force full sync if folder structure config changed
                 if (previousSnapshot != null)
                 {
@@ -2660,9 +2668,22 @@ public partial class StrmSyncService
         CancellationToken cancellationToken)
     {
         var connectionInfo = new ConnectionInfo(provider.BaseUrl, provider.Username, provider.Password);
+
+        // Every episode URL this provider writes starts with this (see the write loop below).
+        var seriesUrlPrefix = $"{connectionInfo.BaseUrl}/series/{connectionInfo.UserName}/{connectionInfo.Password}/";
         var globalConfig = Plugin.Instance.Configuration;
         var categories = await _client.GetSeriesCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
         var processedSeriesIds = new ConcurrentDictionary<int, bool>();
+
+        // Smart skip judges a series by its snapshot entry or its file count, not by the URLs in its
+        // files, so after a login change it would keep the old login in every episode file.
+        var loginChanged = LoginChanged(provider, hintSnapshot);
+        var smartSkipSeries = provider.SmartSkipExisting && !loginChanged;
+        if (loginChanged && provider.SmartSkipExisting)
+        {
+            _logger.LogInformation("Provider login changed, re-reading every series once so its episode files get the new one");
+        }
+
         var enableDispatcharrMode = provider.EnableDispatcharrMode && !string.IsNullOrEmpty(provider.DispatcharrApiUser);
         if (enableDispatcharrMode)
         {
@@ -3020,7 +3041,7 @@ public partial class StrmSyncService
                 // Determine which series will NOT be smart-skipped (need API call)
                 var seriesToPreFetch = batchSeries.Where(s =>
                 {
-                    if (!provider.SmartSkipExisting || hintSnapshot == null)
+                    if (!smartSkipSeries || hintSnapshot == null)
                     {
                         return true;
                     }
@@ -3131,7 +3152,7 @@ public partial class StrmSyncService
                     // Check if all target folders already have this series with matching episode count
                     // Also verify LastModified hasn't changed to catch new episodes
                     // Compare at second precision since LastModified comes from Unix timestamp
-                    if (provider.SmartSkipExisting && hintSnapshot != null &&
+                    if (smartSkipSeries && hintSnapshot != null &&
                         hintSnapshot.Series.TryGetValue(series.SeriesId, out var hintEntry) &&
                         hintEntry.EpisodeCount > 0 &&
                         Math.Abs((series.LastModified.GetValueOrDefault() - hintEntry.LastModified).TotalSeconds) < 1)
@@ -3297,7 +3318,7 @@ public partial class StrmSyncService
                     }
 
                     // Smart skip check with exact folder name (skip when no existing folders - initial scan)
-                    if (provider.SmartSkipExisting && existingSeriesFolderCounts.Count > 0)
+                    if (smartSkipSeries && existingSeriesFolderCounts.Count > 0)
                     {
                         bool anyNeedsSync = false;
                         foreach (var targetFolder in targetFolders)
@@ -3330,6 +3351,17 @@ public partial class StrmSyncService
                                 path => Directory.GetFiles(path, "*.strm", SearchOption.AllDirectories));
 
                             if (existingStrms.Length == 0)
+                            {
+                                anyNeedsSync = true;
+                                break;
+                            }
+
+                            // The count says nothing about whose files these are. After another
+                            // provider address or login, a same-named series would keep every
+                            // episode on the old one. Every file is checked, not only the first: a
+                            // run that rewrote some episodes and then failed on the series leaves a
+                            // mix, and the count alone would keep the rest on the old one.
+                            if (existingStrms.Any(strm => ReadStrmUrl(strm)?.StartsWith(seriesUrlPrefix, StringComparison.Ordinal) != true))
                             {
                                 anyNeedsSync = true;
                                 break;
@@ -4711,6 +4743,68 @@ public partial class StrmSyncService
     [GeneratedRegex(@"\[\s*\]|\(\s*\)")]
     private static partial Regex EmptyBracketsPattern();
 
+    /// <summary>
+    /// Reads the URL from a STRM file, without trailing whitespace. Null when the file cannot be
+    /// read or is empty.
+    /// </summary>
+    private static string? ReadStrmUrl(string path)
+    {
+        try
+        {
+            var url = File.ReadAllText(path).TrimEnd();
+            return url.Length == 0 ? null : url;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Clears what the incremental filter and the series smart skip compare, so the next run that
+    /// lists the item rewrites its files. Used on entries carried over after a login change.
+    /// </summary>
+    /// <param name="condition">Whether to clear them.</param>
+    /// <param name="entry">The carried entry; changed in place.</param>
+    /// <returns>The entry.</returns>
+    private static MovieSnapshot MarkRewriteIf(bool condition, MovieSnapshot entry)
+    {
+        if (condition)
+        {
+            entry.Checksum = string.Empty;
+        }
+
+        return entry;
+    }
+
+    /// <inheritdoc cref="MarkRewriteIf(bool, MovieSnapshot)"/>
+    private static SeriesSnapshot MarkRewriteIf(bool condition, SeriesSnapshot entry)
+    {
+        if (condition)
+        {
+            entry.Checksum = string.Empty;
+            entry.EpisodeCount = 0;
+        }
+
+        return entry;
+    }
+
+    /// <summary>
+    /// Whether the provider login differs from the one the snapshot was written with. A snapshot
+    /// from before the login was recorded says nothing, so it counts as unchanged rather than
+    /// sending every existing library through a full re-read on upgrade.
+    /// </summary>
+    /// <param name="provider">The provider configuration.</param>
+    /// <param name="snapshot">The previous snapshot, if any.</param>
+    /// <returns>True when a recorded login differs from the configured one.</returns>
+    internal static bool LoginChanged(ProviderConfig provider, ContentSnapshot? snapshot)
+        => snapshot?.LoginFingerprint is { Length: > 0 } recorded
+            && !string.Equals(recorded, SnapshotService.CalculateLoginFingerprint(provider), StringComparison.Ordinal);
+
     private async Task SaveSnapshotAsync(
         ProviderConfig provider,
         string providerKey,
@@ -4734,8 +4828,16 @@ public partial class StrmSyncService
             var snapshot = new ContentSnapshot
             {
                 ProviderUrl = provider.BaseUrl,
-                ConfigFingerprint = SnapshotService.CalculateConfigFingerprint(provider, Plugin.Instance.Configuration.EnableMetadataLookup)
+                ConfigFingerprint = SnapshotService.CalculateConfigFingerprint(provider, Plugin.Instance.Configuration.EnableMetadataLookup),
+                LoginFingerprint = SnapshotService.CalculateLoginFingerprint(provider),
             };
+
+            // Entries carried over below were not written this run. After a login change their
+            // files still hold the old login, while the snapshot now records the new one, so no
+            // later run would see a reason to rewrite them. They go in without a checksum (and a
+            // series without an episode count), which makes the next run that lists them treat
+            // them as changed and rewrite their files.
+            bool carriedFilesHoldOldLogin = LoginChanged(provider, carryForwardFrom);
 
             // Movies were not synced this run, so allMovies is empty and rebuilding from it would
             // drop every identity the previous run recorded, taking the grouping map with it.
@@ -4743,7 +4845,7 @@ public partial class StrmSyncService
             {
                 foreach (var carried in carryForwardFrom.Movies)
                 {
-                    snapshot.Movies[carried.Key] = carried.Value;
+                    snapshot.Movies[carried.Key] = MarkRewriteIf(carriedFilesHoldOldLogin, carried.Value);
                 }
             }
 
@@ -4751,7 +4853,7 @@ public partial class StrmSyncService
             {
                 foreach (var carried in carryForwardFrom.Series)
                 {
-                    snapshot.Series[carried.Key] = carried.Value;
+                    snapshot.Series[carried.Key] = MarkRewriteIf(carriedFilesHoldOldLogin, carried.Value);
                 }
             }
 

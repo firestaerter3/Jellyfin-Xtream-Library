@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Xtream.Library.Client;
 using Jellyfin.Xtream.Library.Client.Models;
 using Jellyfin.Xtream.Library.Service.Models;
 using MediaBrowser.Controller;
@@ -130,6 +131,19 @@ public class SnapshotService : IDisposable
     }
 
 #pragma warning restore CA5351
+
+    /// <summary>
+    /// A hash of the provider login, compared between syncs to notice a changed username or
+    /// password. SHA-256, since unlike the other fingerprints it is derived from a password.
+    /// </summary>
+    /// <param name="provider">The provider configuration.</param>
+    /// <returns>The hash as a hex string.</returns>
+    public static string CalculateLoginFingerprint(ProviderConfig provider)
+    {
+        var connection = new ConnectionInfo(provider.BaseUrl, provider.Username, provider.Password);
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(connection.UserName + "\n" + connection.Password));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
 
     /// <summary>
     /// Loads the most recent valid snapshot for the given provider.
