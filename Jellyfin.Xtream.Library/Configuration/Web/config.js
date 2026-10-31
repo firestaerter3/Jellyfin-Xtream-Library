@@ -119,6 +119,41 @@ var XtreamLibraryConfig = (function () {
     },
 
     // Populates all per-provider UI fields from providers[index]
+    /** The question asked before the active provider is removed. */
+    removeProviderPrompt: function () {
+        var idx = this.activeProviderIndex;
+        var name = this.providers[idx].Name || ('Provider ' + (idx + 1));
+        var text = 'Remove "' + name + '"? This cannot be undone.';
+        if (this.providers.length <= 1) {
+            // GitHub #184: the only provider can be removed too, to start over with another one.
+            text += '\n\nIt is replaced by an empty provider using the same library path. Fill in the new provider and click Save to keep the change. '
+                + 'The movie and series files already there are not removed now. Use Delete Movies/Series Library for a clean start: the next sync only removes old files as orphans while they stay under the Orphan Safety Threshold, and a library of ten files or fewer has no such limit. '
+                + 'Live TV channel selection and Channel Overrides are kept; they refer to channel ids, so with another provider they usually need to be set again.';
+        }
+
+        return text;
+    },
+
+    /**
+     * Removes the active provider. The last one is replaced by an empty provider, since the page
+     * needs one to show, and it keeps the library path the Jellyfin libraries already point at.
+     */
+    removeActiveProvider: function () {
+        var idx = this.activeProviderIndex;
+        var removed = this.providers.splice(idx, 1)[0];
+        if (this.providers.length === 0) {
+            var fresh = this.makeDefaultProvider(0);
+            if (removed && removed.LibraryPath) {
+                fresh.LibraryPath = removed.LibraryPath;
+            }
+
+            this.providers.push(fresh);
+        }
+
+        this.renderProviderSelector();
+        this.loadProviderIntoUI(0);
+    },
+
     loadProviderIntoUI: function (index) {
         var self = this;
         var p = this.providers[index];
@@ -143,6 +178,12 @@ var XtreamLibraryConfig = (function () {
         self.excludedSeriesIds = p.ExcludedSeriesIds || [];
         self.contentItemsByCategory = { vod: {}, series: {} };
         self.expandedContentCategories = { vod: {}, series: {} };
+        // The category lists belong to the provider that was shown. Drop them, and make a request
+        // still running for that provider land nowhere, so its categories cannot end up in this
+        // provider's selection (CodeRabbit on #189).
+        self.vodCategories = [];
+        self.seriesCategories = [];
+        self.categoryLoadGeneration = (self.categoryLoadGeneration || 0) + 1;
 
         document.getElementById('txtTmdbFolderIdOverrides').value = p.TmdbFolderIdOverrides || '';
         document.getElementById('txtTvdbFolderIdOverrides').value = p.TvdbFolderIdOverrides || '';
@@ -1306,6 +1347,7 @@ var XtreamLibraryConfig = (function () {
         const statusSpan = document.getElementById('vodCategoryLoadStatus');
         statusSpan.innerHTML = '<span style="color: orange;">Loading...</span>';
         const self = this;
+        const generation = this.categoryLoadGeneration;
 
         fetch(ApiClient.getUrl('XtreamLibrary/Categories/Vod') + '?providerIndex=' + this.activeProviderIndex, {
             method: 'GET',
@@ -1315,6 +1357,10 @@ var XtreamLibraryConfig = (function () {
         }).then(function (r) {
             return r.ok ? r.json() : Promise.reject(r);
         }).then(function (categories) {
+            if (generation !== self.categoryLoadGeneration) {
+                return;
+            }
+
             self.vodCategories = categories || [];
             var mode = document.getElementById('selMovieFolderMode').value;
             if (mode === 'Single') {
@@ -1326,6 +1372,10 @@ var XtreamLibraryConfig = (function () {
             }
             statusSpan.innerHTML = '<span style="color: green;">Loaded ' + self.vodCategories.length + ' categories</span>';
         }).catch(function (error) {
+            if (generation !== self.categoryLoadGeneration) {
+                return;
+            }
+
             console.error('Failed to load VOD categories:', error);
             statusSpan.innerHTML = '<span style="color: red;">Failed to load. Check credentials.</span>';
         });
@@ -1335,6 +1385,7 @@ var XtreamLibraryConfig = (function () {
         const statusSpan = document.getElementById('seriesCategoryLoadStatus');
         statusSpan.innerHTML = '<span style="color: orange;">Loading...</span>';
         const self = this;
+        const generation = this.categoryLoadGeneration;
 
         fetch(ApiClient.getUrl('XtreamLibrary/Categories/Series') + '?providerIndex=' + this.activeProviderIndex, {
             method: 'GET',
@@ -1344,6 +1395,10 @@ var XtreamLibraryConfig = (function () {
         }).then(function (r) {
             return r.ok ? r.json() : Promise.reject(r);
         }).then(function (categories) {
+            if (generation !== self.categoryLoadGeneration) {
+                return;
+            }
+
             self.seriesCategories = categories || [];
             var mode = document.getElementById('selSeriesFolderMode').value;
             if (mode === 'Single') {
@@ -1355,6 +1410,10 @@ var XtreamLibraryConfig = (function () {
             }
             statusSpan.innerHTML = '<span style="color: green;">Loaded ' + self.seriesCategories.length + ' categories</span>';
         }).catch(function (error) {
+            if (generation !== self.categoryLoadGeneration) {
+                return;
+            }
+
             console.error('Failed to load Series categories:', error);
             statusSpan.innerHTML = '<span style="color: red;">Failed to load. Check credentials.</span>';
         });
@@ -1708,6 +1767,7 @@ var XtreamLibraryConfig = (function () {
 
         const endpoint = type === 'vod' ? 'XtreamLibrary/Streams/Vod' : 'XtreamLibrary/Series/List';
         const label = type === 'vod' ? 'movies' : 'series';
+        const generation = self.categoryLoadGeneration;
         panel.innerHTML = '<div class="fieldDescription" style="padding: 4px 0;">Loading ' + label + '...</div>';
 
         fetch(ApiClient.getUrl(endpoint) + '?categoryId=' + encodeURIComponent(categoryId) + '&providerIndex=' + self.activeProviderIndex, {
@@ -1718,10 +1778,19 @@ var XtreamLibraryConfig = (function () {
                 return r.json();
             })
             .then(function (items) {
+                // Items of the provider shown before must not land in this one's cache.
+                if (generation !== self.categoryLoadGeneration) {
+                    return;
+                }
+
                 self.contentItemsByCategory[type][categoryId] = items || [];
                 self.renderContentItems(type, categoryId);
             })
             .catch(function (error) {
+                if (generation !== self.categoryLoadGeneration) {
+                    return;
+                }
+
                 console.error('Failed to load ' + label + ' for category ' + categoryId + ':', error);
                 panel.innerHTML = '<div style="color: #d33; padding: 4px 0;">Failed to load ' + label + '. ' +
                     '<button type="button" class="content-item-retry" data-cat-id="' + categoryId + '" data-content-type="' + type + '" ' +
@@ -3066,16 +3135,8 @@ function initXtreamLibraryConfig() {
     if (btnRemoveProvider) {
         btnRemoveProvider.addEventListener('click', function (e) {
             e.preventDefault();
-            if (XtreamLibraryConfig.providers.length <= 1) {
-                Dashboard.alert('At least one provider is required.');
-                return;
-            }
-            var idx = XtreamLibraryConfig.activeProviderIndex;
-            var name = XtreamLibraryConfig.providers[idx].Name || ('Provider ' + (idx + 1));
-            if (!confirm('Remove "' + name + '"? This cannot be undone.')) return;
-            XtreamLibraryConfig.providers.splice(idx, 1);
-            XtreamLibraryConfig.renderProviderSelector();
-            XtreamLibraryConfig.loadProviderIntoUI(0);
+            if (!confirm(XtreamLibraryConfig.removeProviderPrompt())) return;
+            XtreamLibraryConfig.removeActiveProvider();
         });
     }
 
