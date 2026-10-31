@@ -624,6 +624,14 @@ public partial class StrmSyncService
                     previousSnapshot = null;
                 }
 
+                // Force full sync if the login changed: every STRM URL carries it, and an incremental
+                // run would leave the unchanged items pointing at the old one.
+                if (previousSnapshot != null && LoginChanged(provider, previousSnapshot))
+                {
+                    _logger.LogInformation("Provider login changed, forcing full sync so every STRM file gets the new one");
+                    previousSnapshot = null;
+                }
+
                 // Force full sync if folder structure config changed
                 if (previousSnapshot != null)
                 {
@@ -2522,7 +2530,15 @@ public partial class StrmSyncService
         // rewrite those files. One pass with all of them off reads every series again.
         var enableDispatcharrMode = provider.EnableDispatcharrMode && !string.IsNullOrEmpty(provider.DispatcharrApiUser);
         var repairSeriesIds = SeriesIdsNeedRepair(provider, hintSnapshot);
-        var smartSkipSeries = provider.SmartSkipExisting && !repairSeriesIds;
+        // Smart skip judges a series by its snapshot entry or its file count, not by the URLs in its
+        // files, so after a login change it would keep the old login in every episode file.
+        var loginChanged = LoginChanged(provider, unread.PreviousSnapshot ?? hintSnapshot);
+        var smartSkipSeries = provider.SmartSkipExisting && !repairSeriesIds && !loginChanged;
+        if (loginChanged && provider.SmartSkipExisting)
+        {
+            _logger.LogInformation("Provider login changed, re-reading every series once so its episode files get the new one");
+        }
+
         if (repairSeriesIds)
         {
             _logger.LogInformation("Re-reading every series once to correct episode ids written in Dispatcharr Mode by earlier versions (GitHub #153)");
@@ -5575,6 +5591,18 @@ public partial class StrmSyncService
     private static partial Regex EmptyBracketsPattern();
 
     /// <summary>
+    /// Whether the provider login differs from the one the snapshot was written with. A snapshot
+    /// from before the login was recorded says nothing, so it counts as unchanged rather than
+    /// sending every existing library through a full re-read on upgrade.
+    /// </summary>
+    /// <param name="provider">The provider configuration.</param>
+    /// <param name="snapshot">The previous snapshot, if any.</param>
+    /// <returns>True when a recorded login differs from the configured one.</returns>
+    internal static bool LoginChanged(ProviderConfig provider, ContentSnapshot? snapshot)
+        => snapshot?.LoginFingerprint is { Length: > 0 } recorded
+            && !string.Equals(recorded, SnapshotService.CalculateLoginFingerprint(provider), StringComparison.Ordinal);
+
+    /// <summary>
     /// Whether this provider's series STRMs may still carry the episode ids that versions before
     /// 2.0.12.0 wrote in Dispatcharr Mode (GitHub #153). Without a snapshot nothing is skipped
     /// anyway, so there is nothing to undo.
@@ -5624,6 +5652,7 @@ public partial class StrmSyncService
             {
                 ProviderUrl = provider.BaseUrl,
                 ConfigFingerprint = SnapshotService.CalculateConfigFingerprint(provider, Plugin.Instance.Configuration.EnableMetadataLookup),
+                LoginFingerprint = SnapshotService.CalculateLoginFingerprint(provider),
                 SeriesIdsFromXtreamApi = SeriesIdsFromXtreamApiAfterRun(provider.SyncSeries, carryForwardFrom),
             };
 

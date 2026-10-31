@@ -41,6 +41,14 @@ public class ContentSnapshot
     public bool SeriesIdsFromXtreamApi { get; set; }
 
     /// <summary>
+    /// Gets or sets a hash of the provider login (username and password) this snapshot was written
+    /// with. The STRM URLs carry that login, and neither the incremental filter nor series smart
+    /// skip looks at it, so a changed login would otherwise leave every file on the old one. Null in
+    /// snapshots from before it was recorded, which compare as unchanged.
+    /// </summary>
+    public string? LoginFingerprint { get; set; }
+
+    /// <summary>
     /// Gets or sets all movies indexed by StreamId.
     /// </summary>
     public Dictionary<int, MovieSnapshot> Movies { get; set; } = new();
