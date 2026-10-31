@@ -3224,9 +3224,11 @@ public partial class StrmSyncService
 
                             // The count says nothing about whose files these are. After another
                             // provider address or login (GitHub #184: the only provider replaced),
-                            // a same-named series would keep every episode on the old one. One file
-                            // is enough to notice that; the write loop then compares each file.
-                            if (ReadStrmUrl(existingStrms[0])?.StartsWith(seriesUrlPrefix, StringComparison.Ordinal) != true)
+                            // a same-named series would keep every episode on the old one. Every file
+                            // is checked, not only the first: a run that rewrote some episodes and then
+                            // failed on the series leaves a mix, and the count alone would keep the
+                            // rest on the old one (CodeRabbit on #190).
+                            if (existingStrms.Any(strm => ReadStrmUrl(strm)?.StartsWith(seriesUrlPrefix, StringComparison.Ordinal) != true))
                             {
                                 anyNeedsSync = true;
                                 break;

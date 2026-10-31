@@ -144,6 +144,43 @@ public class LoginChangeTests : IDisposable
         StrmSyncService.LoginChanged(provider, new ContentSnapshot { LoginFingerprint = SnapshotService.CalculateLoginFingerprint(new ProviderConfig { Username = "u", Password = "other" }) }).Should().BeTrue();
     }
 
+    /// <summary>
+    /// A run that rewrote some episodes and then failed on the series leaves a mix of new and old
+    /// URLs, and the series is not in the snapshot. Smart skip then judged the series by its first
+    /// file and its count, and kept the other episodes on the old login (CodeRabbit on #190).
+    /// </summary>
+    [Fact]
+    public async Task ASeriesWithOneEpisodeLeftOnTheOldLogin_IsRewritten_WithSmartSkipOn()
+    {
+        _client.Setup(c => c.GetSeriesStreamsBySeriesAsync(It.IsAny<ConnectionInfo>(), 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new SeriesStreamInfo
+            {
+                Seasons = new List<Season> { new() { SeasonNumber = 1 } },
+                Episodes = new Dictionary<int, ICollection<Episode>>
+                {
+                    [1] = new List<Episode>
+                    {
+                        new() { EpisodeId = 71, EpisodeNum = 1, Season = 1, Title = "Pilot", ContainerExtension = "mkv" },
+                        new() { EpisodeId = 72, EpisodeNum = 2, Season = 1, Title = "Second", ContainerExtension = "mkv" },
+                    },
+                },
+            });
+        await RunSyncAsync("new-pass", smartSkip: true).ConfigureAwait(true);
+
+        // The last episode file goes back to the old login, and no snapshot remembers the series.
+        var episodes = Directory.GetFiles(Path.Combine(_libraryPath, "Series"), "*.strm", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal).ToList();
+        episodes.Should().HaveCount(2);
+        File.WriteAllText(episodes[^1], File.ReadAllText(episodes[^1]).Replace("/u/new-pass/", "/u/old-pass/", StringComparison.Ordinal));
+        foreach (var snapshot in Directory.GetFiles(_libraryPath, "snapshot_*.json", SearchOption.AllDirectories))
+        {
+            File.Delete(snapshot);
+        }
+
+        await RunSyncAsync("new-pass", smartSkip: true).ConfigureAwait(true);
+
+        File.ReadAllText(episodes[^1]).Should().Contain("/u/new-pass/", "every episode file is checked, not only the first");
+    }
+
     private List<string> StrmUrls()
         => Directory.GetFiles(_libraryPath, "*.strm", SearchOption.AllDirectories)
             .Select(f => File.ReadAllText(f).Trim())
