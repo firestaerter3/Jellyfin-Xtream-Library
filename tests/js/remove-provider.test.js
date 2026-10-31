@@ -16,7 +16,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { loadConfig } = require('./helpers/config-harness');
+const { loadConfig, element, withDocument } = require('./helpers/config-harness');
 
 /** A config object with the given providers, rendering stubbed out. */
 function withProviders(providers, active) {
@@ -61,9 +61,46 @@ test('removing one of several providers just removes it', () => {
 test('the question says what stays behind only when the last provider goes', () => {
     const last = withProviders([{ Name: 'Old' }], 0).removeProviderPrompt();
     assert.match(last, /^Remove "Old"\?/);
+    assert.match(last, /click Save/);
     assert.match(last, /Delete Movies\/Series Library/);
     assert.match(last, /Channel Overrides/);
 
     const one = withProviders([{ Name: 'A' }, { Name: 'B' }], 0).removeProviderPrompt();
     assert.strictEqual(one, 'Remove "A"? This cannot be undone.');
+});
+
+// CodeRabbit on #189: the category lists of the provider that was shown stayed in memory, and a
+// request still running for it could fill them after the switch, so its categories could end up
+// in the next provider's selection.
+test('a category answer for the previous provider is dropped', async () => {
+    const config = loadConfig();
+    config.providers = [{ Name: 'Old' }];
+    config.activeProviderIndex = 0;
+    config.categoryLoadGeneration = 1;
+    config.vodCategories = [];
+
+    let answer;
+    const previous = { fetch: global.fetch, ApiClient: global.ApiClient };
+    global.ApiClient = { getUrl: (path) => path, accessToken: () => 'token' };
+    global.fetch = () => new Promise((resolve) => { answer = resolve; });
+    const restore = withDocument({ vodCategoryLoadStatus: element(), selMovieFolderMode: element({ value: 'Single' }) });
+    let rendered = false;
+    config.renderCategoryList = () => { rendered = true; };
+    try {
+        config.loadVodCategories();
+
+        // The provider changes while the request is out, as loadProviderIntoUI does.
+        config.categoryLoadGeneration++;
+        config.vodCategories = [];
+
+        answer({ ok: true, json: () => [{ CategoryId: 7, CategoryName: 'Old provider' }] });
+        await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+        restore();
+        global.fetch = previous.fetch;
+        global.ApiClient = previous.ApiClient;
+    }
+
+    assert.deepStrictEqual(config.vodCategories, []);
+    assert.strictEqual(rendered, false);
 });
