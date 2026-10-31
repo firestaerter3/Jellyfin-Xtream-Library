@@ -3761,6 +3761,9 @@ public partial class StrmSyncService
         // Remove a dash-style language prefix like "EN - " at start of name (GitHub #185)
         cleanName = PrefixLanguageDashPattern().Replace(cleanName, string.Empty);
 
+        // Remove 3D and side-by-side tags; they become the version label (GitHub #186)
+        cleanName = StripStereoTags(cleanName, null);
+
         // Remove language/country tags like "| UK |", "┃EN┃", "[DE]", "| FR |", etc.
         cleanName = LanguageTagPattern().Replace(cleanName, string.Empty);
 
@@ -3833,6 +3836,7 @@ public partial class StrmSyncService
         cleanName = PrefixLanguageDashPattern().Replace(cleanName, string.Empty);
 
         var labels = new List<string>();
+        cleanName = StripStereoTags(cleanName, labels);
 
         // Each tag is stripped after it is collected, mirroring the order SanitizeFileName uses.
         // VersionTagPattern is anchored to the end of the name, so it cannot see the "V1" in
@@ -3872,6 +3876,47 @@ public partial class StrmSyncService
 
         return labels.Count > 0 ? string.Join(" ", labels) : null;
     }
+
+    /// <summary>
+    /// Takes 3D and side-by-side tags out of a title (GitHub #186). "3D" counts only at the start or
+    /// in brackets, because at the end it is usually part of the title ("Jackass 3D", "Step Up 3D");
+    /// SBS and HSBS count anywhere, since no title uses them as a word. A title that is nothing but
+    /// such a tag is kept as it is.
+    /// </summary>
+    /// <param name="name">The title.</param>
+    /// <param name="labels">Receives the tags found, as "3D", "SBS" or "HSBS"; null to discard them.</param>
+    /// <returns>The title without the tags.</returns>
+    internal static string StripStereoTags(string name, List<string>? labels)
+    {
+        var found = new List<string>();
+        string cleaned = StereoPrefixPattern().Replace(name, m =>
+        {
+            found.Add(NormaliseStereoTag(m.Groups["tag"].Value));
+            return string.Empty;
+        });
+        cleaned = StereoTagPattern().Replace(cleaned, m =>
+        {
+            found.Add(NormaliseStereoTag(m.Groups["tag"].Value));
+            return string.Empty;
+        });
+
+        if (found.Count == 0 || string.IsNullOrWhiteSpace(EmptyBracketsPattern().Replace(cleaned, string.Empty)))
+        {
+            return name;
+        }
+
+        labels?.AddRange(found.Distinct(StringComparer.Ordinal));
+        return cleaned;
+    }
+
+    private static string NormaliseStereoTag(string tag)
+        => tag.Equals("3D", StringComparison.OrdinalIgnoreCase)
+            ? "3D"
+            : tag.Replace("-", string.Empty, StringComparison.Ordinal).Replace(" ", string.Empty, StringComparison.Ordinal).ToUpperInvariant() switch
+            {
+                "SBS" => "SBS",
+                _ => "HSBS",
+            };
 
     internal static string BuildMovieStrmFileName(string folderName, string? versionLabel, string? regexRemovalPatterns = null)
     {
@@ -5583,6 +5628,15 @@ public partial class StrmSyncService
     // Matches quality tags like "4K", "UHD", "1080p", "720p", "480p", "HDR", "HDR10", "SDR", "2160p", etc.
     [GeneratedRegex(@"\b(?:4K|UHD|2160p|1080[pi]|720p|480p|576p|HDR10\+?|HDR|SDR|FHD|HD|SD)\b", RegexOptions.IgnoreCase)]
     private static partial Regex QualityTagPattern();
+
+    // A 3D or side-by-side tag at the start of a title: "3D Spider-Man", "SBS - Avatar" (GitHub #186).
+    [GeneratedRegex(@"^\s*(?<tag>3D|H-?SBS|Half[- ]SBS|SBS)\b\s*[-:|]?\s*", RegexOptions.IgnoreCase)]
+    private static partial Regex StereoPrefixPattern();
+
+    // A side-by-side tag anywhere, or 3D in brackets: "Avatar HSBS", "Avatar [3D]". A bare 3D at the
+    // end is left alone, because it is usually part of the title ("Jackass 3D").
+    [GeneratedRegex(@"\b(?<tag>H-?SBS|Half[- ]SBS|SBS)\b|[\[\(]\s*(?<tag>3D)\s*[\]\)]", RegexOptions.IgnoreCase)]
+    private static partial Regex StereoTagPattern();
 
     // Matches source tags like "BluRay", "BRRip", "WEBRip", "WEB-DL", "HDTV", "DVDRip", "REMUX", etc.
     [GeneratedRegex(@"\b(?:Blu-?Ray|BRRip|BDRip|WEB-?(?:Rip|DL)?|HDTV|DVDRip|DVD|REMUX|CAM|TS|HC|PROPER|REPACK)\b", RegexOptions.IgnoreCase)]

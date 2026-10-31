@@ -627,6 +627,23 @@ public class StrmNameCollisionTests : IDisposable
         result.MoviesCreated.Should().Be(2);
     }
 
+    // GitHub #186: a 3D stream is a version of the plain movie, labelled "3D" in the version picker
+    // instead of getting a folder of its own or a stream id.
+    [Fact]
+    public async Task APlainAndA3DStream_AreTwoVersionsInOneFolder()
+    {
+        var result = await RunMovieSyncAsync(
+            new StreamInfo { StreamId = 100, Name = "Spider-Man: Far from Home (2019)", ContainerExtension = "mp4" },
+            new StreamInfo { StreamId = 200, Name = "3D Spider-Man: Far from Home (2019)", ContainerExtension = "mp4" })
+            .ConfigureAwait(true);
+
+        var movieFolder = Path.Combine(_libraryPath, "Movies", "Spider-Man - Far from Home (2019)");
+        Directory.GetFiles(movieFolder, "*.strm").Select(Path.GetFileName).OrderBy(f => f, StringComparer.Ordinal)
+            .Should().Equal("Spider-Man - Far from Home (2019) - 3D.strm", "Spider-Man - Far from Home (2019).strm");
+        Directory.GetDirectories(Path.Combine(_libraryPath, "Movies")).Should().ContainSingle();
+        result.MovieNameCollisions.Should().Be(0);
+    }
+
     [Fact]
     public async Task TwoStreamsSharingAVersionTag_AreKeptTheSameWayAsAQualityTag()
     {

@@ -129,7 +129,11 @@ public class SnapshotService : IDisposable
             // Same-title movies without an id used to be dropped after the first. They are kept
             // as alternatives now, which only a full sync can write for streams a snapshot
             // already lists as done.
-            "movie-name-alternatives-v1");
+            "movie-name-alternatives-v1",
+            // 3D and side-by-side tags leave the title and become the version label (GitHub #186),
+            // which changes folder and file names. An incremental run would skip those streams as
+            // unchanged while cleanup removes their old files, so the first run is a full one.
+            "stereo-version-tags-v1");
 
         return ComputeMd5(data);
     }

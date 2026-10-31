@@ -303,6 +303,31 @@ public class StrmSyncServiceTests
         result.Should().BeNull();
     }
 
+    // GitHub #186: a 3D or side-by-side stream is a version of the movie, not another title. The tag
+    // leaves the folder name and becomes the version label, so the version picker shows "3D"
+    // instead of a stream id. A bare "3D" at the end is part of the title and stays.
+    [Theory]
+    [InlineData("3D Spider-Man: Far from Home (2019)", "Spider-Man - Far from Home", "3D")]
+    [InlineData("3D - Avatar (2009)", "Avatar", "3D")]
+    [InlineData("Avatar [3D] (2009)", "Avatar", "3D")]
+    [InlineData("Avatar (2009) HSBS", "Avatar", "HSBS")]
+    [InlineData("Avatar H-SBS 1080p", "Avatar", "HSBS 1080p")]
+    [InlineData("SBS Avatar", "Avatar", "SBS")]
+    [InlineData("Avatar Half-SBS", "Avatar", "HSBS")]
+    [InlineData("Jackass 3D (2010)", "Jackass 3D", null)]
+    [InlineData("Step Up 3D", "Step Up 3D", null)]
+    [InlineData("3D", "3D", null)]
+    public void StereoTags_LeaveTheTitle_AndBecomeTheVersionLabel(string input, string expectedName, string? expectedLabel)
+    {
+        StrmSyncService.SanitizeFileName(input).Should().Be(expectedName);
+        StrmSyncService.ExtractVersionLabel(input).Should().Be(expectedLabel);
+    }
+
+    [Fact]
+    public void AStereoVersion_GetsTheSameFolderNameAsThePlainMovie()
+        => StrmSyncService.SanitizeFileName("3D Spider-Man: Far from Home (2019)")
+            .Should().Be(StrmSyncService.SanitizeFileName("Spider-Man: Far from Home (2019)"));
+
     [Theory]
     [InlineData("Movie BluRay", "Movie")]
     [InlineData("Movie Blu-Ray", "Movie")]
