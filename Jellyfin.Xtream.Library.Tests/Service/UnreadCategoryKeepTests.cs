@@ -263,6 +263,26 @@ public class UnreadCategoryKeepTests : IDisposable
         MovieFile("Delta").Should().BeNull();
     }
 
+    /// <summary>
+    /// A movie kept for an unread category is not written, so after a login change its file still
+    /// holds the old login while the snapshot records the new one. When the category answers again
+    /// on an incremental run, the unchanged checksum used to skip it and the old login stayed
+    /// (CodeRabbit on #190).
+    /// </summary>
+    [Fact]
+    public async Task AMovieKeptAcrossALoginChange_GetsTheNewLogin_WhenItsCategoryAnswersAgain()
+    {
+        await RunMoviesAsync(Answer.Items, steadyKeepsDelta: true).ConfigureAwait(true);
+        await RunMoviesAsync(Answer.Empty, steadyKeepsDelta: true, password: "new-pass").ConfigureAwait(true);
+        File.ReadAllText(MovieFile("Alpha")!).Should().Contain("/u/p/", "a kept movie is not written");
+
+        // Same exclusions as the run before, so this one is incremental.
+        await RunMoviesAsync(Answer.Items, steadyKeepsDelta: true, forceFullSync: false, password: "new-pass").ConfigureAwait(true);
+
+        File.ReadAllText(MovieFile("Alpha")!).Should().Contain("/u/new-pass/");
+        File.ReadAllText(MovieFile("Beta")!).Should().Contain("/u/new-pass/");
+    }
+
     [Fact]
     public async Task TwoUnreadRunsInARow_StillKeepTheFiles_AndKeepTheFirstTime()
     {
@@ -378,7 +398,7 @@ public class UnreadCategoryKeepTests : IDisposable
         File.WriteAllText(path, snapshot.ToString());
     }
 
-    private Task<SyncResult> RunMoviesAsync(Answer flaky, bool steadyKeepsDelta, bool flakyKeepsBeta = true, bool forceFullSync = true, bool incremental = true, int[]? selectedVod = null)
+    private Task<SyncResult> RunMoviesAsync(Answer flaky, bool steadyKeepsDelta, bool flakyKeepsBeta = true, bool forceFullSync = true, bool incremental = true, int[]? selectedVod = null, string password = "p")
     {
         var flakySetup = _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()));
         switch (flaky)
@@ -409,7 +429,7 @@ public class UnreadCategoryKeepTests : IDisposable
         _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 2, It.IsAny<CancellationToken>()))
             .ReturnsAsync(steady);
 
-        return RunSyncAsync(syncMovies: true, syncSeries: false, forceFullSync, incremental, selectedVod);
+        return RunSyncAsync(syncMovies: true, syncSeries: false, forceFullSync, incremental, selectedVod, password: password);
     }
 
     private Task<SyncResult> RunSeriesAsync(Answer flaky, bool steadyKeepsShowC)
@@ -447,7 +467,7 @@ public class UnreadCategoryKeepTests : IDisposable
     private static Series Show(int id, string name, int categoryId)
         => new() { SeriesId = id, Name = name, CategoryId = categoryId };
 
-    private async Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool forceFullSync, bool incremental = true, int[]? selectedVod = null, string? movieFolders = null)
+    private async Task<SyncResult> RunSyncAsync(bool syncMovies, bool syncSeries, bool forceFullSync, bool incremental = true, int[]? selectedVod = null, string? movieFolders = null, string password = "p")
     {
         if (forceFullSync)
         {
@@ -470,7 +490,7 @@ public class UnreadCategoryKeepTests : IDisposable
                 Name = "test",
                 BaseUrl = "http://provider.test",
                 Username = "u",
-                Password = "p",
+                Password = password,
                 LibraryPath = _libraryPath,
                 SyncMovies = syncMovies,
                 SyncSeries = syncSeries,
