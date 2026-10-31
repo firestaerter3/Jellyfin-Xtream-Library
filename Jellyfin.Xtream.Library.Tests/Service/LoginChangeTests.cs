@@ -91,6 +91,22 @@ public class LoginChangeTests : IDisposable
         StrmUrls().Should().OnlyContain(u => u.Contains("/u/new-pass/", StringComparison.Ordinal), "the files must not keep the old login").And.HaveCount(2);
     }
 
+    /// <summary>
+    /// Removing the only provider and filling in another one (GitHub #184) keeps the library path.
+    /// The new address has no snapshot yet, so nothing compares logins, and series smart skip used
+    /// to keep any same-named series whose episode count had not grown, still on the old provider.
+    /// </summary>
+    [Fact]
+    public async Task AnotherProviderAddress_ReachesEveryEpisodeFile_WithSmartSkipOn()
+    {
+        await RunSyncAsync("old-pass", smartSkip: true, baseUrl: "http://old-provider.test").ConfigureAwait(true);
+        StrmUrls().Should().OnlyContain(u => u.StartsWith("http://old-provider.test/", StringComparison.Ordinal)).And.HaveCount(2);
+
+        await RunSyncAsync("new-pass", smartSkip: true, baseUrl: "http://new-provider.test").ConfigureAwait(true);
+
+        StrmUrls().Should().OnlyContain(u => u.StartsWith("http://new-provider.test/", StringComparison.Ordinal) && u.Contains("/u/new-pass/", StringComparison.Ordinal), "the files must not keep the old provider").And.HaveCount(2);
+    }
+
     [Fact]
     public async Task TheSameLogin_LeavesTheNextSyncIncremental()
     {
@@ -116,7 +132,7 @@ public class LoginChangeTests : IDisposable
             .Select(f => File.ReadAllText(f).Trim())
             .ToList();
 
-    private async Task<SyncResult> RunSyncAsync(string password, bool smartSkip)
+    private async Task<SyncResult> RunSyncAsync(string password, bool smartSkip, string baseUrl = "http://provider.test")
     {
         var appPaths = new Mock<IServerApplicationPaths>();
         appPaths.Setup(p => p.PluginConfigurationsPath).Returns(_libraryPath);
@@ -132,7 +148,7 @@ public class LoginChangeTests : IDisposable
             new()
             {
                 Name = "test",
-                BaseUrl = "http://provider.test",
+                BaseUrl = baseUrl,
                 Username = "u",
                 Password = password,
                 LibraryPath = _libraryPath,

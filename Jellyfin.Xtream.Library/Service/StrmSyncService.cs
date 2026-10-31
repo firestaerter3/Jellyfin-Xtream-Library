@@ -2520,6 +2520,9 @@ public partial class StrmSyncService
         CancellationToken cancellationToken)
     {
         var connectionInfo = new ConnectionInfo(provider.BaseUrl, provider.Username, provider.Password);
+
+        // Every episode URL this provider writes starts with this (see the write loop below).
+        var seriesUrlPrefix = $"{connectionInfo.BaseUrl}/series/{connectionInfo.UserName}/{connectionInfo.Password}/";
         var globalConfig = Plugin.Instance.Configuration;
         var categories = await _client.GetSeriesCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
         var processedSeriesIds = new ConcurrentDictionary<int, bool>();
@@ -3214,6 +3217,16 @@ public partial class StrmSyncService
                                 path => Directory.GetFiles(path, "*.strm", SearchOption.AllDirectories));
 
                             if (existingStrms.Length == 0)
+                            {
+                                anyNeedsSync = true;
+                                break;
+                            }
+
+                            // The count says nothing about whose files these are. After another
+                            // provider address or login (GitHub #184: the only provider replaced),
+                            // a same-named series would keep every episode on the old one. One file
+                            // is enough to notice that; the write loop then compares each file.
+                            if (ReadStrmUrl(existingStrms[0])?.StartsWith(seriesUrlPrefix, StringComparison.Ordinal) != true)
                             {
                                 anyNeedsSync = true;
                                 break;
