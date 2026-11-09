@@ -377,6 +377,95 @@ public class ConverterTests
         result.Episodes[2].Should().HaveCount(1);
     }
 
+    // PHP's json_encode writes an array whose keys are exactly 0..n-1 as a JSON list, so a series
+    // with a season 0 and no gaps after it arrives as a list of seasons (GitHub #193). The position
+    // in the list is the season number.
+    [Fact]
+    public void EpisodeDictionaryConverter_ListOfSeasons_UsesPositionAsSeason()
+    {
+        var json = @"{
+            ""seasons"": [],
+            ""info"": {},
+            ""episodes"": [
+                [
+                    {""id"": 1, ""episode_num"": 1, ""title"": ""Special"", ""container_extension"": ""mkv"", ""season"": 0}
+                ],
+                [
+                    {""id"": 101, ""episode_num"": 1, ""title"": ""S1E1"", ""container_extension"": ""mkv"", ""season"": 1},
+                    {""id"": 102, ""episode_num"": 2, ""title"": ""S1E2"", ""container_extension"": ""mkv"", ""season"": 1}
+                ],
+                [
+                    {""id"": 201, ""episode_num"": 1, ""title"": ""S2E1"", ""container_extension"": ""mkv"", ""season"": 2}
+                ]
+            ]
+        }";
+
+        var result = JsonConvert.DeserializeObject<SeriesStreamInfo>(json);
+
+        result!.Episodes.Should().NotBeNull();
+        result.Episodes!.Keys.Should().BeEquivalentTo(new[] { 0, 1, 2 });
+        result.Episodes[0].Select(e => e.EpisodeId).Should().Equal(1);
+        result.Episodes[1].Select(e => e.EpisodeId).Should().Equal(101, 102);
+        result.Episodes[2].Select(e => e.EpisodeId).Should().Equal(201);
+    }
+
+    [Fact]
+    public void EpisodeDictionaryConverter_ListOfSeasons_SingleEpisodeObjectInSlot_WrapsInList()
+    {
+        var json = @"{
+            ""seasons"": [],
+            ""info"": {},
+            ""episodes"": [
+                [],
+                {""id"": 101, ""episode_num"": 1, ""title"": ""S1E1"", ""container_extension"": ""mkv"", ""season"": 1}
+            ]
+        }";
+
+        var result = JsonConvert.DeserializeObject<SeriesStreamInfo>(json);
+
+        // A slot holding one object is ambiguous on its own, but inside a list that also holds a
+        // season list it is a season with one episode, as in the object form.
+        result!.Episodes.Should().ContainKey(1);
+        result.Episodes![1].Select(e => e.EpisodeId).Should().Equal(101);
+    }
+
+    [Fact]
+    public void EpisodeDictionaryConverter_FlatListOfEpisodes_GroupsBySeasonField()
+    {
+        var json = @"{
+            ""seasons"": [],
+            ""info"": {},
+            ""episodes"": [
+                {""id"": 101, ""episode_num"": 1, ""title"": ""S1E1"", ""container_extension"": ""mkv"", ""season"": 1},
+                {""id"": 201, ""episode_num"": 1, ""title"": ""S2E1"", ""container_extension"": ""mkv"", ""season"": ""2""},
+                {""id"": 102, ""episode_num"": 2, ""title"": ""S1E2"", ""container_extension"": ""mkv"", ""season"": 1}
+            ]
+        }";
+
+        var result = JsonConvert.DeserializeObject<SeriesStreamInfo>(json);
+
+        result!.Episodes!.Keys.Should().BeEquivalentTo(new[] { 1, 2 });
+        result.Episodes[1].Select(e => e.EpisodeId).Should().Equal(101, 102);
+        result.Episodes[2].Select(e => e.EpisodeId).Should().Equal(201);
+    }
+
+    [Fact]
+    public void EpisodeDictionaryConverter_ListOfSeasons_NullSlot_IsSkipped()
+    {
+        var json = @"{
+            ""seasons"": [],
+            ""info"": {},
+            ""episodes"": [
+                null,
+                [{""id"": 101, ""episode_num"": 1, ""title"": ""S1E1"", ""container_extension"": ""mkv"", ""season"": 1}]
+            ]
+        }";
+
+        var result = JsonConvert.DeserializeObject<SeriesStreamInfo>(json);
+
+        result!.Episodes!.Keys.Should().BeEquivalentTo(new[] { 1 });
+    }
+
     [Fact]
     public void EpisodeDictionaryConverter_CanConvert_ReturnsCorrectType()
     {
