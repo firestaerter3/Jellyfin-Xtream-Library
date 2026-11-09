@@ -3254,6 +3254,12 @@ public partial class StrmSyncService
                     // Early return if no episodes
                     if (seriesInfo.Episodes == null || seriesInfo.Episodes.Count == 0)
                     {
+                        // Logged because this branch writes nothing and records no failure, so
+                        // without it a series that never appears leaves no trace (GitHub #193).
+                        _logger.LogInformation(
+                            "Skipping series {SeriesName} ({SeriesId}): the provider returned no episodes for it",
+                            series.Name,
+                            series.SeriesId);
                         Interlocked.Increment(ref seriesSkipped);
                         // Note: ItemsProcessed is incremented in finally block
                         return;
