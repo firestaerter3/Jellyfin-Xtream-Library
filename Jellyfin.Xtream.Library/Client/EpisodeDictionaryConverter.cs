@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Jellyfin.Xtream.Library.Client.Models;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -23,9 +24,9 @@ namespace Jellyfin.Xtream.Library.Client;
 
 /// <summary>
 /// Converter for the episodes dictionary on SeriesStreamInfo.
-/// Handles Xtream API quirks where episodes may be an empty array instead of
-/// an empty object, or where a season contains a single episode object instead
-/// of an array of episodes.
+/// Handles Xtream API quirks where episodes may be a list instead of an object
+/// (empty, a list of seasons, or a flat list of episodes), or where a season
+/// contains a single episode object instead of an array of episodes.
 /// </summary>
 public class EpisodeDictionaryConverter : JsonConverter
 {
@@ -40,14 +41,15 @@ public class EpisodeDictionaryConverter : JsonConverter
     {
         var result = new Dictionary<int, ICollection<Episode>>();
 
+        if (reader.TokenType == JsonToken.StartArray)
+        {
+            ReadList(JArray.Load(reader), serializer, result);
+            return result;
+        }
+
         if (reader.TokenType != JsonToken.StartObject)
         {
-            // Empty array, null, or other non-object token — skip and return empty dict.
-            if (reader.TokenType == JsonToken.StartArray)
-            {
-                JToken.Load(reader);
-            }
-
+            // Null or another non-object token: no episodes.
             return result;
         }
 
@@ -77,6 +79,59 @@ public class EpisodeDictionaryConverter : JsonConverter
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Reads <c>episodes</c> sent as a JSON list instead of an object (GitHub #193).
+    /// PHP's <c>json_encode</c> writes an array whose keys are exactly 0..n-1 as a list, so a series
+    /// with a season 0 and no gaps after it arrives as a list of seasons, where the position is the
+    /// season number. A list holding only episode objects is grouped by each episode's own season.
+    /// An empty list means no episodes.
+    /// </summary>
+    private static void ReadList(JArray list, JsonSerializer serializer, Dictionary<int, ICollection<Episode>> result)
+    {
+        bool isListOfSeasons = list.Any(item => item.Type == JTokenType.Array);
+
+        if (isListOfSeasons)
+        {
+            for (int seasonNumber = 0; seasonNumber < list.Count; seasonNumber++)
+            {
+                var slot = list[seasonNumber];
+                if (slot.Type == JTokenType.Array)
+                {
+                    result[seasonNumber] = slot.ToObject<List<Episode>>(serializer) ?? new List<Episode>();
+                }
+                else if (slot.Type == JTokenType.Object)
+                {
+                    var episode = slot.ToObject<Episode>(serializer);
+                    result[seasonNumber] = episode is not null ? new List<Episode> { episode } : new List<Episode>();
+                }
+            }
+
+            return;
+        }
+
+        foreach (var item in list)
+        {
+            if (item.Type != JTokenType.Object)
+            {
+                continue;
+            }
+
+            var episode = item.ToObject<Episode>(serializer);
+            if (episode is null)
+            {
+                continue;
+            }
+
+            if (!result.TryGetValue(episode.Season, out var seasonEpisodes))
+            {
+                seasonEpisodes = new List<Episode>();
+                result[episode.Season] = seasonEpisodes;
+            }
+
+            seasonEpisodes.Add(episode);
+        }
     }
 
     /// <inheritdoc/>
