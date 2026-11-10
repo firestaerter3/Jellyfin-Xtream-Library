@@ -61,6 +61,7 @@ public class LiveTvService : IDisposable
     private int _refreshInFlight;
     private bool _disposed;
     private CatchupHistoryStore? _catchupHistory;
+    private PortraitProgramImageResolver? _portraitImages;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LiveTvService"/> class.
@@ -103,6 +104,13 @@ public class LiveTvService : IDisposable
     internal CatchupHistoryStore CatchupHistory => LazyInitializer.EnsureInitialized(
         ref _catchupHistory,
         () => new CatchupHistoryStore(Path.Combine(_appPaths.DataPath, "xtream-library", "catchup-history"), _logger));
+
+    /// <summary>
+    /// Gets the portrait poster lookup for programme images. Created on first use.
+    /// </summary>
+    internal PortraitProgramImageResolver PortraitImages => LazyInitializer.EnsureInitialized(
+        ref _portraitImages,
+        () => new PortraitProgramImageResolver(Path.Combine(_appPaths.DataPath, "xtream-library", "portrait-program-images.json"), _logger));
 
     /// <summary>
     /// Resolves a channel logo value for output: local filesystem paths are rewritten to the
@@ -1411,6 +1419,11 @@ public class LiveTvService : IDisposable
             if (idMap.Count > 0)
             {
                 var fragments = await GetProviderXmltvFragmentsAsync(channels, cancellationToken).ConfigureAwait(false);
+                if (config.PreferPortraitProgramImages)
+                {
+                    await PortraitImages.ResolveAsync(fragments.Select(f => f.Xml), cancellationToken).ConfigureAwait(false);
+                }
+
                 var providersWithXml = new HashSet<int>();
                 foreach (var (providerIndex, upstreamXml) in fragments)
                 {
@@ -1640,6 +1653,11 @@ public class LiveTvService : IDisposable
                 }
 
                 element.SetAttributeValue("channel", ourId);
+                if (config.PreferPortraitProgramImages)
+                {
+                    UsePortraitIcons(element, PortraitImages);
+                }
+
                 sb.Append("  ").Append(element.ToString(SaveOptions.DisableFormatting)).Append('\n');
                 written++;
             }
@@ -1663,6 +1681,32 @@ public class LiveTvService : IDisposable
         }
 
         return (written, recordedCount);
+    }
+
+    /// <summary>
+    /// Points each &lt;icon&gt; of a programme at the portrait poster recorded for it, if any. A
+    /// rewritten icon loses its width and height, which described the wide image.
+    /// </summary>
+    /// <param name="programme">The programme element.</param>
+    /// <param name="resolver">The recorded answers.</param>
+    internal static void UsePortraitIcons(XElement programme, PortraitProgramImageResolver resolver)
+    {
+        foreach (var icon in programme.Elements("icon"))
+        {
+            var src = icon.Attribute("src")?.Value;
+            if (string.IsNullOrEmpty(src))
+            {
+                continue;
+            }
+
+            var portrait = resolver.Rewrite(src);
+            if (!string.Equals(portrait, src, StringComparison.Ordinal))
+            {
+                icon.SetAttributeValue("src", portrait);
+                icon.SetAttributeValue("width", null);
+                icon.SetAttributeValue("height", null);
+            }
+        }
     }
 
     internal static bool TryParseXmltvTime(string? value, out long unixSeconds)
@@ -1876,6 +1920,7 @@ public class LiveTvService : IDisposable
                 _epgLock.Dispose();
                 _snapshotLock.Dispose();
                 _catchupHistory?.Dispose();
+                _portraitImages?.Dispose();
             }
 
             _disposed = true;

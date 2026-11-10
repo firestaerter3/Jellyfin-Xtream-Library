@@ -174,6 +174,12 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool EnableEpg { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether a programme's wide Gracenote image is replaced by
+    /// the portrait poster of the same asset when one exists, so it fits a poster card.
+    /// </summary>
+    public bool PreferPortraitProgramImages { get; set; } = true;
+
+    /// <summary>
     /// Gets or sets the M3U playlist cache duration in minutes.
     /// </summary>
     public int M3UCacheMinutes { get; set; } = 15;

@@ -391,6 +391,7 @@ var XtreamLibraryConfig = (function () {
             document.getElementById('chkEnableLiveTv').checked = config.EnableLiveTv || false;
             document.getElementById('chkEnableNativeTuner').checked = config.EnableNativeTuner || false;
             document.getElementById('chkEnableEpg').checked = config.EnableEpg !== false;
+            document.getElementById('chkPreferPortraitProgramImages').checked = config.PreferPortraitProgramImages !== false;
             document.getElementById('selLiveTvOutputFormat').value = config.LiveTvOutputFormat || 'ts';
             document.getElementById('chkIncludeAdultChannels').checked = config.IncludeAdultChannels || false;
             document.getElementById('txtM3UCacheMinutes').value = config.M3UCacheMinutes || 15;
@@ -500,6 +501,7 @@ var XtreamLibraryConfig = (function () {
             config.EnableLiveTv = document.getElementById('chkEnableLiveTv').checked;
             config.EnableNativeTuner = document.getElementById('chkEnableNativeTuner').checked;
             config.EnableEpg = document.getElementById('chkEnableEpg').checked;
+            config.PreferPortraitProgramImages = document.getElementById('chkPreferPortraitProgramImages').checked;
             config.LiveTvOutputFormat = document.getElementById('selLiveTvOutputFormat').value;
             config.IncludeAdultChannels = document.getElementById('chkIncludeAdultChannels').checked;
             config.M3UCacheMinutes = parseInt(document.getElementById('txtM3UCacheMinutes').value) || 15;
