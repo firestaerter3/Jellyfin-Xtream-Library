@@ -79,7 +79,7 @@ internal sealed class PortraitProgramImageResolver : IDisposable
         TimeSpan.FromSeconds(1));
 
     private static readonly Regex IconSrcPattern = new(
-        "<icon\\b[^>]*?\\bsrc=\"(?<src>[^\"]+)\"",
+        "<icon\\b[^>]*?\\bsrc=(?:\"(?<src>[^\"]+)\"|'(?<src>[^']+)')",
         RegexOptions.CultureInvariant | RegexOptions.Compiled,
         TimeSpan.FromSeconds(5));
 
@@ -90,6 +90,7 @@ internal sealed class PortraitProgramImageResolver : IDisposable
     private readonly Func<string, CancellationToken, Task<bool?>> _probe;
     private readonly HttpClient? _ownedClient;
     private readonly ConcurrentDictionary<string, Entry> _entries = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _runLock = new(1, 1);
     private bool _loaded;
 
     /// <summary>
@@ -146,6 +147,7 @@ internal sealed class PortraitProgramImageResolver : IDisposable
     /// <returns>A task.</returns>
     public async Task ResolveAsync(IEnumerable<string> xmltvDocuments, CancellationToken cancellationToken)
     {
+        await _runLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             Load();
@@ -214,6 +216,10 @@ internal sealed class PortraitProgramImageResolver : IDisposable
         {
             _logger.LogWarning(ex, "Could not check programme images for a portrait poster; the guide keeps the original images");
         }
+        finally
+        {
+            _runLock.Release();
+        }
     }
 
     /// <summary>
@@ -225,7 +231,11 @@ internal sealed class PortraitProgramImageResolver : IDisposable
         => _entries.TryGetValue(url, out var e) && e.Portrait != null ? e.Portrait : url;
 
     /// <inheritdoc />
-    public void Dispose() => _ownedClient?.Dispose();
+    public void Dispose()
+    {
+        _ownedClient?.Dispose();
+        _runLock.Dispose();
+    }
 
     private bool IsFresh(string url, DateTimeOffset now)
     {
