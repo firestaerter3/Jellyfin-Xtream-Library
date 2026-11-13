@@ -513,11 +513,11 @@ public sealed class LibraryBadgeTests : IDisposable
         var (processor, _) = Wrapper(small, () => Config(enabled: true));
         var tall = Options(IptvMovie());
         tall.FillHeight = 600;
-        var short_ = Options(IptvMovie());
-        short_.FillHeight = 360;
+        var lower = Options(IptvMovie());
+        lower.FillHeight = 360;
 
         var first = await processor.ProcessImage(tall);
-        var second = await processor.ProcessImage(short_);
+        var second = await processor.ProcessImage(lower);
 
         second.Path.Should().NotBe(first.Path);
         using (var a = SKBitmap.Decode(first.Path))
