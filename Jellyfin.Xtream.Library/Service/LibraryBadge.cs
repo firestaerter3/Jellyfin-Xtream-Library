@@ -41,6 +41,10 @@ internal static class LibraryBadge
     /// <summary>The longest badge text drawn; anything longer is cut.</summary>
     internal const int MaxTextLength = 12;
 
+    // Paths are case-insensitive on Windows only.
+    private static readonly StringComparison PathComparison =
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
     /// <summary>
     /// Returns the badge text to draw, or null when the badge is off or the text is empty.
     /// </summary>
@@ -106,7 +110,7 @@ internal static class LibraryBadge
         foreach (var root in roots)
         {
             if (itemPath.Length > root.Length + 1 &&
-                itemPath.StartsWith(root, StringComparison.Ordinal) &&
+                itemPath.StartsWith(root, PathComparison) &&
                 (itemPath[root.Length] == '/' || itemPath[root.Length] == Path.DirectorySeparatorChar))
             {
                 return true;
@@ -114,6 +118,23 @@ internal static class LibraryBadge
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Whether an image is a local file in a format the badge is drawn on. A remote image, or a GIF
+    /// or SVG, is served plain, so it must keep the server's own tag.
+    /// </summary>
+    /// <param name="imagePath">The image's path.</param>
+    /// <returns>True for a local JPEG, PNG or WebP file path.</returns>
+    internal static bool IsDrawableLocalImage(string? imagePath)
+    {
+        if (string.IsNullOrEmpty(imagePath) || !Path.IsPathRooted(imagePath) ||
+            imagePath.Contains("://", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return LibraryBadgeRenderer.FormatFor(Path.GetExtension(imagePath)) is not null;
     }
 
     /// <summary>

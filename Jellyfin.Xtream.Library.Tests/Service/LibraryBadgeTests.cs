@@ -137,7 +137,7 @@ public sealed class LibraryBadgeTests : IDisposable
     }
 
     private static ImageProcessingOptions Options(BaseItem item, ImageType type = ImageType.Primary)
-        => new() { Item = item, Image = new ItemImageInfo { Type = type, Path = "/unused" } };
+        => new() { Item = item, Image = new ItemImageInfo { Type = type, Path = "/posters/poster.jpg" } };
 
     private static Movie IptvMovie() => new() { Path = Library + "/Movies/Film (2020)/Film (2020).strm" };
 
@@ -237,7 +237,7 @@ public sealed class LibraryBadgeTests : IDisposable
         var movie = IptvMovie();
 
         (await processor.ProcessImage(Options(movie))).Path.Should().Be(poster);
-        processor.GetImageCacheTag(movie, new ItemImageInfo { Type = ImageType.Primary, Path = "/unused" }).Should().Be("0123456789abcdef0123456789abcdef");
+        processor.GetImageCacheTag(movie, new ItemImageInfo { Type = ImageType.Primary, Path = "/posters/poster.jpg" }).Should().Be("0123456789abcdef0123456789abcdef");
     }
 
     [Fact]
@@ -245,13 +245,13 @@ public sealed class LibraryBadgeTests : IDisposable
     {
         var enabled = true;
         var (processor, _) = Wrapper(Poster(), () => Config(enabled));
-        var primary = new ItemImageInfo { Type = ImageType.Primary, Path = "/unused" };
+        var primary = new ItemImageInfo { Type = ImageType.Primary, Path = "/posters/poster.jpg" };
         const string Plain = "0123456789abcdef0123456789abcdef";
 
         string on = processor.GetImageCacheTag(IptvMovie(), primary);
         on.Should().NotBe(Plain);
         processor.GetImageCacheTag(new Movie { Path = "/media/movies/Film/Film.mkv" }, primary).Should().Be(Plain);
-        processor.GetImageCacheTag(IptvMovie(), new ItemImageInfo { Type = ImageType.Backdrop, Path = "/unused" }).Should().Be(Plain);
+        processor.GetImageCacheTag(IptvMovie(), new ItemImageInfo { Type = ImageType.Backdrop, Path = "/posters/poster.jpg" }).Should().Be(Plain);
 
         enabled = false;
         processor.GetImageCacheTag(IptvMovie(), primary).Should().Be(Plain);
@@ -263,12 +263,62 @@ public sealed class LibraryBadgeTests : IDisposable
         var inner = new Mock<IImageProcessor>();
         inner.Setup(p => p.GetImageCacheTag(It.IsAny<MediaBrowser.Model.Dto.BaseItemDto>(), It.IsAny<ItemImageInfo>())).Returns("0123456789abcdef0123456789abcdef");
         var processor = new LibraryBadgeImageProcessor(inner.Object, _dir, () => Config(true), NullLogger.Instance);
-        var primary = new ItemImageInfo { Type = ImageType.Primary, Path = "/unused" };
+        var primary = new ItemImageInfo { Type = ImageType.Primary, Path = "/posters/poster.jpg" };
 
         processor.GetImageCacheTag(new MediaBrowser.Model.Dto.BaseItemDto { Type = BaseItemKind.Series, Path = Library + "/Series/Show" }, primary)
             .Should().Be(LibraryBadge.CombineTag("0123456789abcdef0123456789abcdef", "IPTV"));
         processor.GetImageCacheTag(new MediaBrowser.Model.Dto.BaseItemDto { Type = BaseItemKind.Series }, primary)
             .Should().Be("0123456789abcdef0123456789abcdef");
+    }
+
+    [Theory]
+    [InlineData("https://image.example/poster.jpg")]
+    [InlineData("/posters/poster.gif")]
+    [InlineData("/posters/poster.svg")]
+    [InlineData("poster.jpg")]
+    public async Task AnImageItCannotDrawOnKeepsTheTagAndIsServedPlain(string imagePath)
+    {
+        string poster = Poster();
+        var (processor, _) = Wrapper(poster, () => Config(enabled: true));
+        var image = new ItemImageInfo { Type = ImageType.Primary, Path = imagePath };
+
+        processor.GetImageCacheTag(IptvMovie(), image).Should().Be("0123456789abcdef0123456789abcdef");
+        (await processor.ProcessImage(new ImageProcessingOptions { Item = IptvMovie(), Image = image })).Path.Should().Be(poster);
+    }
+
+    [Theory]
+    [InlineData("/posters/poster.jpg", true)]
+    [InlineData("/posters/poster.JPEG", true)]
+    [InlineData("/posters/poster.png", true)]
+    [InlineData("/posters/poster.webp", true)]
+    [InlineData("/posters/poster.gif", false)]
+    [InlineData("http://image.example/poster.jpg", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void DrawableLocalImage(string? path, bool expected)
+    {
+        LibraryBadge.IsDrawableLocalImage(path).Should().Be(expected);
+    }
+
+    [Fact]
+    public void AnInstanceRegisteredProcessorIsNotDisposedByTheWrapper()
+    {
+        var inner = new Mock<IImageProcessor>();
+        var disposable = inner.As<IDisposable>();
+        var paths = new Mock<IApplicationPaths>();
+        paths.Setup(p => p.ImageCachePath).Returns(_dir);
+        var services = new ServiceCollection();
+        services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
+        services.AddSingleton(paths.Object);
+        services.AddSingleton(inner.Object);
+        LibraryBadgeImageProcessor.Decorate(services);
+
+        using (var provider = services.BuildServiceProvider())
+        {
+            provider.GetRequiredService<IImageProcessor>();
+        }
+
+        disposable.Verify(d => d.Dispose(), Times.Never);
     }
 
     // ---- registration ----

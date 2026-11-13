@@ -44,6 +44,7 @@ internal sealed class LibraryBadgeImageProcessor : IImageProcessor, IDisposable
     private readonly LibraryBadgeRenderer _renderer;
     private readonly Func<PluginConfiguration?> _config;
     private readonly ILogger _logger;
+    private readonly bool _ownsInner;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LibraryBadgeImageProcessor"/> class.
@@ -52,9 +53,11 @@ internal sealed class LibraryBadgeImageProcessor : IImageProcessor, IDisposable
     /// <param name="cacheDirectory">Folder for the badged copies.</param>
     /// <param name="config">Returns the current plugin configuration, or null.</param>
     /// <param name="logger">The logger.</param>
-    public LibraryBadgeImageProcessor(IImageProcessor inner, string cacheDirectory, Func<PluginConfiguration?> config, ILogger logger)
+    /// <param name="ownsInner">Whether this wrapper created <paramref name="inner"/> and so disposes it.</param>
+    public LibraryBadgeImageProcessor(IImageProcessor inner, string cacheDirectory, Func<PluginConfiguration?> config, ILogger logger, bool ownsInner = false)
     {
         _inner = inner;
+        _ownsInner = ownsInner;
         _renderer = new LibraryBadgeRenderer(cacheDirectory);
         _config = config;
         _logger = logger;
@@ -88,7 +91,8 @@ internal sealed class LibraryBadgeImageProcessor : IImageProcessor, IDisposable
                 CreateInner(sp, descriptor),
                 Path.Combine(sp.GetRequiredService<IApplicationPaths>().ImageCachePath, "xtream-library-badge"),
                 CurrentConfiguration,
-                sp.GetRequiredService<ILogger<LibraryBadgeImageProcessor>>()),
+                sp.GetRequiredService<ILogger<LibraryBadgeImageProcessor>>(),
+                ownsInner: descriptor.ImplementationInstance is null),
             descriptor.Lifetime));
         return true;
     }
@@ -103,7 +107,7 @@ internal sealed class LibraryBadgeImageProcessor : IImageProcessor, IDisposable
         {
             text = options.Item is null || options.Image is null
                 ? null
-                : BadgeTextFor(options.Item.GetBaseItemKind(), options.Item.Path, options.Image.Type);
+                : BadgeTextFor(options.Item.GetBaseItemKind(), options.Item.Path, options.Image);
         }
 #pragma warning disable CA1031 // A failure here must serve the plain image, never break image serving.
         catch (Exception ex)
@@ -141,7 +145,7 @@ internal sealed class LibraryBadgeImageProcessor : IImageProcessor, IDisposable
     public string GetImageCacheTag(BaseItem item, ItemImageInfo image)
     {
         string tag = _inner.GetImageCacheTag(item, image);
-        string? text = SafeBadgeText(() => BadgeTextFor(item.GetBaseItemKind(), item.Path, image.Type));
+        string? text = SafeBadgeText(() => BadgeTextFor(item.GetBaseItemKind(), item.Path, image));
         return text is null ? tag : LibraryBadge.CombineTag(tag, text);
     }
 
@@ -149,7 +153,7 @@ internal sealed class LibraryBadgeImageProcessor : IImageProcessor, IDisposable
     public string GetImageCacheTag(BaseItemDto item, ItemImageInfo image)
     {
         string tag = _inner.GetImageCacheTag(item, image);
-        string? text = SafeBadgeText(() => BadgeTextFor(item.Type, item.Path, image.Type));
+        string? text = SafeBadgeText(() => BadgeTextFor(item.Type, item.Path, image));
         return text is null ? tag : LibraryBadge.CombineTag(tag, text);
     }
 
@@ -188,7 +192,10 @@ internal sealed class LibraryBadgeImageProcessor : IImageProcessor, IDisposable
     public void Dispose()
     {
         _renderer.Dispose();
-        (_inner as IDisposable)?.Dispose();
+        if (_ownsInner)
+        {
+            (_inner as IDisposable)?.Dispose();
+        }
     }
 
     private static IImageProcessor CreateInner(IServiceProvider sp, ServiceDescriptor descriptor)
@@ -218,9 +225,21 @@ internal sealed class LibraryBadgeImageProcessor : IImageProcessor, IDisposable
         }
     }
 
-    private string? BadgeTextFor(BaseItemKind kind, string? itemPath, ImageType imageType)
+    /// <summary>
+    /// Returns the badge text for an image, or null when it gets no badge. The tag and the served
+    /// image both come from this one rule, so a client never gets a badged tag for an image that is
+    /// served plain by design. Only a local JPEG, PNG or WebP poster qualifies: those are the files
+    /// the renderer draws on, and the server's processed copy of one is again one of those formats.
+    /// </summary>
+    /// <param name="kind">The item's kind.</param>
+    /// <param name="itemPath">The item's path.</param>
+    /// <param name="image">The image.</param>
+    /// <returns>The badge text, or null.</returns>
+    private string? BadgeTextFor(BaseItemKind kind, string? itemPath, ItemImageInfo image)
     {
-        if (imageType != ImageType.Primary || (kind != BaseItemKind.Movie && kind != BaseItemKind.Series))
+        ImageType imageType = image.Type;
+        if (imageType != ImageType.Primary || (kind != BaseItemKind.Movie && kind != BaseItemKind.Series) ||
+            !LibraryBadge.IsDrawableLocalImage(image.Path))
         {
             return null;
         }
