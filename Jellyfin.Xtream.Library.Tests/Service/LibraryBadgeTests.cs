@@ -237,7 +237,7 @@ public sealed class LibraryBadgeTests : IDisposable
         var movie = IptvMovie();
 
         (await processor.ProcessImage(Options(movie))).Path.Should().Be(poster);
-        processor.GetImageCacheTag(movie, new ItemImageInfo { Type = ImageType.Primary }).Should().Be("0123456789abcdef0123456789abcdef");
+        processor.GetImageCacheTag(movie, new ItemImageInfo { Type = ImageType.Primary, Path = "/unused" }).Should().Be("0123456789abcdef0123456789abcdef");
     }
 
     [Fact]
@@ -245,13 +245,13 @@ public sealed class LibraryBadgeTests : IDisposable
     {
         var enabled = true;
         var (processor, _) = Wrapper(Poster(), () => Config(enabled));
-        var primary = new ItemImageInfo { Type = ImageType.Primary };
+        var primary = new ItemImageInfo { Type = ImageType.Primary, Path = "/unused" };
         const string Plain = "0123456789abcdef0123456789abcdef";
 
         string on = processor.GetImageCacheTag(IptvMovie(), primary);
         on.Should().NotBe(Plain);
         processor.GetImageCacheTag(new Movie { Path = "/media/movies/Film/Film.mkv" }, primary).Should().Be(Plain);
-        processor.GetImageCacheTag(IptvMovie(), new ItemImageInfo { Type = ImageType.Backdrop }).Should().Be(Plain);
+        processor.GetImageCacheTag(IptvMovie(), new ItemImageInfo { Type = ImageType.Backdrop, Path = "/unused" }).Should().Be(Plain);
 
         enabled = false;
         processor.GetImageCacheTag(IptvMovie(), primary).Should().Be(Plain);
@@ -263,7 +263,7 @@ public sealed class LibraryBadgeTests : IDisposable
         var inner = new Mock<IImageProcessor>();
         inner.Setup(p => p.GetImageCacheTag(It.IsAny<MediaBrowser.Model.Dto.BaseItemDto>(), It.IsAny<ItemImageInfo>())).Returns("0123456789abcdef0123456789abcdef");
         var processor = new LibraryBadgeImageProcessor(inner.Object, _dir, () => Config(true), NullLogger.Instance);
-        var primary = new ItemImageInfo { Type = ImageType.Primary };
+        var primary = new ItemImageInfo { Type = ImageType.Primary, Path = "/unused" };
 
         processor.GetImageCacheTag(new MediaBrowser.Model.Dto.BaseItemDto { Type = BaseItemKind.Series, Path = Library + "/Series/Show" }, primary)
             .Should().Be(LibraryBadge.CombineTag("0123456789abcdef0123456789abcdef", "IPTV"));
