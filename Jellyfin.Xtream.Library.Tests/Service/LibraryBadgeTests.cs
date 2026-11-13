@@ -443,6 +443,106 @@ public sealed class LibraryBadgeTests : IDisposable
         PixelAt(episode.Path, b => (305, 165)).Blue.Should().BeLessThan(100);
     }
 
+    [Theory]
+    [InlineData(null, 600, true, 320, 180, 3.333f)]
+    [InlineData(400, 600, true, 320, 180, 3.333f)]
+    [InlineData(400, 600, false, 320, 180, 1.25f)]
+    [InlineData(null, 300, false, 200, 300, 1f)]
+    [InlineData(null, 150, true, 200, 300, 1f)]
+    [InlineData(null, 2000, true, 200, 300, 4f)]
+    [InlineData(null, null, true, 200, 300, 1f)]
+    [InlineData(null, 304, true, 200, 300, 1f)]
+    [InlineData(null, 20000, false, 3840, 2160, 1f)]
+    [InlineData(null, 20000, false, 1000, 600, 2.16f)]
+    public void ScaleEnlargesOnlyWhatTheServerCouldNotDeliver(int? width, int? height, bool fill, int imageWidth, int imageHeight, float expected)
+    {
+        new LibraryBadgeTargetSize(width, height, fill).ScaleFor(imageWidth, imageHeight).Should().BeApproximately(expected, 0.01f);
+    }
+
+    private static ImageProcessingOptions Sized(Action<ImageProcessingOptions> set)
+    {
+        var options = Options(IptvMovie());
+        set(options);
+        return options;
+    }
+
+    [Fact]
+    public void TargetSizeComesFromFillThenMaxThenExact()
+    {
+        LibraryBadgeTargetSize.From(Sized(o => { o.FillHeight = 600; o.FillWidth = 400; o.MaxHeight = 900; }))
+            .Should().Be(new LibraryBadgeTargetSize(400, 600, true));
+        LibraryBadgeTargetSize.From(Sized(o => o.MaxHeight = 900))
+            .Should().Be(new LibraryBadgeTargetSize(null, 900, false));
+        LibraryBadgeTargetSize.From(Sized(o => o.Width = 300))
+            .Should().Be(new LibraryBadgeTargetSize(300, null, false));
+        LibraryBadgeTargetSize.From(Sized(_ => { }))
+            .Should().Be(new LibraryBadgeTargetSize(null, null, false));
+    }
+
+    [Fact]
+    public async Task ASmallSourceIsEnlargedToTheRequestedSizeBeforeTheBadgeIsDrawn()
+    {
+        string small = Poster("small.jpg", 320, 180);
+        var (processor, _) = Wrapper(small, () => Config(enabled: true));
+        var options = Options(IptvMovie());
+        options.FillHeight = 600;
+
+        var result = await processor.ProcessImage(options);
+
+        using var bitmap = SKBitmap.Decode(result.Path);
+        bitmap.Height.Should().Be(600);
+        bitmap.Width.Should().BeInRange(1066, 1067);
+
+        // The badge (bottom left of the visible 400 px middle part, x from 333) is drawn at the enlarged size: about 44 px tall.
+        int dark = 0;
+        for (int y = 0; y < 600; y++)
+        {
+            if (bitmap.GetPixel(356, y).Blue < 100)
+            {
+                dark++;
+            }
+        }
+
+        dark.Should().BeInRange(35, 55);
+    }
+
+    [Fact]
+    public async Task TwoRequestedSizesOfTheSameImageGetTwoCopies()
+    {
+        string small = Poster("small2.jpg", 320, 180);
+        var (processor, _) = Wrapper(small, () => Config(enabled: true));
+        var tall = Options(IptvMovie());
+        tall.FillHeight = 600;
+        var lower = Options(IptvMovie());
+        lower.FillHeight = 360;
+
+        var first = await processor.ProcessImage(tall);
+        var second = await processor.ProcessImage(lower);
+
+        second.Path.Should().NotBe(first.Path);
+        using (var a = SKBitmap.Decode(first.Path))
+        using (var b = SKBitmap.Decode(second.Path))
+        {
+            a.Height.Should().Be(600);
+            b.Height.Should().Be(360);
+        }
+    }
+
+    [Fact]
+    public async Task ARequestTheServerCanServeIsNotEnlarged()
+    {
+        string poster = Poster("big.jpg", 200, 300);
+        var (processor, _) = Wrapper(poster, () => Config(enabled: true));
+        var options = Options(IptvMovie());
+        options.FillHeight = 300;
+
+        var result = await processor.ProcessImage(options);
+
+        using var bitmap = SKBitmap.Decode(result.Path);
+        bitmap.Width.Should().Be(200);
+        bitmap.Height.Should().Be(300);
+    }
+
     [Fact]
     public void OnALandscapeImageTheBadgeIsSizedToTheShorterSide()
     {
