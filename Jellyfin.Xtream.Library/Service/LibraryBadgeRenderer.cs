@@ -55,8 +55,9 @@ internal sealed class LibraryBadgeRenderer : IDisposable
     /// <param name="text">The badge text.</param>
     /// <param name="corner">The corner the badge is drawn in.</param>
     /// <param name="posterArea">Whether the image is shown as a portrait poster; see <see cref="DrawBadge"/>.</param>
+    /// <param name="targetSize">The size the client asked for; a smaller image is enlarged to it before drawing.</param>
     /// <returns>The copy's path, or null when the format is not one this draws on or the file cannot be decoded.</returns>
-    public async Task<string?> GetOrCreateAsync(string sourcePath, DateTime sourceModified, string text, LibraryBadgeCorner corner, bool posterArea)
+    public async Task<string?> GetOrCreateAsync(string sourcePath, DateTime sourceModified, string text, LibraryBadgeCorner corner, bool posterArea, LibraryBadgeTargetSize targetSize)
     {
         string extension = Path.GetExtension(sourcePath);
         SKEncodedImageFormat? format = FormatFor(extension);
@@ -65,7 +66,7 @@ internal sealed class LibraryBadgeRenderer : IDisposable
             return null;
         }
 
-        string target = CachePathFor(_cacheDirectory, sourcePath, sourceModified, text, corner, posterArea, extension);
+        string target = CachePathFor(_cacheDirectory, sourcePath, sourceModified, text, corner, posterArea, targetSize, extension);
         if (File.Exists(target))
         {
             return target;
@@ -79,7 +80,7 @@ internal sealed class LibraryBadgeRenderer : IDisposable
                 return target;
             }
 
-            byte[]? encoded = Render(sourcePath, text, corner, posterArea, format.Value);
+            byte[]? encoded = Render(sourcePath, text, corner, posterArea, targetSize, format.Value);
             if (encoded is null)
             {
                 return null;
@@ -154,13 +155,14 @@ internal sealed class LibraryBadgeRenderer : IDisposable
     /// <param name="text">The badge text.</param>
     /// <param name="corner">The corner the badge is drawn in.</param>
     /// <param name="posterArea">Whether the badge is kept inside the poster area.</param>
+    /// <param name="targetSize">The size the client asked for.</param>
     /// <param name="extension">Extension of the copy, including the dot.</param>
     /// <returns>The cache path.</returns>
-    internal static string CachePathFor(string cacheDirectory, string sourcePath, DateTime sourceModified, string text, LibraryBadgeCorner corner, bool posterArea, string extension)
+    internal static string CachePathFor(string cacheDirectory, string sourcePath, DateTime sourceModified, string text, LibraryBadgeCorner corner, bool posterArea, LibraryBadgeTargetSize targetSize, string extension)
     {
         string input = string.Create(
             CultureInfo.InvariantCulture,
-            $"{sourcePath}|{sourceModified.Ticks}|{text}|{corner}|{posterArea}|{LibraryBadge.DrawingVersion}");
+            $"{sourcePath}|{sourceModified.Ticks}|{text}|{corner}|{posterArea}|{targetSize.Width}x{targetSize.Height}{(targetSize.Fill ? "f" : "m")}|{LibraryBadge.DrawingVersion}");
         string key = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(input)).AsSpan(0, 16));
         return Path.Combine(cacheDirectory, key[..2], key + extension.ToLowerInvariant());
     }
@@ -172,9 +174,10 @@ internal sealed class LibraryBadgeRenderer : IDisposable
     /// <param name="text">The badge text.</param>
     /// <param name="corner">The corner the badge is drawn in.</param>
     /// <param name="posterArea">Whether the badge is kept inside the poster area.</param>
+    /// <param name="targetSize">The size the client asked for; a smaller image is enlarged to it first, so the badge is drawn sharp at the size it is shown.</param>
     /// <param name="format">Output format.</param>
     /// <returns>The encoded image, or null when it cannot be decoded or is animated.</returns>
-    internal static byte[]? Render(string sourcePath, string text, LibraryBadgeCorner corner, bool posterArea, SKEncodedImageFormat format)
+    internal static byte[]? Render(string sourcePath, string text, LibraryBadgeCorner corner, bool posterArea, LibraryBadgeTargetSize targetSize, SKEncodedImageFormat format)
     {
         using var codec = SKCodec.Create(sourcePath);
 
@@ -192,7 +195,8 @@ internal sealed class LibraryBadgeRenderer : IDisposable
 
         // The copy is written without EXIF data, so a rotation the source only states in EXIF
         // has to be applied to the pixels, or clients would show the copy sideways.
-        using var bitmap = Orient(decoded, codec.EncodedOrigin);
+        using var upright = Orient(decoded, codec.EncodedOrigin);
+        using var bitmap = Enlarge(upright, targetSize.ScaleFor(upright.Width, upright.Height));
 
         using (var canvas = new SKCanvas(bitmap))
         {
@@ -237,6 +241,27 @@ internal sealed class LibraryBadgeRenderer : IDisposable
         canvas.SetMatrix(matrix);
         canvas.DrawBitmap(source, 0, 0);
         return upright;
+    }
+
+    /// <summary>
+    /// Returns a copy of <paramref name="source"/> enlarged by <paramref name="scale"/>, or an
+    /// unchanged copy at scale 1. The picture itself gets no sharper; only the badge drawn on it
+    /// afterwards does.
+    /// </summary>
+    /// <param name="source">The image.</param>
+    /// <param name="scale">The factor, at least 1.</param>
+    /// <returns>A new bitmap; the caller disposes it.</returns>
+    internal static SKBitmap Enlarge(SKBitmap source, float scale)
+    {
+        int width = Math.Max(1, (int)Math.Round(source.Width * scale));
+        int height = Math.Max(1, (int)Math.Round(source.Height * scale));
+        var info = new SKImageInfo(width, height, source.ColorType, source.AlphaType, source.ColorSpace);
+        if (width == source.Width && height == source.Height)
+        {
+            return source.Copy();
+        }
+
+        return source.Resize(info, new SKSamplingOptions(SKCubicResampler.Mitchell));
     }
 
     /// <summary>

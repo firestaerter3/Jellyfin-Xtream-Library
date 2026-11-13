@@ -124,7 +124,7 @@ internal sealed class LibraryBadgeImageProcessor : IImageProcessor, IDisposable
 
         try
         {
-            string? badged = await _renderer.GetOrCreateAsync(result.Path, result.DateModified, badge.Text, badge.Corner, LibraryBadge.IsPosterKind(options.Item!.GetBaseItemKind())).ConfigureAwait(false);
+            string? badged = await _renderer.GetOrCreateAsync(result.Path, result.DateModified, badge.Text, badge.Corner, LibraryBadge.IsPosterKind(options.Item!.GetBaseItemKind()), LibraryBadgeTargetSize.From(options)).ConfigureAwait(false);
             if (badged is null)
             {
                 return result;

@@ -37,7 +37,7 @@ internal static class LibraryBadge
     /// Version of the badge drawing. Raising it changes every badged image tag, so clients fetch
     /// the new drawing instead of keeping the old one.
     /// </summary>
-    internal const int DrawingVersion = 2;
+    internal const int DrawingVersion = 3;
 
     /// <summary>The longest badge text drawn; anything longer is cut.</summary>
     internal const int MaxTextLength = 12;
