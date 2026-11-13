@@ -452,6 +452,8 @@ public sealed class LibraryBadgeTests : IDisposable
     [InlineData(null, 2000, true, 200, 300, 4f)]
     [InlineData(null, null, true, 200, 300, 1f)]
     [InlineData(null, 304, true, 200, 300, 1f)]
+    [InlineData(null, 20000, false, 3840, 2160, 1f)]
+    [InlineData(null, 20000, false, 1000, 600, 2.16f)]
     public void ScaleEnlargesOnlyWhatTheServerCouldNotDeliver(int? width, int? height, bool fill, int imageWidth, int imageHeight, float expected)
     {
         new LibraryBadgeTargetSize(width, height, fill).ScaleFor(imageWidth, imageHeight).Should().BeApproximately(expected, 0.01f);
@@ -502,6 +504,28 @@ public sealed class LibraryBadgeTests : IDisposable
         }
 
         dark.Should().BeInRange(35, 55);
+    }
+
+    [Fact]
+    public async Task TwoRequestedSizesOfTheSameImageGetTwoCopies()
+    {
+        string small = Poster("small2.jpg", 320, 180);
+        var (processor, _) = Wrapper(small, () => Config(enabled: true));
+        var tall = Options(IptvMovie());
+        tall.FillHeight = 600;
+        var short_ = Options(IptvMovie());
+        short_.FillHeight = 360;
+
+        var first = await processor.ProcessImage(tall);
+        var second = await processor.ProcessImage(short_);
+
+        second.Path.Should().NotBe(first.Path);
+        using (var a = SKBitmap.Decode(first.Path))
+        using (var b = SKBitmap.Decode(second.Path))
+        {
+            a.Height.Should().Be(600);
+            b.Height.Should().Be(360);
+        }
     }
 
     [Fact]

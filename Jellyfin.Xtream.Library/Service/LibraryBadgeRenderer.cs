@@ -196,7 +196,8 @@ internal sealed class LibraryBadgeRenderer : IDisposable
         // The copy is written without EXIF data, so a rotation the source only states in EXIF
         // has to be applied to the pixels, or clients would show the copy sideways.
         using var upright = Orient(decoded, codec.EncodedOrigin);
-        using var bitmap = Enlarge(upright, targetSize.ScaleFor(upright.Width, upright.Height));
+        using var enlarged = Enlarge(upright, targetSize.ScaleFor(upright.Width, upright.Height));
+        var bitmap = enlarged ?? upright;
 
         using (var canvas = new SKCanvas(bitmap))
         {
@@ -244,23 +245,23 @@ internal sealed class LibraryBadgeRenderer : IDisposable
     }
 
     /// <summary>
-    /// Returns a copy of <paramref name="source"/> enlarged by <paramref name="scale"/>, or an
-    /// unchanged copy at scale 1. The picture itself gets no sharper; only the badge drawn on it
+    /// Returns a copy of <paramref name="source"/> enlarged by <paramref name="scale"/>, or null
+    /// when it stays the same size. The picture itself gets no sharper; only the badge drawn on it
     /// afterwards does.
     /// </summary>
     /// <param name="source">The image.</param>
     /// <param name="scale">The factor, at least 1.</param>
-    /// <returns>A new bitmap; the caller disposes it.</returns>
-    internal static SKBitmap Enlarge(SKBitmap source, float scale)
+    /// <returns>A new bitmap the caller disposes, or null.</returns>
+    internal static SKBitmap? Enlarge(SKBitmap source, float scale)
     {
         int width = Math.Max(1, (int)Math.Round(source.Width * scale));
         int height = Math.Max(1, (int)Math.Round(source.Height * scale));
-        var info = new SKImageInfo(width, height, source.ColorType, source.AlphaType, source.ColorSpace);
-        if (width == source.Width && height == source.Height)
+        if (width <= source.Width && height <= source.Height)
         {
-            return source.Copy();
+            return null;
         }
 
+        var info = new SKImageInfo(width, height, source.ColorType, source.AlphaType, source.ColorSpace);
         return source.Resize(info, new SKSamplingOptions(SKCubicResampler.Mitchell));
     }
 

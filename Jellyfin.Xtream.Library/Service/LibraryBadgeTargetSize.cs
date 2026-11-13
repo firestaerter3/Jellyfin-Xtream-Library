@@ -29,6 +29,12 @@ internal readonly record struct LibraryBadgeTargetSize(int? Width, int? Height, 
     internal const float MaxScale = 4f;
 
     /// <summary>
+    /// The longest side an enlarged image may get. A client can ask for any size, so without this a
+    /// large image could be enlarged to a bitmap of hundreds of megabytes.
+    /// </summary>
+    internal const int MaxSide = 2160;
+
+    /// <summary>
     /// Returns the size a request asks for: fill size first, then maximum size, then exact size.
     /// </summary>
     /// <param name="options">The request's options.</param>
@@ -50,7 +56,8 @@ internal readonly record struct LibraryBadgeTargetSize(int? Width, int? Height, 
 
     /// <summary>
     /// Returns how much an image of the given size must be enlarged to reach this size, between 1
-    /// (never smaller) and <see cref="MaxScale"/>.
+    /// (never smaller) and <see cref="MaxScale"/>, and never past <see cref="MaxSide"/> on the
+    /// longest side.
     /// </summary>
     /// <param name="width">The image width.</param>
     /// <param name="height">The image height.</param>
@@ -74,7 +81,8 @@ internal readonly record struct LibraryBadgeTargetSize(int? Width, int? Height, 
 
         // Rounding the requested size in the server can leave an image a pixel short; that is not
         // worth a new copy.
-        return scale <= 1.02f ? 1f : Math.Min(scale, MaxScale);
+        scale = Math.Min(scale, Math.Min(MaxScale, (float)MaxSide / Math.Max(width, height)));
+        return scale <= 1.02f ? 1f : scale;
     }
 
     private static int? Positive(int? value) => value is > 0 ? value : null;
