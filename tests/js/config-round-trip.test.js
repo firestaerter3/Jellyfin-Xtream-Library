@@ -103,6 +103,13 @@ function fixture() {
         ShowCatchupInJellyfin: true,
         CatchupBlockMinutes: 0,
         CatchupTimeShiftMinutes: -60,
+        EnableLibraryBadge: true,
+        LibraryBadgeText: 'STREAM',
+        LibraryBadgeCorner: 'TopLeft',
+        LibraryBadgeOnMovies: false,
+        LibraryBadgeOnSeries: false,
+        LibraryBadgeOnSeasons: false,
+        LibraryBadgeOnEpisodes: false,
         // Not on the page at all; it has to survive because saveConfig starts from the stored copy.
         SomeFieldThePageNeverShows: 'kept',
     };

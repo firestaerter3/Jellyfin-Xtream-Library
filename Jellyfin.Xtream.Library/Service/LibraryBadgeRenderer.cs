@@ -53,8 +53,9 @@ internal sealed class LibraryBadgeRenderer : IDisposable
     /// <param name="sourcePath">The image to copy; the server's processed image or the original.</param>
     /// <param name="sourceModified">The source's modification date, part of the cache key.</param>
     /// <param name="text">The badge text.</param>
+    /// <param name="corner">The corner the badge is drawn in.</param>
     /// <returns>The copy's path, or null when the format is not one this draws on or the file cannot be decoded.</returns>
-    public async Task<string?> GetOrCreateAsync(string sourcePath, DateTime sourceModified, string text)
+    public async Task<string?> GetOrCreateAsync(string sourcePath, DateTime sourceModified, string text, LibraryBadgeCorner corner)
     {
         string extension = Path.GetExtension(sourcePath);
         SKEncodedImageFormat? format = FormatFor(extension);
@@ -63,7 +64,7 @@ internal sealed class LibraryBadgeRenderer : IDisposable
             return null;
         }
 
-        string target = CachePathFor(_cacheDirectory, sourcePath, sourceModified, text, extension);
+        string target = CachePathFor(_cacheDirectory, sourcePath, sourceModified, text, corner, extension);
         if (File.Exists(target))
         {
             return target;
@@ -77,7 +78,7 @@ internal sealed class LibraryBadgeRenderer : IDisposable
                 return target;
             }
 
-            byte[]? encoded = Render(sourcePath, text, format.Value);
+            byte[]? encoded = Render(sourcePath, text, corner, format.Value);
             if (encoded is null)
             {
                 return null;
@@ -144,19 +145,20 @@ internal sealed class LibraryBadgeRenderer : IDisposable
 
     /// <summary>
     /// Returns where the badged copy of an image is kept. The key covers the source path, its date,
-    /// the text and the drawing version, so a changed source or text gets a new copy.
+    /// the text, the corner and the drawing version, so a changed source, text or corner gets a new copy.
     /// </summary>
     /// <param name="cacheDirectory">The cache folder.</param>
     /// <param name="sourcePath">The source image.</param>
     /// <param name="sourceModified">The source's modification date.</param>
     /// <param name="text">The badge text.</param>
+    /// <param name="corner">The corner the badge is drawn in.</param>
     /// <param name="extension">Extension of the copy, including the dot.</param>
     /// <returns>The cache path.</returns>
-    internal static string CachePathFor(string cacheDirectory, string sourcePath, DateTime sourceModified, string text, string extension)
+    internal static string CachePathFor(string cacheDirectory, string sourcePath, DateTime sourceModified, string text, LibraryBadgeCorner corner, string extension)
     {
         string input = string.Create(
             CultureInfo.InvariantCulture,
-            $"{sourcePath}|{sourceModified.Ticks}|{text}|{LibraryBadge.DrawingVersion}");
+            $"{sourcePath}|{sourceModified.Ticks}|{text}|{corner}|{LibraryBadge.DrawingVersion}");
         string key = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(input)).AsSpan(0, 16));
         return Path.Combine(cacheDirectory, key[..2], key + extension.ToLowerInvariant());
     }
@@ -166,9 +168,10 @@ internal sealed class LibraryBadgeRenderer : IDisposable
     /// </summary>
     /// <param name="sourcePath">The image.</param>
     /// <param name="text">The badge text.</param>
+    /// <param name="corner">The corner the badge is drawn in.</param>
     /// <param name="format">Output format.</param>
     /// <returns>The encoded image, or null when it cannot be decoded.</returns>
-    internal static byte[]? Render(string sourcePath, string text, SKEncodedImageFormat format)
+    internal static byte[]? Render(string sourcePath, string text, LibraryBadgeCorner corner, SKEncodedImageFormat format)
     {
         using var bitmap = SKBitmap.Decode(sourcePath);
         if (bitmap is null || bitmap.Width < 1 || bitmap.Height < 1)
@@ -178,7 +181,7 @@ internal sealed class LibraryBadgeRenderer : IDisposable
 
         using (var canvas = new SKCanvas(bitmap))
         {
-            DrawBadge(canvas, bitmap.Width, bitmap.Height, text);
+            DrawBadge(canvas, bitmap.Width, bitmap.Height, text, corner);
         }
 
         using var image = SKImage.FromBitmap(bitmap);
@@ -187,15 +190,17 @@ internal sealed class LibraryBadgeRenderer : IDisposable
     }
 
     /// <summary>
-    /// Draws the badge in the bottom-left corner: white bold text on a dark rounded box, sized
-    /// relative to the image so it looks the same on every poster size.
+    /// Draws the badge in a corner: white bold text on a dark rounded box. It is sized relative to
+    /// the shorter side of the image, so it looks the same on a portrait poster and on a landscape
+    /// episode image of any size.
     /// </summary>
     /// <param name="canvas">The canvas.</param>
     /// <param name="width">Image width.</param>
     /// <param name="height">Image height.</param>
     /// <param name="text">The badge text.</param>
+    /// <param name="corner">The corner to draw it in.</param>
     /// <returns>The box drawn, for tests.</returns>
-    internal static SKRect DrawBadge(SKCanvas canvas, int width, int height, string text)
+    internal static SKRect DrawBadge(SKCanvas canvas, int width, int height, string text, LibraryBadgeCorner corner)
     {
         float shortSide = Math.Min(width, height);
         float boxHeight = Math.Max(10f, shortSide * 0.11f);
@@ -207,7 +212,13 @@ internal sealed class LibraryBadgeRenderer : IDisposable
         float textWidth = font.MeasureText(text);
 
         float boxWidth = Math.Min(textWidth + (2 * padding), width - (2 * margin));
-        var box = SKRect.Create(margin, height - margin - boxHeight, boxWidth, boxHeight);
+        bool right = corner is LibraryBadgeCorner.TopRight or LibraryBadgeCorner.BottomRight;
+        bool bottom = corner is LibraryBadgeCorner.BottomLeft or LibraryBadgeCorner.BottomRight;
+        var box = SKRect.Create(
+            right ? width - margin - boxWidth : margin,
+            bottom ? height - margin - boxHeight : margin,
+            boxWidth,
+            boxHeight);
 
         using (var fill = new SKPaint { Color = new SKColor(0x10, 0x10, 0x10, 0xD9), IsAntialias = true })
         {

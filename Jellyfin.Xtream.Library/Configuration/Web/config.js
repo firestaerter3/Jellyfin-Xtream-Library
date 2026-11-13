@@ -379,6 +379,13 @@ var XtreamLibraryConfig = (function () {
             document.getElementById('chkEnableMetadataLookup').checked = config.EnableMetadataLookup !== false;
             document.getElementById('chkEnableLibraryBadge').checked = config.EnableLibraryBadge === true;
             document.getElementById('txtLibraryBadgeText').value = config.LibraryBadgeText || 'IPTV';
+            document.getElementById('selLibraryBadgeCorner').value =
+                ['TopLeft', 'TopRight', 'BottomLeft', 'BottomRight'].indexOf(config.LibraryBadgeCorner) >= 0
+                    ? config.LibraryBadgeCorner : 'BottomRight';
+            document.getElementById('chkLibraryBadgeOnMovies').checked = config.LibraryBadgeOnMovies !== false;
+            document.getElementById('chkLibraryBadgeOnSeries').checked = config.LibraryBadgeOnSeries !== false;
+            document.getElementById('chkLibraryBadgeOnSeasons').checked = config.LibraryBadgeOnSeasons !== false;
+            document.getElementById('chkLibraryBadgeOnEpisodes').checked = config.LibraryBadgeOnEpisodes !== false;
             document.getElementById('chkUseBetaChannel').checked = config.UseBetaChannel === true;
             document.getElementById('txtMetadataParallelism').value = config.MetadataParallelism || 3;
 
@@ -492,6 +499,11 @@ var XtreamLibraryConfig = (function () {
             config.EnableMetadataLookup = document.getElementById('chkEnableMetadataLookup').checked;
             config.EnableLibraryBadge = document.getElementById('chkEnableLibraryBadge').checked;
             config.LibraryBadgeText = (document.getElementById('txtLibraryBadgeText').value || '').trim() || 'IPTV';
+            config.LibraryBadgeCorner = document.getElementById('selLibraryBadgeCorner').value || 'BottomRight';
+            config.LibraryBadgeOnMovies = document.getElementById('chkLibraryBadgeOnMovies').checked;
+            config.LibraryBadgeOnSeries = document.getElementById('chkLibraryBadgeOnSeries').checked;
+            config.LibraryBadgeOnSeasons = document.getElementById('chkLibraryBadgeOnSeasons').checked;
+            config.LibraryBadgeOnEpisodes = document.getElementById('chkLibraryBadgeOnEpisodes').checked;
             config.UseBetaChannel = document.getElementById('chkUseBetaChannel').checked;
             config.MetadataParallelism = parseInt(document.getElementById('txtMetadataParallelism').value) || 3;
 

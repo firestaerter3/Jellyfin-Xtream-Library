@@ -50,9 +50,9 @@ public sealed class LibraryBadgeTests : IDisposable
         Directory.Delete(_dir, recursive: true);
     }
 
-    private static PluginConfiguration Config(bool enabled, string text = "IPTV", string libraryPath = Library)
+    private static PluginConfiguration Config(bool enabled, string text = "IPTV", string libraryPath = Library, string corner = "BottomLeft")
     {
-        var config = new PluginConfiguration { EnableLibraryBadge = enabled, LibraryBadgeText = text };
+        var config = new PluginConfiguration { EnableLibraryBadge = enabled, LibraryBadgeText = text, LibraryBadgeCorner = corner };
         config.Providers.Add(new ProviderConfig { BaseUrl = "http://p1.example", LibraryPath = libraryPath });
         return config;
     }
@@ -79,13 +79,15 @@ public sealed class LibraryBadgeTests : IDisposable
     [InlineData(BaseItemKind.Movie, Library + "/Movies/Action/Film (2020)/Film (2020).strm", ImageType.Primary, true)]
     [InlineData(BaseItemKind.Series, Library + "/Series/Show (2019)", ImageType.Primary, true)]
     [InlineData(BaseItemKind.Movie, Library + "/Movies/Film (2020)/Film (2020).strm", ImageType.Backdrop, false)]
-    [InlineData(BaseItemKind.Season, Library + "/Series/Show (2019)/Season 1", ImageType.Primary, false)]
-    [InlineData(BaseItemKind.Episode, Library + "/Series/Show (2019)/Season 1/Show S01E01.strm", ImageType.Primary, false)]
+    [InlineData(BaseItemKind.Season, Library + "/Series/Show (2019)/Season 1", ImageType.Primary, true)]
+    [InlineData(BaseItemKind.Episode, Library + "/Series/Show (2019)/Season 1/Show S01E01.strm", ImageType.Primary, true)]
+    [InlineData(BaseItemKind.BoxSet, Library + "/Movies/Collection", ImageType.Primary, false)]
+    [InlineData(BaseItemKind.Episode, "/media/tv/Show/Season 1/Show S01E01.mkv", ImageType.Primary, false)]
     [InlineData(BaseItemKind.Movie, "/media/movies/Film (2020)/Film (2020).mkv", ImageType.Primary, false)]
     [InlineData(BaseItemKind.Movie, Library + "/MoviesExtra/Film (2020)/Film (2020).strm", ImageType.Primary, false)]
     [InlineData(BaseItemKind.Movie, Library + "/Movies", ImageType.Primary, false)]
     [InlineData(BaseItemKind.Movie, null, ImageType.Primary, false)]
-    public void AppliesOnlyToPrimaryPostersOfMoviesAndSeriesInThePluginFolders(BaseItemKind kind, string? path, ImageType type, bool expected)
+    public void AppliesOnlyToPrimaryImagesOfTheFourTypesInThePluginFolders(BaseItemKind kind, string? path, ImageType type, bool expected)
     {
         var roots = LibraryBadge.LibraryRoots(Config(true));
 
@@ -101,16 +103,64 @@ public sealed class LibraryBadgeTests : IDisposable
     }
 
     [Fact]
-    public void CombinedTagDiffersAndFollowsTheText()
+    public void CombinedTagDiffersAndFollowsEveryBadgeSetting()
     {
         string tag = "0123456789abcdef0123456789abcdef";
+        var style = new LibraryBadgeStyle("IPTV", LibraryBadgeCorner.BottomRight, "MSNE");
 
-        string iptv = LibraryBadge.CombineTag(tag, "IPTV");
+        string iptv = LibraryBadge.CombineTag(tag, style);
 
         iptv.Should().NotBe(tag).And.HaveLength(32).And.MatchRegex("^[0-9a-f]{32}$");
-        LibraryBadge.CombineTag(tag, "IPTV").Should().Be(iptv);
-        LibraryBadge.CombineTag(tag, "VOD").Should().NotBe(iptv);
-        LibraryBadge.CombineTag("ffffffffffffffffffffffffffffffff", "IPTV").Should().NotBe(iptv);
+        LibraryBadge.CombineTag(tag, style).Should().Be(iptv);
+        LibraryBadge.CombineTag(tag, style with { Text = "VOD" }).Should().NotBe(iptv);
+        LibraryBadge.CombineTag(tag, style with { Corner = LibraryBadgeCorner.TopLeft }).Should().NotBe(iptv);
+        LibraryBadge.CombineTag(tag, style with { Kinds = "MS" }).Should().NotBe(iptv);
+        LibraryBadge.CombineTag("ffffffffffffffffffffffffffffffff", style).Should().NotBe(iptv);
+    }
+
+    [Fact]
+    public void DefaultsAreBottomRightOnAllFourTypes()
+    {
+        var config = new PluginConfiguration();
+
+        config.EnableLibraryBadge.Should().BeFalse();
+        LibraryBadge.CornerFor(config).Should().Be(LibraryBadgeCorner.BottomRight);
+        config.EnableLibraryBadge = true;
+        LibraryBadge.StyleFor(config).Should().Be(new LibraryBadgeStyle("IPTV", LibraryBadgeCorner.BottomRight, "MSNE"));
+    }
+
+    [Theory]
+    [InlineData("TopLeft", LibraryBadgeCorner.TopLeft)]
+    [InlineData("topright", LibraryBadgeCorner.TopRight)]
+    [InlineData("BottomLeft", LibraryBadgeCorner.BottomLeft)]
+    [InlineData("BottomRight", LibraryBadgeCorner.BottomRight)]
+    [InlineData("", LibraryBadgeCorner.BottomRight)]
+    [InlineData(null, LibraryBadgeCorner.BottomRight)]
+    [InlineData("Middle", LibraryBadgeCorner.BottomRight)]
+    [InlineData("0", LibraryBadgeCorner.BottomRight)]
+    [InlineData("7", LibraryBadgeCorner.BottomRight)]
+    public void CornerFallsBackToBottomRight(string? value, LibraryBadgeCorner expected)
+    {
+        var config = Config(true);
+        config.LibraryBadgeCorner = value!;
+
+        LibraryBadge.CornerFor(config).Should().Be(expected);
+    }
+
+    [Fact]
+    public void StyleListsOnlyTheTypesSwitchedOnAndIsNullWithNone()
+    {
+        var config = Config(true);
+        config.LibraryBadgeOnSeries = false;
+        config.LibraryBadgeOnEpisodes = false;
+
+        LibraryBadge.StyleFor(config)!.Value.Kinds.Should().Be("MN");
+        LibraryBadge.KindEnabled(config, BaseItemKind.Series).Should().BeFalse();
+        LibraryBadge.KindEnabled(config, BaseItemKind.BoxSet).Should().BeFalse();
+
+        config.LibraryBadgeOnMovies = false;
+        config.LibraryBadgeOnSeasons = false;
+        LibraryBadge.StyleFor(config).Should().BeNull();
     }
 
     // ---- the wrapper ----
@@ -196,15 +246,114 @@ public sealed class LibraryBadgeTests : IDisposable
     }
 
     [Fact]
-    public async Task OtherLibrariesSeasonsAndBackdropsAreNotBadged()
+    public async Task OtherLibrariesAndBackdropsAreNotBadged()
     {
         string poster = Poster();
         var (processor, _) = Wrapper(poster, () => Config(enabled: true));
 
         (await processor.ProcessImage(Options(new Movie { Path = "/media/movies/Film/Film.mkv" }))).Path.Should().Be(poster);
-        (await processor.ProcessImage(Options(new Season { Path = Library + "/Series/Show/Season 1" }))).Path.Should().Be(poster);
         (await processor.ProcessImage(Options(IptvMovie(), ImageType.Backdrop))).Path.Should().Be(poster);
         (await processor.ProcessImage(Options(new Series { Path = Library + "/Series/Show" }))).Path.Should().NotBe(poster);
+        (await processor.ProcessImage(Options(new Season { Path = Library + "/Series/Show/Season 1" }))).Path.Should().NotBe(poster);
+        (await processor.ProcessImage(Options(new Episode { Path = Library + "/Series/Show/Season 1/Show S01E01.strm" }))).Path.Should().NotBe(poster);
+    }
+
+    [Theory]
+    [InlineData("Movies")]
+    [InlineData("Series")]
+    [InlineData("Seasons")]
+    [InlineData("Episodes")]
+    public async Task ATypeSwitchedOffIsServedPlainWithTheServersTag(string off)
+    {
+        string poster = Poster();
+        var (processor, _) = Wrapper(poster, () =>
+        {
+            var config = Config(enabled: true);
+            config.LibraryBadgeOnMovies = off != "Movies";
+            config.LibraryBadgeOnSeries = off != "Series";
+            config.LibraryBadgeOnSeasons = off != "Seasons";
+            config.LibraryBadgeOnEpisodes = off != "Episodes";
+            return config;
+        });
+        var items = new (string Type, BaseItem Item)[]
+        {
+            ("Movies", IptvMovie()),
+            ("Series", new Series { Path = Library + "/Series/Show" }),
+            ("Seasons", new Season { Path = Library + "/Series/Show/Season 1" }),
+            ("Episodes", new Episode { Path = Library + "/Series/Show/Season 1/Show S01E01.strm" }),
+        };
+        var primary = new ItemImageInfo { Type = ImageType.Primary, Path = "/posters/poster.jpg" };
+
+        foreach (var (type, item) in items)
+        {
+            bool badged = type != off;
+            ((await processor.ProcessImage(Options(item))).Path != poster).Should().Be(badged, type);
+            (processor.GetImageCacheTag(item, primary) != "0123456789abcdef0123456789abcdef").Should().Be(badged, type);
+        }
+    }
+
+    [Theory]
+    [InlineData("TopLeft")]
+    [InlineData("TopRight")]
+    [InlineData("BottomLeft")]
+    [InlineData("BottomRight")]
+    public async Task TheBadgeIsDrawnInTheChosenCorner(string corner)
+    {
+        string poster = Poster();
+        var (processor, _) = Wrapper(poster, () => Config(enabled: true, corner: corner));
+
+        var result = await processor.ProcessImage(Options(IptvMovie()));
+
+        var corners = new (string Name, Func<SKBitmap, (int X, int Y)> Where)[]
+        {
+            ("TopLeft", b => ((int)(b.Width * 0.06), (int)(b.Height * 0.06))),
+            ("TopRight", b => ((int)(b.Width * 0.94), (int)(b.Height * 0.06))),
+            ("BottomLeft", b => ((int)(b.Width * 0.06), (int)(b.Height * 0.94))),
+            ("BottomRight", b => ((int)(b.Width * 0.94), (int)(b.Height * 0.94))),
+        };
+        foreach (var (name, where) in corners)
+        {
+            var pixel = PixelAt(result.Path, where);
+            if (name == corner)
+            {
+                pixel.Blue.Should().BeLessThan(100, name);
+            }
+            else
+            {
+                pixel.Blue.Should().BeGreaterThan(150, name);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ChangingTheCornerDrawsANewCopy()
+    {
+        string poster = Poster();
+        string corner = "BottomLeft";
+        var (processor, _) = Wrapper(poster, () => Config(enabled: true, corner: corner));
+
+        var first = await processor.ProcessImage(Options(IptvMovie()));
+        corner = "TopRight";
+        var second = await processor.ProcessImage(Options(IptvMovie()));
+
+        second.Path.Should().NotBe(first.Path);
+    }
+
+    [Fact]
+    public void OnALandscapeImageTheBadgeIsSizedToTheShorterSide()
+    {
+        using var portrait = new SKBitmap(200, 300);
+        using var landscape = new SKBitmap(300, 200);
+        using var portraitCanvas = new SKCanvas(portrait);
+        using var landscapeCanvas = new SKCanvas(landscape);
+
+        var onPoster = LibraryBadgeRenderer.DrawBadge(portraitCanvas, 200, 300, "IPTV", LibraryBadgeCorner.BottomRight);
+        var onThumb = LibraryBadgeRenderer.DrawBadge(landscapeCanvas, 300, 200, "IPTV", LibraryBadgeCorner.BottomRight);
+
+        onThumb.Height.Should().BeApproximately(onPoster.Height, 0.01f);
+        onThumb.Width.Should().BeApproximately(onPoster.Width, 0.01f);
+        onThumb.Right.Should().BeApproximately(300 - (200 * 0.04f), 0.01f);
+        onThumb.Bottom.Should().BeApproximately(200 - (200 * 0.04f), 0.01f);
     }
 
     [Fact]
@@ -266,7 +415,7 @@ public sealed class LibraryBadgeTests : IDisposable
         var primary = new ItemImageInfo { Type = ImageType.Primary, Path = "/posters/poster.jpg" };
 
         processor.GetImageCacheTag(new MediaBrowser.Model.Dto.BaseItemDto { Type = BaseItemKind.Series, Path = Library + "/Series/Show" }, primary)
-            .Should().Be(LibraryBadge.CombineTag("0123456789abcdef0123456789abcdef", "IPTV"));
+            .Should().Be(LibraryBadge.CombineTag("0123456789abcdef0123456789abcdef", new LibraryBadgeStyle("IPTV", LibraryBadgeCorner.BottomLeft, "MSNE")));
         processor.GetImageCacheTag(new MediaBrowser.Model.Dto.BaseItemDto { Type = BaseItemKind.Series }, primary)
             .Should().Be("0123456789abcdef0123456789abcdef");
     }

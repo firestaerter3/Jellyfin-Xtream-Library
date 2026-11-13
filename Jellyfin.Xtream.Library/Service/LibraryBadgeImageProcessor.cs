@@ -31,7 +31,7 @@ namespace Jellyfin.Xtream.Library.Service;
 
 /// <summary>
 /// Wraps the server's image processor to draw the library badge on the posters of the plugin's
-/// movies and series while they are served. Image files on disk are never changed: the badged copy
+/// movies, series, seasons and episodes while they are served. Image files on disk are never changed: the badged copy
 /// lives in the image cache, and switching the badge off serves the plain poster again.
 /// </summary>
 /// <remarks>
@@ -102,12 +102,12 @@ internal sealed class LibraryBadgeImageProcessor : IImageProcessor, IDisposable
     {
         var result = await _inner.ProcessImage(options).ConfigureAwait(false);
 
-        string? text;
+        LibraryBadgeStyle? style;
         try
         {
-            text = options.Item is null || options.Image is null
+            style = options.Item is null || options.Image is null
                 ? null
-                : BadgeTextFor(options.Item.GetBaseItemKind(), options.Item.Path, options.Image);
+                : BadgeStyleFor(options.Item.GetBaseItemKind(), options.Item.Path, options.Image);
         }
 #pragma warning disable CA1031 // A failure here must serve the plain image, never break image serving.
         catch (Exception ex)
@@ -117,14 +117,14 @@ internal sealed class LibraryBadgeImageProcessor : IImageProcessor, IDisposable
             return result;
         }
 
-        if (text is null)
+        if (style is not { } badge)
         {
             return result;
         }
 
         try
         {
-            string? badged = await _renderer.GetOrCreateAsync(result.Path, result.DateModified, text).ConfigureAwait(false);
+            string? badged = await _renderer.GetOrCreateAsync(result.Path, result.DateModified, badge.Text, badge.Corner).ConfigureAwait(false);
             if (badged is null)
             {
                 return result;
@@ -145,16 +145,16 @@ internal sealed class LibraryBadgeImageProcessor : IImageProcessor, IDisposable
     public string GetImageCacheTag(BaseItem item, ItemImageInfo image)
     {
         string tag = _inner.GetImageCacheTag(item, image);
-        string? text = SafeBadgeText(() => BadgeTextFor(item.GetBaseItemKind(), item.Path, image));
-        return text is null ? tag : LibraryBadge.CombineTag(tag, text);
+        LibraryBadgeStyle? style = SafeBadgeStyle(() => BadgeStyleFor(item.GetBaseItemKind(), item.Path, image));
+        return style is { } badge ? LibraryBadge.CombineTag(tag, badge) : tag;
     }
 
     /// <inheritdoc />
     public string GetImageCacheTag(BaseItemDto item, ItemImageInfo image)
     {
         string tag = _inner.GetImageCacheTag(item, image);
-        string? text = SafeBadgeText(() => BadgeTextFor(item.Type, item.Path, image));
-        return text is null ? tag : LibraryBadge.CombineTag(tag, text);
+        LibraryBadgeStyle? style = SafeBadgeStyle(() => BadgeStyleFor(item.Type, item.Path, image));
+        return style is { } badge ? LibraryBadge.CombineTag(tag, badge) : tag;
     }
 
     /// <inheritdoc />
@@ -226,7 +226,7 @@ internal sealed class LibraryBadgeImageProcessor : IImageProcessor, IDisposable
     }
 
     /// <summary>
-    /// Returns the badge text for an image, or null when it gets no badge. The tag and the served
+    /// Returns the badge style for an image, or null when it gets no badge. The tag and the served
     /// image both come from this one rule, so a client never gets a badged tag for an image that is
     /// served plain by design. Only a local JPEG, PNG or WebP poster qualifies: those are the files
     /// the renderer draws on, and the server's processed copy of one is again one of those formats.
@@ -234,27 +234,27 @@ internal sealed class LibraryBadgeImageProcessor : IImageProcessor, IDisposable
     /// <param name="kind">The item's kind.</param>
     /// <param name="itemPath">The item's path.</param>
     /// <param name="image">The image.</param>
-    /// <returns>The badge text, or null.</returns>
-    private string? BadgeTextFor(BaseItemKind kind, string? itemPath, ItemImageInfo image)
+    /// <returns>The badge style, or null.</returns>
+    private LibraryBadgeStyle? BadgeStyleFor(BaseItemKind kind, string? itemPath, ItemImageInfo image)
     {
         ImageType imageType = image.Type;
-        if (imageType != ImageType.Primary || (kind != BaseItemKind.Movie && kind != BaseItemKind.Series) ||
+        if (imageType != ImageType.Primary || !LibraryBadge.IsBadgeKind(kind) ||
             !LibraryBadge.IsDrawableLocalImage(image.Path))
         {
             return null;
         }
 
         var config = _config();
-        string? text = LibraryBadge.TextFor(config);
-        if (text is null || config is null)
+        LibraryBadgeStyle? style = LibraryBadge.StyleFor(config);
+        if (style is null || config is null || !LibraryBadge.KindEnabled(config, kind))
         {
             return null;
         }
 
-        return LibraryBadge.AppliesTo(kind, itemPath, imageType, LibraryBadge.LibraryRoots(config)) ? text : null;
+        return LibraryBadge.AppliesTo(kind, itemPath, imageType, LibraryBadge.LibraryRoots(config)) ? style : null;
     }
 
-    private string? SafeBadgeText(Func<string?> decide)
+    private LibraryBadgeStyle? SafeBadgeStyle(Func<LibraryBadgeStyle?> decide)
     {
         try
         {
