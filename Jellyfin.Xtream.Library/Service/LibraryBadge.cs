@@ -75,11 +75,16 @@ internal static class LibraryBadge
     /// <returns>The corner.</returns>
     internal static LibraryBadgeCorner CornerFor(PluginConfiguration config)
     {
-        return Enum.TryParse(config.LibraryBadgeCorner, ignoreCase: true, out LibraryBadgeCorner corner) &&
-            Enum.IsDefined(corner) &&
-            !int.TryParse(config.LibraryBadgeCorner, NumberStyles.Integer, CultureInfo.InvariantCulture, out _)
-            ? corner
-            : LibraryBadgeCorner.BottomRight;
+        // Matched by name only: Enum.TryParse would also take a number or a comma-separated list.
+        foreach (var corner in Enum.GetValues<LibraryBadgeCorner>())
+        {
+            if (string.Equals(corner.ToString(), config.LibraryBadgeCorner, StringComparison.OrdinalIgnoreCase))
+            {
+                return corner;
+            }
+        }
+
+        return LibraryBadgeCorner.BottomRight;
     }
 
     /// <summary>

@@ -379,9 +379,12 @@ var XtreamLibraryConfig = (function () {
             document.getElementById('chkEnableMetadataLookup').checked = config.EnableMetadataLookup !== false;
             document.getElementById('chkEnableLibraryBadge').checked = config.EnableLibraryBadge === true;
             document.getElementById('txtLibraryBadgeText').value = config.LibraryBadgeText || 'IPTV';
+            // Same rule as the server: any letter case, anything else is bottom right.
+            var badgeCorner = String(config.LibraryBadgeCorner || '').toLowerCase();
             document.getElementById('selLibraryBadgeCorner').value =
-                ['TopLeft', 'TopRight', 'BottomLeft', 'BottomRight'].indexOf(config.LibraryBadgeCorner) >= 0
-                    ? config.LibraryBadgeCorner : 'BottomRight';
+                ['TopLeft', 'TopRight', 'BottomLeft', 'BottomRight'].filter(function (c) {
+                    return c.toLowerCase() === badgeCorner;
+                })[0] || 'BottomRight';
             document.getElementById('chkLibraryBadgeOnMovies').checked = config.LibraryBadgeOnMovies !== false;
             document.getElementById('chkLibraryBadgeOnSeries').checked = config.LibraryBadgeOnSeries !== false;
             document.getElementById('chkLibraryBadgeOnSeasons').checked = config.LibraryBadgeOnSeasons !== false;

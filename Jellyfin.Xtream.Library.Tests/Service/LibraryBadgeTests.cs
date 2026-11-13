@@ -130,21 +130,22 @@ public sealed class LibraryBadgeTests : IDisposable
     }
 
     [Theory]
-    [InlineData("TopLeft", LibraryBadgeCorner.TopLeft)]
-    [InlineData("topright", LibraryBadgeCorner.TopRight)]
-    [InlineData("BottomLeft", LibraryBadgeCorner.BottomLeft)]
-    [InlineData("BottomRight", LibraryBadgeCorner.BottomRight)]
-    [InlineData("", LibraryBadgeCorner.BottomRight)]
-    [InlineData(null, LibraryBadgeCorner.BottomRight)]
-    [InlineData("Middle", LibraryBadgeCorner.BottomRight)]
-    [InlineData("0", LibraryBadgeCorner.BottomRight)]
-    [InlineData("7", LibraryBadgeCorner.BottomRight)]
-    public void CornerFallsBackToBottomRight(string? value, LibraryBadgeCorner expected)
+    [InlineData("TopLeft", "TopLeft")]
+    [InlineData("topright", "TopRight")]
+    [InlineData("BottomLeft", "BottomLeft")]
+    [InlineData("BottomRight", "BottomRight")]
+    [InlineData("", "BottomRight")]
+    [InlineData(null, "BottomRight")]
+    [InlineData("Middle", "BottomRight")]
+    [InlineData("0", "BottomRight")]
+    [InlineData("7", "BottomRight")]
+    [InlineData("TopLeft,TopRight", "BottomRight")]
+    public void CornerFallsBackToBottomRight(string? value, string expected)
     {
         var config = Config(true);
         config.LibraryBadgeCorner = value!;
 
-        LibraryBadge.CornerFor(config).Should().Be(expected);
+        LibraryBadge.CornerFor(config).ToString().Should().Be(expected);
     }
 
     [Fact]

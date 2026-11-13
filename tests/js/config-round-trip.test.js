@@ -378,3 +378,12 @@ test('the native tuner hint says when the playlists are still published', async 
     cfg.updateTunerHint();
     assert.doesNotMatch(page.elements.tunerChoiceHint.innerHTML, /still on/);
 });
+
+test('the badge corner is read in any letter case, and an unknown one becomes bottom right', async () => {
+    for (const [stored, shown] of [['topright', 'TopRight'], ['BOTTOMLEFT', 'BottomLeft'], ['Middle', 'BottomRight'], [undefined, 'BottomRight']]) {
+        const config = fixture();
+        config.LibraryBadgeCorner = stored;
+        const { saved } = await roundTrip(config);
+        assert.strictEqual(saved.LibraryBadgeCorner, shown, String(stored));
+    }
+});
