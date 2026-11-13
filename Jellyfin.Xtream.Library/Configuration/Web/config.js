@@ -377,6 +377,8 @@ var XtreamLibraryConfig = (function () {
             document.getElementById('txtSyncInterval').value = config.SyncIntervalMinutes || 60;
             document.getElementById('chkTriggerScan').checked = config.TriggerLibraryScan === true;
             document.getElementById('chkEnableMetadataLookup').checked = config.EnableMetadataLookup !== false;
+            document.getElementById('chkEnableLibraryBadge').checked = config.EnableLibraryBadge === true;
+            document.getElementById('txtLibraryBadgeText').value = config.LibraryBadgeText || 'IPTV';
             document.getElementById('chkUseBetaChannel').checked = config.UseBetaChannel === true;
             document.getElementById('txtMetadataParallelism').value = config.MetadataParallelism || 3;
 
@@ -488,6 +490,8 @@ var XtreamLibraryConfig = (function () {
             config.SyncIntervalMinutes = parseInt(document.getElementById('txtSyncInterval').value) || 60;
             config.TriggerLibraryScan = document.getElementById('chkTriggerScan').checked;
             config.EnableMetadataLookup = document.getElementById('chkEnableMetadataLookup').checked;
+            config.EnableLibraryBadge = document.getElementById('chkEnableLibraryBadge').checked;
+            config.LibraryBadgeText = (document.getElementById('txtLibraryBadgeText').value || '').trim() || 'IPTV';
             config.UseBetaChannel = document.getElementById('chkUseBetaChannel').checked;
             config.MetadataParallelism = parseInt(document.getElementById('txtMetadataParallelism').value) || 3;
 

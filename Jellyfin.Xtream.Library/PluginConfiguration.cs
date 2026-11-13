@@ -180,6 +180,19 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool PreferPortraitProgramImages { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether the posters of this plugin's movies and series get
+    /// a small text badge in the bottom-left corner, so they can be told apart from the same title
+    /// in another library. The badge is drawn while the image is served; files on disk are never
+    /// changed.
+    /// </summary>
+    public bool EnableLibraryBadge { get; set; }
+
+    /// <summary>
+    /// Gets or sets the text of the library badge (at most 12 characters are drawn).
+    /// </summary>
+    public string LibraryBadgeText { get; set; } = "IPTV";
+
+    /// <summary>
     /// Gets or sets the M3U playlist cache duration in minutes.
     /// </summary>
     public int M3UCacheMinutes { get; set; } = 15;

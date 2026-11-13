@@ -52,5 +52,9 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddHostedService<Service.BetaChannelManager>();
         serviceCollection.AddHostedService<Service.NativeTunerRegistration>();
         serviceCollection.AddHostedService<Service.NativeTunerWarmup>();
+
+        // Always wrapped, and gated at runtime by EnableLibraryBadge, so switching the badge on or
+        // off needs no restart. With the badge off the wrapper only passes calls through.
+        LibraryBadgeImageProcessor.Decorate(serviceCollection);
     }
 }

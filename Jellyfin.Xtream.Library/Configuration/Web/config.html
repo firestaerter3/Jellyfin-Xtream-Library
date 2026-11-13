@@ -379,6 +379,20 @@
                                 </button>
                                 <span id="metadataCacheStatus" style="margin-left: 10px;"></span>
                             </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 1.5em;">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkEnableLibraryBadge" name="EnableLibraryBadge" />
+                                    <span>Show a badge on posters</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Draws a small text badge in the bottom-left corner of the posters of the movies and series this plugin creates, so search results can be told apart from the same title in another library. It is drawn while the image is served; the image files are not changed, and turning it off shows the plain posters again. Takes effect without a restart; clients fetch the new posters as they next load the items.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtLibraryBadgeText">Badge text</label>
+                                <input is="emby-input" type="text" id="txtLibraryBadgeText" name="LibraryBadgeText" maxlength="12" placeholder="IPTV" />
+                                <div class="fieldDescription">Up to 12 characters. Default: IPTV.</div>
+                            </div>
                         </div>
 
                         <div class="verticalSection">

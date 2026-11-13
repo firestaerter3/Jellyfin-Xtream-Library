@@ -20,6 +20,8 @@
     <PackageReference Include="Jellyfin.Controller" Version="12.0.0" />
     <PackageReference Include="Jellyfin.Model" Version="12.0.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <!-- The server ships SkiaSharp; compile against it, do not package a copy. -->
+    <PackageReference Include="SkiaSharp" Version="3.119.4" ExcludeAssets="runtime" />
   </ItemGroup>
 
   <ItemGroup>
