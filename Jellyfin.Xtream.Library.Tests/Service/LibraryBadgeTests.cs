@@ -491,11 +491,11 @@ public sealed class LibraryBadgeTests : IDisposable
         bitmap.Height.Should().Be(600);
         bitmap.Width.Should().BeInRange(1066, 1067);
 
-        // The badge is drawn at the enlarged size: its box is about 11 % of the visible 400 px width tall.
+        // The badge (bottom left of the visible 400 px middle part, x from 333) is drawn at the enlarged size: about 44 px tall.
         int dark = 0;
         for (int y = 0; y < 600; y++)
         {
-            if (bitmap.GetPixel(712, y).Blue < 100)
+            if (bitmap.GetPixel(356, y).Blue < 100)
             {
                 dark++;
             }
