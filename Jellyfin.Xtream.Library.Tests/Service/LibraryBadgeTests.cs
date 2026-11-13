@@ -340,6 +340,49 @@ public sealed class LibraryBadgeTests : IDisposable
         second.Path.Should().NotBe(first.Path);
     }
 
+    [Theory]
+    [InlineData(SKEncodedOrigin.TopLeft, 4, 2, "left")]
+    [InlineData(SKEncodedOrigin.TopRight, 4, 2, "right")]
+    [InlineData(SKEncodedOrigin.BottomRight, 4, 2, "right")]
+    [InlineData(SKEncodedOrigin.BottomLeft, 4, 2, "left")]
+    [InlineData(SKEncodedOrigin.LeftTop, 2, 4, "top")]
+    [InlineData(SKEncodedOrigin.RightTop, 2, 4, "top")]
+    [InlineData(SKEncodedOrigin.RightBottom, 2, 4, "bottom")]
+    [InlineData(SKEncodedOrigin.LeftBottom, 2, 4, "bottom")]
+    public void OrientTurnsTheImageUprightAsExifSays(SKEncodedOrigin origin, int width, int height, string redSide)
+    {
+        // 4x2 stored image: left half red, right half blue.
+        using var stored = new SKBitmap(4, 2);
+        for (int x = 0; x < 4; x++)
+        {
+            for (int y = 0; y < 2; y++)
+            {
+                stored.SetPixel(x, y, x < 2 ? SKColors.Red : SKColors.Blue);
+            }
+        }
+
+        using var upright = LibraryBadgeRenderer.Orient(stored, origin);
+
+        upright.Width.Should().Be(width);
+        upright.Height.Should().Be(height);
+        var (rx, ry) = redSide switch
+        {
+            "left" => (0, 0),
+            "right" => (width - 1, 0),
+            "top" => (0, 0),
+            _ => (0, height - 1),
+        };
+        var (bx, by) = redSide switch
+        {
+            "left" => (width - 1, 0),
+            "right" => (0, 0),
+            "top" => (0, height - 1),
+            _ => (0, 0),
+        };
+        upright.GetPixel(rx, ry).Red.Should().BeGreaterThan(200, "red side " + redSide);
+        upright.GetPixel(bx, by).Blue.Should().BeGreaterThan(200, "blue opposite " + redSide);
+    }
+
     [Fact]
     public void OnALandscapeImageTheBadgeIsSizedToTheShorterSide()
     {

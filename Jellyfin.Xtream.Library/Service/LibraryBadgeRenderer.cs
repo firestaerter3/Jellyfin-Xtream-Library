@@ -170,14 +170,26 @@ internal sealed class LibraryBadgeRenderer : IDisposable
     /// <param name="text">The badge text.</param>
     /// <param name="corner">The corner the badge is drawn in.</param>
     /// <param name="format">Output format.</param>
-    /// <returns>The encoded image, or null when it cannot be decoded.</returns>
+    /// <returns>The encoded image, or null when it cannot be decoded or is animated.</returns>
     internal static byte[]? Render(string sourcePath, string text, LibraryBadgeCorner corner, SKEncodedImageFormat format)
     {
-        using var bitmap = SKBitmap.Decode(sourcePath);
-        if (bitmap is null || bitmap.Width < 1 || bitmap.Height < 1)
+        using var codec = SKCodec.Create(sourcePath);
+
+        // An animated image would be re-encoded as a still one, so it is served plain.
+        if (codec is null || codec.FrameCount > 1)
         {
             return null;
         }
+
+        using var decoded = SKBitmap.Decode(codec);
+        if (decoded is null || decoded.Width < 1 || decoded.Height < 1)
+        {
+            return null;
+        }
+
+        // The copy is written without EXIF data, so a rotation the source only states in EXIF
+        // has to be applied to the pixels, or clients would show the copy sideways.
+        using var bitmap = Orient(decoded, codec.EncodedOrigin);
 
         using (var canvas = new SKCanvas(bitmap))
         {
@@ -187,6 +199,41 @@ internal sealed class LibraryBadgeRenderer : IDisposable
         using var image = SKImage.FromBitmap(bitmap);
         using var data = image.Encode(format, format == SKEncodedImageFormat.Png ? 100 : 90);
         return data?.ToArray();
+    }
+
+    /// <summary>
+    /// Returns a copy of <paramref name="source"/> turned upright as its EXIF orientation says.
+    /// </summary>
+    /// <param name="source">The decoded image, as stored.</param>
+    /// <param name="origin">The image's EXIF orientation.</param>
+    /// <returns>A new upright bitmap; the caller disposes it.</returns>
+    internal static SKBitmap Orient(SKBitmap source, SKEncodedOrigin origin)
+    {
+        float w = source.Width;
+        float h = source.Height;
+
+        // x' = ScaleX*x + SkewX*y + TransX, y' = SkewY*x + ScaleY*y + TransY.
+        SKMatrix matrix = origin switch
+        {
+            SKEncodedOrigin.TopRight => new SKMatrix(-1, 0, w, 0, 1, 0, 0, 0, 1),
+            SKEncodedOrigin.BottomRight => new SKMatrix(-1, 0, w, 0, -1, h, 0, 0, 1),
+            SKEncodedOrigin.BottomLeft => new SKMatrix(1, 0, 0, 0, -1, h, 0, 0, 1),
+            SKEncodedOrigin.LeftTop => new SKMatrix(0, 1, 0, 1, 0, 0, 0, 0, 1),
+            SKEncodedOrigin.RightTop => new SKMatrix(0, -1, h, 1, 0, 0, 0, 0, 1),
+            SKEncodedOrigin.RightBottom => new SKMatrix(0, -1, h, -1, 0, w, 0, 0, 1),
+            SKEncodedOrigin.LeftBottom => new SKMatrix(0, 1, 0, -1, 0, w, 0, 0, 1),
+            _ => SKMatrix.Identity,
+        };
+
+        bool swap = origin is SKEncodedOrigin.LeftTop or SKEncodedOrigin.RightTop or
+            SKEncodedOrigin.RightBottom or SKEncodedOrigin.LeftBottom;
+        var info = new SKImageInfo(swap ? source.Height : source.Width, swap ? source.Width : source.Height, source.ColorType, source.AlphaType, source.ColorSpace);
+        var upright = new SKBitmap(info);
+        using var canvas = new SKCanvas(upright);
+        canvas.Clear(SKColors.Transparent);
+        canvas.SetMatrix(matrix);
+        canvas.DrawBitmap(source, 0, 0);
+        return upright;
     }
 
     /// <summary>
