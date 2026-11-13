@@ -54,8 +54,9 @@ internal sealed class LibraryBadgeRenderer : IDisposable
     /// <param name="sourceModified">The source's modification date, part of the cache key.</param>
     /// <param name="text">The badge text.</param>
     /// <param name="corner">The corner the badge is drawn in.</param>
+    /// <param name="posterArea">Whether the image is shown as a portrait poster; see <see cref="DrawBadge"/>.</param>
     /// <returns>The copy's path, or null when the format is not one this draws on or the file cannot be decoded.</returns>
-    public async Task<string?> GetOrCreateAsync(string sourcePath, DateTime sourceModified, string text, LibraryBadgeCorner corner)
+    public async Task<string?> GetOrCreateAsync(string sourcePath, DateTime sourceModified, string text, LibraryBadgeCorner corner, bool posterArea)
     {
         string extension = Path.GetExtension(sourcePath);
         SKEncodedImageFormat? format = FormatFor(extension);
@@ -64,7 +65,7 @@ internal sealed class LibraryBadgeRenderer : IDisposable
             return null;
         }
 
-        string target = CachePathFor(_cacheDirectory, sourcePath, sourceModified, text, corner, extension);
+        string target = CachePathFor(_cacheDirectory, sourcePath, sourceModified, text, corner, posterArea, extension);
         if (File.Exists(target))
         {
             return target;
@@ -78,7 +79,7 @@ internal sealed class LibraryBadgeRenderer : IDisposable
                 return target;
             }
 
-            byte[]? encoded = Render(sourcePath, text, corner, format.Value);
+            byte[]? encoded = Render(sourcePath, text, corner, posterArea, format.Value);
             if (encoded is null)
             {
                 return null;
@@ -152,13 +153,14 @@ internal sealed class LibraryBadgeRenderer : IDisposable
     /// <param name="sourceModified">The source's modification date.</param>
     /// <param name="text">The badge text.</param>
     /// <param name="corner">The corner the badge is drawn in.</param>
+    /// <param name="posterArea">Whether the badge is kept inside the poster area.</param>
     /// <param name="extension">Extension of the copy, including the dot.</param>
     /// <returns>The cache path.</returns>
-    internal static string CachePathFor(string cacheDirectory, string sourcePath, DateTime sourceModified, string text, LibraryBadgeCorner corner, string extension)
+    internal static string CachePathFor(string cacheDirectory, string sourcePath, DateTime sourceModified, string text, LibraryBadgeCorner corner, bool posterArea, string extension)
     {
         string input = string.Create(
             CultureInfo.InvariantCulture,
-            $"{sourcePath}|{sourceModified.Ticks}|{text}|{corner}|{LibraryBadge.DrawingVersion}");
+            $"{sourcePath}|{sourceModified.Ticks}|{text}|{corner}|{posterArea}|{LibraryBadge.DrawingVersion}");
         string key = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(input)).AsSpan(0, 16));
         return Path.Combine(cacheDirectory, key[..2], key + extension.ToLowerInvariant());
     }
@@ -169,9 +171,10 @@ internal sealed class LibraryBadgeRenderer : IDisposable
     /// <param name="sourcePath">The image.</param>
     /// <param name="text">The badge text.</param>
     /// <param name="corner">The corner the badge is drawn in.</param>
+    /// <param name="posterArea">Whether the badge is kept inside the poster area.</param>
     /// <param name="format">Output format.</param>
     /// <returns>The encoded image, or null when it cannot be decoded or is animated.</returns>
-    internal static byte[]? Render(string sourcePath, string text, LibraryBadgeCorner corner, SKEncodedImageFormat format)
+    internal static byte[]? Render(string sourcePath, string text, LibraryBadgeCorner corner, bool posterArea, SKEncodedImageFormat format)
     {
         using var codec = SKCodec.Create(sourcePath);
 
@@ -193,7 +196,7 @@ internal sealed class LibraryBadgeRenderer : IDisposable
 
         using (var canvas = new SKCanvas(bitmap))
         {
-            DrawBadge(canvas, bitmap.Width, bitmap.Height, text, corner);
+            DrawBadge(canvas, bitmap.Width, bitmap.Height, text, corner, posterArea);
         }
 
         using var image = SKImage.FromBitmap(bitmap);
@@ -237,6 +240,25 @@ internal sealed class LibraryBadgeRenderer : IDisposable
     }
 
     /// <summary>
+    /// Returns the part of the image a client shows: the whole image, or for a poster wider than
+    /// 2:3 the middle 2:3 part.
+    /// </summary>
+    /// <param name="width">Image width.</param>
+    /// <param name="height">Image height.</param>
+    /// <param name="posterArea">Whether the image is shown as a portrait poster.</param>
+    /// <returns>The visible area.</returns>
+    internal static SKRect VisibleArea(int width, int height, bool posterArea)
+    {
+        float posterWidth = height * 2f / 3f;
+        if (!posterArea || width <= posterWidth)
+        {
+            return SKRect.Create(0, 0, width, height);
+        }
+
+        return SKRect.Create((width - posterWidth) / 2f, 0, posterWidth, height);
+    }
+
+    /// <summary>
     /// Draws the badge in a corner: white bold text on a dark rounded box. It is sized relative to
     /// the shorter side of the image, so it looks the same on a portrait poster and on a landscape
     /// episode image of any size.
@@ -246,10 +268,16 @@ internal sealed class LibraryBadgeRenderer : IDisposable
     /// <param name="height">Image height.</param>
     /// <param name="text">The badge text.</param>
     /// <param name="corner">The corner to draw it in.</param>
+    /// <param name="posterArea">
+    /// Whether the image is shown as a portrait poster. Clients fill a poster card from the middle
+    /// of an image that is wider than 2:3 and cut off its sides, so the badge is then placed in the
+    /// corner of that middle 2:3 part instead of the corner of the whole image.
+    /// </param>
     /// <returns>The box drawn, for tests.</returns>
-    internal static SKRect DrawBadge(SKCanvas canvas, int width, int height, string text, LibraryBadgeCorner corner)
+    internal static SKRect DrawBadge(SKCanvas canvas, int width, int height, string text, LibraryBadgeCorner corner, bool posterArea)
     {
-        float shortSide = Math.Min(width, height);
+        var area = VisibleArea(width, height, posterArea);
+        float shortSide = Math.Min(area.Width, area.Height);
         float boxHeight = Math.Max(10f, shortSide * 0.11f);
         float margin = shortSide * 0.04f;
         float padding = boxHeight * 0.35f;
@@ -258,12 +286,12 @@ internal sealed class LibraryBadgeRenderer : IDisposable
         font.Embolden = true;
         float textWidth = font.MeasureText(text);
 
-        float boxWidth = Math.Min(textWidth + (2 * padding), width - (2 * margin));
+        float boxWidth = Math.Min(textWidth + (2 * padding), area.Width - (2 * margin));
         bool right = corner is LibraryBadgeCorner.TopRight or LibraryBadgeCorner.BottomRight;
         bool bottom = corner is LibraryBadgeCorner.BottomLeft or LibraryBadgeCorner.BottomRight;
         var box = SKRect.Create(
-            right ? width - margin - boxWidth : margin,
-            bottom ? height - margin - boxHeight : margin,
+            right ? area.Right - margin - boxWidth : area.Left + margin,
+            bottom ? area.Bottom - margin - boxHeight : area.Top + margin,
             boxWidth,
             boxHeight);
 

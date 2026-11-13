@@ -383,6 +383,66 @@ public sealed class LibraryBadgeTests : IDisposable
         upright.GetPixel(bx, by).Blue.Should().BeGreaterThan(200, "blue opposite " + redSide);
     }
 
+    [Theory]
+    [InlineData("TopLeft")]
+    [InlineData("TopRight")]
+    [InlineData("BottomLeft")]
+    [InlineData("BottomRight")]
+    public void OnALandscapePosterTheBadgeStaysInsideTheMiddlePosterPart(string cornerName)
+    {
+        var corner = Enum.Parse<LibraryBadgeCorner>(cornerName);
+        using var wide = new SKBitmap(320, 180);
+        using var canvas = new SKCanvas(wide);
+
+        var box = LibraryBadgeRenderer.DrawBadge(canvas, 320, 180, "IPTV", corner, posterArea: true);
+
+        // A poster card shows the middle 120x180 (2:3) of a 320x180 image: x from 100 to 220.
+        box.Left.Should().BeGreaterThanOrEqualTo(100f);
+        box.Right.Should().BeLessThanOrEqualTo(220f);
+        box.Top.Should().BeGreaterThanOrEqualTo(0f);
+        box.Bottom.Should().BeLessThanOrEqualTo(180f);
+        bool right = corner is LibraryBadgeCorner.TopRight or LibraryBadgeCorner.BottomRight;
+        (right ? 220f - box.Right : box.Left - 100f).Should().BeApproximately(120 * 0.04f, 0.01f);
+
+        // The same badge as on a 120x180 portrait poster.
+        using var portrait = new SKBitmap(120, 180);
+        using var portraitCanvas = new SKCanvas(portrait);
+        var onPortrait = LibraryBadgeRenderer.DrawBadge(portraitCanvas, 120, 180, "IPTV", corner, posterArea: true);
+        box.Width.Should().BeApproximately(onPortrait.Width, 0.01f);
+        box.Height.Should().BeApproximately(onPortrait.Height, 0.01f);
+    }
+
+    [Theory]
+    [InlineData(200, 300, true, 0, 200)]
+    [InlineData(100, 300, true, 0, 100)]
+    [InlineData(320, 180, true, 100, 120)]
+    [InlineData(320, 180, false, 0, 320)]
+    public void VisibleAreaIsTheMiddle2By3OnlyForWidePosters(int width, int height, bool posterArea, float left, float areaWidth)
+    {
+        var area = LibraryBadgeRenderer.VisibleArea(width, height, posterArea);
+
+        area.Left.Should().BeApproximately(left, 0.01f);
+        area.Width.Should().BeApproximately(areaWidth, 0.01f);
+        area.Height.Should().Be(height);
+    }
+
+    [Fact]
+    public async Task AWideMoviePosterGetsTheBadgeInsideThePosterPartAndAnEpisodeInTheRealCorner()
+    {
+        string wide = Poster("wide.jpg", 320, 180);
+        var (processor, _) = Wrapper(wide, () => Config(enabled: true, corner: "BottomRight"));
+
+        var movie = await processor.ProcessImage(Options(IptvMovie()));
+        var episode = await processor.ProcessImage(Options(new Episode { Path = Library + "/Series/Show/Season 1/Show S01E01.strm" }));
+
+        movie.Path.Should().NotBe(episode.Path);
+
+        // Bottom right of the middle 120x180 part (x 100..220) is dark for the movie, the real corner is not.
+        PixelAt(movie.Path, b => (212, 170)).Blue.Should().BeLessThan(100);
+        PixelAt(movie.Path, b => (315, 175)).Blue.Should().BeGreaterThan(150);
+        PixelAt(episode.Path, b => (305, 165)).Blue.Should().BeLessThan(100);
+    }
+
     [Fact]
     public void OnALandscapeImageTheBadgeIsSizedToTheShorterSide()
     {
@@ -391,8 +451,8 @@ public sealed class LibraryBadgeTests : IDisposable
         using var portraitCanvas = new SKCanvas(portrait);
         using var landscapeCanvas = new SKCanvas(landscape);
 
-        var onPoster = LibraryBadgeRenderer.DrawBadge(portraitCanvas, 200, 300, "IPTV", LibraryBadgeCorner.BottomRight);
-        var onThumb = LibraryBadgeRenderer.DrawBadge(landscapeCanvas, 300, 200, "IPTV", LibraryBadgeCorner.BottomRight);
+        var onPoster = LibraryBadgeRenderer.DrawBadge(portraitCanvas, 200, 300, "IPTV", LibraryBadgeCorner.BottomRight, posterArea: true);
+        var onThumb = LibraryBadgeRenderer.DrawBadge(landscapeCanvas, 300, 200, "IPTV", LibraryBadgeCorner.BottomRight, posterArea: false);
 
         onThumb.Height.Should().BeApproximately(onPoster.Height, 0.01f);
         onThumb.Width.Should().BeApproximately(onPoster.Width, 0.01f);

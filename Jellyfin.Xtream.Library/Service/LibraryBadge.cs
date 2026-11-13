@@ -37,7 +37,7 @@ internal static class LibraryBadge
     /// Version of the badge drawing. Raising it changes every badged image tag, so clients fetch
     /// the new drawing instead of keeping the old one.
     /// </summary>
-    internal const int DrawingVersion = 1;
+    internal const int DrawingVersion = 2;
 
     /// <summary>The longest badge text drawn; anything longer is cut.</summary>
     internal const int MaxTextLength = 12;
@@ -183,6 +183,15 @@ internal static class LibraryBadge
 
         return false;
     }
+
+    /// <summary>
+    /// Whether an item type's Primary image is shown as a portrait poster. An episode's image is a
+    /// landscape thumbnail and is shown whole.
+    /// </summary>
+    /// <param name="kind">The item's kind.</param>
+    /// <returns>True for a movie, series or season.</returns>
+    internal static bool IsPosterKind(BaseItemKind kind) =>
+        kind is BaseItemKind.Movie or BaseItemKind.Series or BaseItemKind.Season;
 
     /// <summary>
     /// Whether an item type can get the badge at all.
