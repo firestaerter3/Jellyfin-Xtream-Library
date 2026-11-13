@@ -180,6 +180,44 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool PreferPortraitProgramImages { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether the posters of this plugin's items get a small text
+    /// badge in one corner, so they can be told apart from the same title in another library. The
+    /// badge is drawn while the image is served; files on disk are never changed.
+    /// </summary>
+    public bool EnableLibraryBadge { get; set; }
+
+    /// <summary>
+    /// Gets or sets the text of the library badge (at most 12 characters are drawn).
+    /// </summary>
+    public string LibraryBadgeText { get; set; } = "IPTV";
+
+    /// <summary>
+    /// Gets or sets the corner the library badge is drawn in: TopLeft, TopRight, BottomLeft or
+    /// BottomRight. An empty or unknown value draws it bottom right.
+    /// </summary>
+    public string LibraryBadgeCorner { get; set; } = "BottomRight";
+
+    /// <summary>
+    /// Gets or sets a value indicating whether movie posters get the library badge.
+    /// </summary>
+    public bool LibraryBadgeOnMovies { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether series posters get the library badge.
+    /// </summary>
+    public bool LibraryBadgeOnSeries { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether season posters get the library badge.
+    /// </summary>
+    public bool LibraryBadgeOnSeasons { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether episode images get the library badge.
+    /// </summary>
+    public bool LibraryBadgeOnEpisodes { get; set; } = true;
+
+    /// <summary>
     /// Gets or sets the M3U playlist cache duration in minutes.
     /// </summary>
     public int M3UCacheMinutes { get; set; } = 15;
