@@ -1322,6 +1322,14 @@ public class StrmSyncServiceTests
         result.Should().Be("REMUX");
     }
 
+    [Theory]
+    [InlineData("DE - Joker (2019)", "DE", "DE")]
+    [InlineData("NF - Joker (2019) HEVC 4K", "EN", "EN HEVC 4K")]
+    [InlineData("NF - Joker (2019) 2160p", "EN", "EN 4K")]
+    [InlineData("Joker (2019) 1080p", null, "1080p")] // no language labelling -> unchanged legacy label
+    public void ExtractVersionLabel_WithLanguage_PrependsAndNormalises(string name, string? lang, string? expected)
+        => StrmSyncService.ExtractVersionLabel(name, lang).Should().Be(expected);
+
     #endregion
 
     #region BuildMovieStrmFileName Tests
@@ -1399,6 +1407,63 @@ public class StrmSyncServiceTests
         var result = StrmSyncService.BuildMovieStrmFileName("Movie", null, ".+");
 
         result.Should().Be("Movie.strm");
+    }
+
+    [Theory]
+    [InlineData("DE", "DE HEVC 4K", "EN")]
+    [InlineData("DE", "DE 4K")]
+    [InlineData("DE", "EN", "EN 4K", "DE 4K")]
+    public void BuildMovieStrmFileName_PlainLanguageFileIsJellyfinPrimary(params string[] labels)
+    {
+        var folder = "Joker (2019) [tmdbid-475557]";
+        var files = labels.Select(l => StrmSyncService.BuildMovieStrmFileName(folder, l)).ToList();
+
+        files[0].Should().Be("Joker (2019) [tmdbid-475557] - DE.strm");
+        JellyfinPrimaryVersion(files).Should().Be(files[0]);
+    }
+
+    [Fact]
+    public void BuildMovieStrmFileName_ProviderResolutionTokensDoNotHijackPrimary()
+    {
+        // An English stream named "… 1080p" must not become the default over the plain German file.
+        var folder = "Joker (2019) [tmdbid-475557]";
+        var de = StrmSyncService.BuildMovieStrmFileName(folder, StrmSyncService.ExtractVersionLabel("DE - Joker (2019)", "DE"));
+        var en = StrmSyncService.BuildMovieStrmFileName(folder, StrmSyncService.ExtractVersionLabel("NF - Joker (2019) 1080p", "EN"));
+        var de4k = StrmSyncService.BuildMovieStrmFileName(folder, StrmSyncService.ExtractVersionLabel("DE - Joker (2019) 2160p", "DE"));
+
+        JellyfinPrimaryVersion([en, de4k, de]).Should().Be(de);
+    }
+
+    [Fact]
+    public void JellyfinPrimaryVersion_DigitResolutionLabelWins()
+    {
+        // Guards the model below: without normalisation "EN 1080p" really would be picked.
+        var folder = "Joker (2019) [tmdbid-475557]";
+        var en1080 = StrmSyncService.BuildMovieStrmFileName(folder, "EN 1080p");
+        var de = StrmSyncService.BuildMovieStrmFileName(folder, "DE");
+
+        JellyfinPrimaryVersion([de, en1080]).Should().Be(en1080);
+    }
+
+    /// <summary>
+    /// Mirrors Jellyfin 12.3/12.4 VideoListResolver.OrganizeAlternateVersions for single-file versions:
+    /// names without extension; names matching [0-9]{2}[0-9]+[ip] come first (highest match first),
+    /// the rest follow; both ordered with an invariant, numeric-ordering comparer.
+    /// </summary>
+    private static string JellyfinPrimaryVersion(IEnumerable<string> fileNames)
+    {
+        var comparer = StringComparer.Create(System.Globalization.CultureInfo.InvariantCulture, System.Globalization.CompareOptions.NumericOrdering);
+        var resolution = new System.Text.RegularExpressions.Regex("[0-9]{2}[0-9]+[ip]", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var entries = fileNames
+            .Select(f => (File: f, Name: Path.GetFileNameWithoutExtension(f)))
+            .Select(e => (e.File, e.Name, Match: resolution.Match(e.Name)))
+            .ToList();
+
+        var withResolution = entries.Where(e => e.Match.Success)
+            .OrderByDescending(e => e.Match.Value, comparer)
+            .ThenBy(e => e.Name, comparer);
+        var rest = entries.Where(e => !e.Match.Success).OrderBy(e => e.Name, comparer);
+        return withResolution.Concat(rest).First().File;
     }
 
     #endregion

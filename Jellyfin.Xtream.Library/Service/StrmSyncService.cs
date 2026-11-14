@@ -1279,6 +1279,16 @@ public partial class StrmSyncService
         var categories = await _client.GetVodCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
         var processedStreamIds = new ConcurrentDictionary<int, bool>();
 
+        // Language labels for movie versions come from the names of the categories a stream sits
+        // in. A provider can list a category id twice; the first name wins.
+        var categoryNameById = new Dictionary<int, string>();
+        foreach (var category in categories)
+        {
+            categoryNameById.TryAdd(category.CategoryId, category.CategoryName);
+        }
+
+        var languageRules = VersionLanguageLabeler.ParseRules(provider.VersionLanguageRules);
+
         // GitHub #88. Folder each groupable TMDB id lives in. Seeded from the snapshot so the
         // choice made on an earlier run keeps holding, then extended with ids first seen this run.
         // Only new movies consult it: nothing already on disk is moved by a sync.
@@ -1782,7 +1792,12 @@ public partial class StrmSyncService
                     string movieName = SanitizeFileName(stream.Name, provider.CustomTitleRemoveTerms, isMovie: true);
                     int? year = ExtractYear(stream.Name);
                     string baseName = year.HasValue ? $"{movieName} ({year})" : movieName;
-                    string? versionLabel = ExtractVersionLabel(stream.Name);
+                    string? languageLabel = VersionLanguageLabeler.Resolve(
+                        categoryIds.Select(id => categoryNameById.GetValueOrDefault(id, string.Empty)),
+                        stream.Name,
+                        languageRules,
+                        provider.VersionLanguageDefault);
+                    string? versionLabel = ExtractVersionLabel(stream.Name, languageLabel);
 
                     CurrentProgress.MoviePhase = $"Syncing Movies (batch {batchIndex + 1}/{totalBatches}): {baseName}";
 
@@ -2045,7 +2060,12 @@ public partial class StrmSyncService
                             // This line asked one host for the uuid and pointed the STRM file at
                             // another (GitHub #113).
                             string providerStreamUrl = $"{provider.EffectiveDispatcharrBaseUrl}/proxy/vod/movie/{uuid}?stream_id={providers[i].StreamId}";
-                            string strmFileName = BuildMovieStrmFileName(folderName, i == 0 ? null : $"Version {i + 1}", provider.RegexRemovalPatterns);
+                            // The language label leads, so all of one language's providers stay
+                            // together in the picker: "DE", "DE Version 2".
+                            string strmFileName = BuildMovieStrmFileName(
+                                folderName,
+                                VersionLanguageLabeler.Combine(languageLabel, i == 0 ? null : $"Version {i + 1}"),
+                                provider.RegexRemovalPatterns);
                             strmEntries.Add((providerStreamUrl, strmFileName));
                         }
                     }
@@ -3885,6 +3905,29 @@ public partial class StrmSyncService
         }
 
         return labels.Count > 0 ? string.Join(" ", labels) : null;
+    }
+
+    /// <summary>
+    /// Builds the version label with a language label in front of the quality label.
+    /// <para>
+    /// Without a language label the result is exactly the one-argument overload's. With one, digit
+    /// resolution tokens are written as words ("2160p" becomes "4K"): Jellyfin makes a version whose
+    /// name carries such a token the default, which would let "EN 1080p" win over a plain "DE".
+    /// </para>
+    /// </summary>
+    /// <param name="name">The provider's stream name.</param>
+    /// <param name="languageLabel">The language label from <see cref="VersionLanguageLabeler"/>, or null.</param>
+    /// <returns>The version label, or null when the stream has none.</returns>
+    internal static string? ExtractVersionLabel(string? name, string? languageLabel)
+    {
+        string? quality = ExtractVersionLabel(name);
+        if (languageLabel == null)
+        {
+            return quality;
+        }
+
+        string? combined = VersionLanguageLabeler.Combine(languageLabel, quality);
+        return combined == null ? null : VersionLanguageLabeler.NormalizeResolutionTokens(combined);
     }
 
     /// <summary>
