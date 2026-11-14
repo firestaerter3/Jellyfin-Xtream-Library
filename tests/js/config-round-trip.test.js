@@ -53,6 +53,8 @@ function fixture() {
         EnableDispatcharrMode: true,
         DispatcharrBaseUrl: 'http://dispatcharr' + n + '.example:9191',
         GroupMoviesByTmdbId: true,
+        VersionLanguageRules: '^DE\\b=DE' + n,
+        VersionLanguageDefault: 'EN' + n,
         DispatcharrApiUser: 'admin' + n,
         DispatcharrApiPass: 'secret' + n,
         EnableIncrementalSync: false,
@@ -255,6 +257,26 @@ test('a drawn category list is still read, so clearing every tick is saved', asy
     });
     assert.deepStrictEqual(saved.Providers[0].SelectedVodCategoryIds, []);
     assert.deepStrictEqual(saved.Providers[0].SelectedSeriesCategoryIds, [13]);
+});
+
+test('language version labels are shown on load, hidden without grouping, and an edit is saved', async () => {
+    const stored = fixture();
+    const { saved, page } = await roundTrip(stored, (cfg, pg) => {
+        assert.strictEqual(pg.elements.txtVersionLanguageRules.value, stored.Providers[0].VersionLanguageRules);
+        assert.strictEqual(pg.elements.txtVersionLanguageDefault.value, stored.Providers[0].VersionLanguageDefault);
+        pg.elements.txtVersionLanguageRules.value = '^DE\\b=DE\n^FIFA\\+=EN';
+        pg.elements.txtVersionLanguageDefault.value = 'EN';
+    });
+    assert.strictEqual(saved.Providers[0].VersionLanguageRules, '^DE\\b=DE\n^FIFA\\+=EN');
+    assert.strictEqual(saved.Providers[0].VersionLanguageDefault, 'EN');
+    assert.strictEqual(page.elements.versionLanguageSettings.style.display, '');
+
+    const ungrouped = fixture();
+    ungrouped.Providers[0].GroupMoviesByTmdbId = false;
+    const off = await roundTrip(ungrouped);
+    assert.strictEqual(off.page.elements.versionLanguageSettings.style.display, 'none');
+    assert.strictEqual(off.saved.Providers[0].VersionLanguageRules, ungrouped.Providers[0].VersionLanguageRules,
+        'hidden rules must survive a save');
 });
 
 // Settings page behaviour (round 2, step B). These use the same page as the round trips above.

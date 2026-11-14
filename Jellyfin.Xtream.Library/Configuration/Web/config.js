@@ -82,6 +82,8 @@ var XtreamLibraryConfig = (function () {
             TvdbFolderIdOverrides: '',
             CustomTitleRemoveTerms: '',
             RegexRemovalPatterns: '',
+            VersionLanguageRules: '',
+            VersionLanguageDefault: '',
             DownloadArtworkForUnmatched: true,
             FallbackToYearlessLookup: false,
             EnableProactiveMediaInfo: false,
@@ -220,6 +222,9 @@ var XtreamLibraryConfig = (function () {
         document.getElementById('chkEnableDispatcharrMode').checked = p.EnableDispatcharrMode || false;
         document.getElementById('txtDispatcharrBaseUrl').value = p.DispatcharrBaseUrl || '';
         document.getElementById('chkGroupMoviesByTmdbId').checked = p.GroupMoviesByTmdbId === true;
+        document.getElementById('txtVersionLanguageRules').value = p.VersionLanguageRules || '';
+        document.getElementById('txtVersionLanguageDefault').value = p.VersionLanguageDefault || '';
+        self.updateVersionLanguageVisibility();
         document.getElementById('txtDispatcharrApiUser').value = p.DispatcharrApiUser || '';
         document.getElementById('txtDispatcharrApiPass').value = p.DispatcharrApiPass || '';
         self.updateDispatcharrVisibility();
@@ -325,6 +330,8 @@ var XtreamLibraryConfig = (function () {
         p.EnableDispatcharrMode = document.getElementById('chkEnableDispatcharrMode').checked;
         p.DispatcharrBaseUrl = document.getElementById('txtDispatcharrBaseUrl').value.trim().replace(/\/$/, '');
         p.GroupMoviesByTmdbId = document.getElementById('chkGroupMoviesByTmdbId').checked;
+        p.VersionLanguageRules = document.getElementById('txtVersionLanguageRules').value;
+        p.VersionLanguageDefault = document.getElementById('txtVersionLanguageDefault').value.trim();
         p.DispatcharrApiUser = document.getElementById('txtDispatcharrApiUser').value.trim();
         p.DispatcharrApiPass = document.getElementById('txtDispatcharrApiPass').value.trim();
     },
@@ -2241,6 +2248,12 @@ var XtreamLibraryConfig = (function () {
         document.getElementById('dispatcharrSettings').style.display = enabled ? 'block' : 'none';
     },
 
+    // Language labels only matter for grouped films; hidden otherwise, and kept on save either way.
+    updateVersionLanguageVisibility: function () {
+        const grouped = document.getElementById('chkGroupMoviesByTmdbId').checked;
+        document.getElementById('versionLanguageSettings').style.display = grouped ? '' : 'none';
+    },
+
     updateOrphanSafetyThresholdVisibility: function () {
         const enabled = document.getElementById('chkCleanupOrphans').checked;
         document.getElementById('orphanSafetyThresholdSettings').style.display = enabled ? 'block' : 'none';
@@ -2963,6 +2976,13 @@ function initXtreamLibraryConfig() {
     if (chkEnableDispatcharrMode) {
         chkEnableDispatcharrMode.addEventListener('change', function () {
             XtreamLibraryConfig.updateDispatcharrVisibility();
+        });
+    }
+
+    var chkGroupMoviesByTmdbId = document.getElementById('chkGroupMoviesByTmdbId');
+    if (chkGroupMoviesByTmdbId) {
+        chkGroupMoviesByTmdbId.addEventListener('change', function () {
+            XtreamLibraryConfig.updateVersionLanguageVisibility();
         });
     }
 

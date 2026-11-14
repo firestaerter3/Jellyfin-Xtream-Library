@@ -818,6 +818,34 @@
                                     are not touched.
                                 </div>
                             </div>
+                            <div id="versionLanguageSettings">
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtVersionLanguageRules">Language labels for versions (one rule per line, regex=LABEL)</label>
+                                    <textarea is="emby-textarea" id="txtVersionLanguageRules" rows="4"
+                                        placeholder="^DE\b=DE" style="width: 100%; font-family: monospace;"></textarea>
+                                    <div class="fieldDescription">
+                                        Gives each version of a grouped film a language label, so the version picker
+                                        reads "DE", "EN" or "EN HEVC 4K" instead of showing two identical entries. Each
+                                        rule is a .NET regex matched against the names of the categories the stream is
+                                        in, then against the stream name; the first rule in the list that matches wins,
+                                        so put your preferred language first. Files are named
+                                        <code>Title (Year) [tmdbid-N] - DE.strm</code>.
+                                        <br />
+                                        Resolutions are written as words (2160p becomes 4K, 1080p FHD, 720p HD), because
+                                        Jellyfin plays a version with a number like 1080p in its name by default. That
+                                        way the plain file of your first language stays the default version.
+                                        Leave empty to keep the file names as they are.
+                                    </div>
+                                </div>
+                                <div class="inputContainer">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtVersionLanguageDefault">Language label when no rule matches</label>
+                                    <input is="emby-input" type="text" id="txtVersionLanguageDefault" placeholder="EN" />
+                                    <div class="fieldDescription">
+                                        Used for streams none of the rules above match. Leave empty to give those
+                                        streams no language label.
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
                         <div class="verticalSection">

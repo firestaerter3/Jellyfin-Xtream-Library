@@ -52,6 +52,7 @@ A Jellyfin plugin that syncs Xtream VOD, Series, and Live TV content to native J
 - **Multiple Folder Mode**: Organize content into subfolders by category (e.g., `Movies/Kids`, `Series/Documentaries`)
 - **Visual Folder UI**: Create folders and assign categories with checkboxes instead of typing IDs
 - **Multi-Folder Categories**: Same category can sync to multiple folders
+- **Movie Versions**: Copies of a film that share a provider TMDB id go into one folder and show as versions of one film, optionally labelled by language (`DE`, `EN`, `EN HEVC 4K`)
 
 ### Artwork & Media Info
 - **Provider Artwork Download**: Downloads posters/fanart from your provider for unmatched content
@@ -143,6 +144,30 @@ To organize content into subfolders:
 3. Check the categories to include in that folder
 4. Repeat for additional folders
 5. Categories not assigned to any folder sync to the root
+
+### Movie Versions and Language Labels (Optional)
+
+With **Group movies with the same TMDB id into one folder** on (Movies tab), copies of a film your
+provider reports under the same TMDB id are written to one folder, and Jellyfin shows them as versions
+of a single film.
+
+Providers often carry a film once per language, so the versions need a label that tells them apart.
+**Language labels for versions** takes one rule per line as `regex=LABEL`. Each rule is matched against
+the names of the categories a stream is in (then against the stream name), and the first rule in the
+list that matches wins, so put your preferred language first. **Language label when no rule matches**
+covers everything else. For a provider whose German categories start with `DE -`, the rule `^DE\b=DE`
+with the default `EN` gives files like:
+
+```
+Movies/Joker (2019) [tmdbid-475557]/
+├── Joker (2019) [tmdbid-475557] - DE.strm
+├── Joker (2019) [tmdbid-475557] - DE 4K.strm
+└── Joker (2019) [tmdbid-475557] - EN.strm
+```
+
+Resolutions are written as words (2160p → 4K, 1080p → FHD, 720p → HD) because Jellyfin plays a version
+with a number like 1080p in its name by default; this way the plain file of your first language stays
+the default version. Leave the rules empty to keep the previous file names.
 
 ### Metadata Matching (Optional)
 
