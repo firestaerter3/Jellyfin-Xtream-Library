@@ -1382,6 +1382,15 @@ public partial class StrmSyncService
 
         categories = filteredCategories;
 
+        // A stream is labelled in the first batch it turns up in, with the categories of that batch
+        // only. Categories matching an earlier language rule go first, so that batch always holds
+        // the stream's highest-ranked category. OrderBy is stable: the provider's order stays
+        // within a rank.
+        if (languageRules.Count > 0)
+        {
+            categories = categories.OrderBy(c => VersionLanguageLabeler.RuleRank(c.CategoryName, languageRules)).ToList();
+        }
+
         // Determine batch size - 0 means process all at once (legacy behavior).
         // Math.Max keeps the division below defined when the selection resolves to no categories
         // at all, which is now reachable from the config rather than only by accident: with
@@ -2096,13 +2105,18 @@ public partial class StrmSyncService
                         // That covers a guest of a TMDB group and equally two streams that share a
                         // title without an id. The role is decided once per folder, not per file, so
                         // a stream with several Dispatcharr files keeps all of them on one side.
-                        bool asAlternative = joinedGroupFolder;
+                        // With a language label the guest's file name carries its own label ("… - EN"),
+                        // so it only collides with the owner when both have the same label. It then
+                        // claims its own name like any primary and falls back to "<name> - <stream id>"
+                        // only when that name is taken; the version picker shows "EN", not "EN - 123".
+                        bool guestHasOwnName = joinedGroupFolder && languageLabel != null;
+                        bool asAlternative = joinedGroupFolder && !guestHasOwnName;
 
                         // The stream whose primary this one is waiting behind: the owner of the TMDB
                         // group it joined, or the stream the file on disk names. Null when the holder
                         // is another stream of this run. Only the complete catalogue says whether it
                         // is still listed, so the roles are settled after the last batch.
-                        int? waitsOn = joinedGroupFolder ? groupOwnerStreamId : null;
+                        int? waitsOn = asAlternative ? groupOwnerStreamId : null;
                         string primaryPath = Path.Combine(movieFolder, strmEntries[0].StrmFileName);
                         bool primaryHeld = false;
                         if (!asAlternative)
@@ -2176,7 +2190,10 @@ public partial class StrmSyncService
                             }
 
                             strmPath = alternativePath;
-                            roleLedger.RegisterAlternative(plainPath, stream.StreamId, strmPath, waitsOn, joinedGroupFolder, processed: true);
+                            // A guest with its own label that only shares that label with another
+                            // stream is a same-name pair, not a guest waiting on the owner, so the
+                            // lowest stream id gets the plain name as for any such pair.
+                            roleLedger.RegisterAlternative(plainPath, stream.StreamId, strmPath, waitsOn, joinedGroupFolder && !guestHasOwnName, processed: true);
                         }
 
                         // Only now, once the final name is known. Protecting the pre-rename path

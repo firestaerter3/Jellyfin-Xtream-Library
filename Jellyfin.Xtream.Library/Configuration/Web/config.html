@@ -827,14 +827,15 @@
                                         Gives each version of a grouped film a language label, so the version picker
                                         reads "DE", "EN" or "EN HEVC 4K" instead of showing two identical entries. Each
                                         rule is a .NET regex matched against the names of the categories the stream is
-                                        in, then against the stream name; the first rule in the list that matches wins,
-                                        so put your preferred language first. Files are named
-                                        <code>Title (Year) [tmdbid-N] - DE.strm</code>.
+                                        in (the stream name is only read when no category is known). When a stream is in
+                                        categories of several languages, the first rule in the list that matches wins.
+                                        Files are named <code>Title (Year) [tmdbid-N] - DE.strm</code>.
                                         <br />
-                                        Resolutions are written as words (2160p becomes 4K, 1080p FHD, 720p HD), because
-                                        Jellyfin plays a version with a number like 1080p in its name by default. That
-                                        way the plain file of your first language stays the default version.
-                                        Leave empty to keep the file names as they are.
+                                        Jellyfin plays the version whose label comes first alphabetically by default
+                                        ("DE" before "DE 4K" before "EN"). Resolutions are written as words (2160p
+                                        becomes 4K, 1080p FHD, 720p HD), because Jellyfin would otherwise prefer a
+                                        version with a number like 1080p in its name. Changing the rules renames movie
+                                        files on the next sync. Leave empty to keep the file names as they are.
                                     </div>
                                 </div>
                                 <div class="inputContainer">

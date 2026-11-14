@@ -80,8 +80,9 @@ internal static partial class VersionLanguageLabeler
     /// <summary>
     /// Picks the language label for a stream. Rules are tried in list order and the first rule that
     /// matches any of the stream's category names wins, so the result never depends on the order
-    /// the categories arrive in. When no category matches, the stream name is tried against the
-    /// same rules; when that fails too, <paramref name="defaultLabel"/> is returned.
+    /// the categories arrive in. Only when no category name is known is the stream name tried
+    /// against the same rules; otherwise, and when that fails too, <paramref name="defaultLabel"/>
+    /// is returned.
     /// </summary>
     /// <param name="categoryNames">Names of the categories the stream sits in.</param>
     /// <param name="streamName">The provider's stream name, used as a fallback.</param>
@@ -94,7 +95,15 @@ internal static partial class VersionLanguageLabeler
         IReadOnlyList<(Regex Pattern, string Label)> rules,
         string? defaultLabel)
     {
-        var names = new List<string>(categoryNames);
+        var names = new List<string>();
+        foreach (var name in categoryNames)
+        {
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                names.Add(name);
+            }
+        }
+
         foreach (var (pattern, label) in rules)
         {
             foreach (var name in names)
@@ -106,7 +115,9 @@ internal static partial class VersionLanguageLabeler
             }
         }
 
-        if (!string.IsNullOrEmpty(streamName))
+        // The title is read only when no category name is known. A known category that no rule
+        // matches gets the default: a title such as "De Palma" says nothing about the language.
+        if (names.Count == 0 && !string.IsNullOrEmpty(streamName))
         {
             foreach (var (pattern, label) in rules)
             {
@@ -118,6 +129,28 @@ internal static partial class VersionLanguageLabeler
         }
 
         return string.IsNullOrWhiteSpace(defaultLabel) ? null : defaultLabel.Trim();
+    }
+
+    /// <summary>
+    /// The index of the first rule that matches a category name, or the number of rules when none
+    /// does. Categories are fetched in batches and a stream is labelled in the first batch it turns
+    /// up in, so the sync orders categories by this rank: the batch where a stream first appears
+    /// then always holds its highest-ranked category.
+    /// </summary>
+    /// <param name="categoryName">The category name.</param>
+    /// <param name="rules">Rules from <see cref="ParseRules"/>.</param>
+    /// <returns>The rank; lower comes first.</returns>
+    internal static int RuleRank(string categoryName, IReadOnlyList<(Regex Pattern, string Label)> rules)
+    {
+        for (int i = 0; i < rules.Count; i++)
+        {
+            if (IsMatch(rules[i].Pattern, categoryName))
+            {
+                return i;
+            }
+        }
+
+        return rules.Count;
     }
 
     /// <summary>

@@ -40,8 +40,24 @@ public class VersionLanguageLabelerTests
         => VersionLanguageLabeler.Resolve(["AMZ - Action", "DE - Netflix"], "Joker (2019)", Rules(), "EN").Should().Be("DE");
 
     [Fact]
-    public void Resolve_NoCategoryMatch_FallsBackToStreamName()
-        => VersionLanguageLabeler.Resolve(["FIFA+ - Docs"], "DE - Joker (2019)", Rules(), "EN").Should().Be("DE");
+    public void Resolve_NoCategory_FallsBackToStreamName()
+        => VersionLanguageLabeler.Resolve([], "DE - Joker (2019)", Rules(), "EN").Should().Be("DE");
+
+    [Fact]
+    public void Resolve_OnlyUnknownCategoryNames_FallsBackToStreamName()
+        => VersionLanguageLabeler.Resolve([string.Empty], "DE - Joker (2019)", Rules(), "EN").Should().Be("DE");
+
+    [Fact]
+    public void Resolve_KnownCategoryWithoutMatch_DoesNotReadTheTitle()
+        // "De Palma" in an English category must not become German because the title starts with "De".
+        => VersionLanguageLabeler.Resolve(["Documentaries"], "De Palma (2015)", Rules(), "EN").Should().Be("EN");
+
+    [Theory]
+    [InlineData("DE - Kino", 0)]
+    [InlineData("NF - Action", 1)]
+    [InlineData("FIFA+ - Docs", 2)]
+    public void RuleRank_IsTheIndexOfTheFirstMatchingRule(string category, int expected)
+        => VersionLanguageLabeler.RuleRank(category, Rules()).Should().Be(expected);
 
     [Fact]
     public void Resolve_NothingMatches_ReturnsDefault()

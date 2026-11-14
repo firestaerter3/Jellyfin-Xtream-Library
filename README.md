@@ -153,9 +153,9 @@ of a single film.
 
 Providers often carry a film once per language, so the versions need a label that tells them apart.
 **Language labels for versions** takes one rule per line as `regex=LABEL`. Each rule is matched against
-the names of the categories a stream is in (then against the stream name), and the first rule in the
-list that matches wins, so put your preferred language first. **Language label when no rule matches**
-covers everything else. For a provider whose German categories start with `DE -`, the rule `^DE\b=DE`
+the names of the categories a stream is in (the stream name is only read when no category is known).
+When a stream sits in categories of several languages, the first rule in the list that matches wins.
+**Language label when no rule matches** covers everything else. For a provider whose German categories start with `DE -`, the rule `^DE\b=DE`
 with the default `EN` gives files like:
 
 ```
@@ -165,9 +165,12 @@ Movies/Joker (2019) [tmdbid-475557]/
 └── Joker (2019) [tmdbid-475557] - EN.strm
 ```
 
-Resolutions are written as words (2160p → 4K, 1080p → FHD, 720p → HD) because Jellyfin plays a version
-with a number like 1080p in its name by default; this way the plain file of your first language stays
-the default version. Leave the rules empty to keep the previous file names.
+Jellyfin plays the version whose label sorts first alphabetically by default (`DE` before `DE 4K` before
+`EN`). Resolutions are written as words (2160p → 4K, 1080p → FHD, 720p → HD) because Jellyfin would
+otherwise prefer a version with a number like 1080p in its name. Each version keeps its own label; only a
+second stream with the same label gets its stream id appended (`… - EN - 123456.strm`). Changing the rules
+renames movie files on the next sync (it forces a full sync). Leave the rules empty to keep the previous
+file names.
 
 ### Metadata Matching (Optional)
 

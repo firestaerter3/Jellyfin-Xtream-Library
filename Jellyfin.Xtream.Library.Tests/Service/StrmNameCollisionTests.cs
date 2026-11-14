@@ -227,6 +227,128 @@ public class StrmNameCollisionTests : IDisposable
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LanguageLabelledGroup_EachVersionKeepsItsOwnLabelWithoutStreamId(bool englishOwnsTheFolder)
+    {
+        // Version picker shows the part after the shared prefix: "DE", "EN", "DE 4K" — not "EN - 200".
+        int de = englishOwnsTheFolder ? 300 : 100, en = englishOwnsTheFolder ? 100 : 300, de4k = 500;
+        foreach (var id in new[] { de, en, de4k })
+        {
+            VodInfoWithTmdbId(id, "42");
+        }
+
+        var categories = new (int Id, string Name, StreamInfo[] Streams)[]
+        {
+            (1, "DE - Kino", [Movie(de, "DE - The Film (2024)"), Movie(de4k, "DE - The Film (2024) 4K")]),
+            (2, "NF - Action", [Movie(en, "EN - The Film (2024)")]),
+        };
+
+        for (int run = 0; run < 2; run++)
+        {
+            await RunLanguageSyncAsync(categories, incremental: run == 1).ConfigureAwait(true);
+
+            var folder = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]");
+            Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Order(StringComparer.Ordinal).Should().Equal(
+                "The Film (2024) [tmdbid-42] - DE 4K.strm",
+                "The Film (2024) [tmdbid-42] - DE.strm",
+                "The Film (2024) [tmdbid-42] - EN.strm");
+            (await StreamIdOfAsync(Path.Combine(folder, "The Film (2024) [tmdbid-42] - DE.strm")).ConfigureAwait(true)).Should().Be(de);
+            (await StreamIdOfAsync(Path.Combine(folder, "The Film (2024) [tmdbid-42] - EN.strm")).ConfigureAwait(true)).Should().Be(en);
+        }
+    }
+
+    [Fact]
+    public async Task LanguageLabelledGroup_TwoStreamsWithTheSameLabel_TheSecondKeepsItsStreamId()
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(200, "42");
+        VodInfoWithTmdbId(300, "42");
+        await RunLanguageSyncAsync(
+            [
+                (1, "DE - Kino", [Movie(100, "DE - The Film (2024)")]),
+                (2, "NF - Action", [Movie(200, "NF - The Film (2024)")]),
+                (3, "AMZ - Action", [Movie(300, "AMZ - The Film (2024)")]),
+            ],
+            incremental: false).ConfigureAwait(true);
+
+        var folder = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]");
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Order(StringComparer.Ordinal).Should().Equal(
+            "The Film (2024) [tmdbid-42] - DE.strm",
+            "The Film (2024) [tmdbid-42] - EN - 300.strm",
+            "The Film (2024) [tmdbid-42] - EN.strm");
+    }
+
+    [Fact]
+    public async Task LanguageLabel_UsesAPreferredCategoryFromALaterBatch()
+    {
+        // Batches of one category: the stream first turns up under NF, its DE category comes later.
+        _configure = p => p.CategoryBatchSize = 1;
+        await RunLanguageSyncAsync(
+            [
+                (1, "NF - Top", [Movie(700, "Other Film (2023)")]),
+                (2, "DE - Netflix", [Movie(700, "Other Film (2023)")]),
+            ],
+            incremental: false).ConfigureAwait(true);
+
+        Directory.GetFiles(Path.Combine(_libraryPath, "Movies"), "*.strm", SearchOption.AllDirectories)
+            .Select(Path.GetFileName).Should().Equal("Other Film (2023) - DE.strm");
+    }
+
+    [Fact]
+    public async Task LanguageLabelledGroup_WhenTheOwnerLeaves_TheGuestKeepsItsFileOnEveryLaterRun()
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(300, "42");
+        await RunLanguageSyncAsync(
+            [(1, "DE - Kino", [Movie(100, "DE - The Film (2024)")]), (2, "NF - Action", [Movie(300, "EN - The Film (2024)")])],
+            incremental: false).ConfigureAwait(true);
+
+        var folder = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]");
+        var english = Path.Combine(folder, "The Film (2024) [tmdbid-42] - EN.strm");
+        for (int run = 0; run < 3; run++)
+        {
+            await RunLanguageSyncAsync(
+                [(1, "DE - Kino", [Movie(900, "DE - Another Film (2020)")]), (2, "NF - Action", [Movie(300, "EN - The Film (2024)")])],
+                incremental: run == 1,
+                cleanupOrphans: true).ConfigureAwait(true);
+
+            Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().Equal("The Film (2024) [tmdbid-42] - EN.strm");
+            (await StreamIdOfAsync(english).ConfigureAwait(true)).Should().Be(300);
+        }
+    }
+
+    private static StreamInfo Movie(int id, string name) => new() { StreamId = id, Name = name, ContainerExtension = "mp4" };
+
+    private async Task RunLanguageSyncAsync((int Id, string Name, StreamInfo[] Streams)[] categories, bool incremental, bool cleanupOrphans = false)
+    {
+        _client.Setup(c => c.GetVodCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(categories.Select(c => new Category { CategoryId = c.Id, CategoryName = c.Name }).ToList());
+        foreach (var category in categories)
+        {
+            var streams = category.Streams.Select(s => new StreamInfo { StreamId = s.StreamId, Name = s.Name, ContainerExtension = s.ContainerExtension, CategoryId = category.Id }).ToList();
+            _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), category.Id, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(streams);
+        }
+
+        var outer = _configure;
+        _configure = p =>
+        {
+            p.VersionLanguageRules = "^DE\\b=DE";
+            p.VersionLanguageDefault = "EN";
+            outer?.Invoke(p);
+        };
+        try
+        {
+            await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: incremental, providerCount: 1, proactiveMediaInfo: false, groupByTmdbId: true, cleanupOrphans).ConfigureAwait(true);
+        }
+        finally
+        {
+            _configure = outer;
+        }
+    }
+
+    [Theory]
     [InlineData("http://h/movie/u/p/123.mp4", 123)]
     [InlineData("http://h/movie/u/p/123", 123)]
     [InlineData("http://h:8080/movie/u/p/45.mkv?token=1", 45)]
