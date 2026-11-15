@@ -334,6 +334,56 @@ public class StrmNameCollisionTests : IDisposable
         Directory.GetFiles(solo, "*.strm").Select(Path.GetFileName).Should().Equal("Solo Film (2020) - DE.strm");
     }
 
+    // A changed rule renames the stream's file. The file with the old label must go when the new one is
+    // written: with the threshold holding cleanup back it would stay, and every later unchanged run
+    // would protect it because its URL is still the stream's (CodeRabbit).
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ChangingALabel_ReplacesTheStreamsOldLabelledFileWithoutCleanup(bool incremental)
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(300, "42");
+        (int Id, string Name, StreamInfo[] Streams)[] categories =
+        [
+            (1, "DE - Kino", [Movie(100, "DE - The Film (2024)"), Movie(500, "DE - Solo Film (2020)")]),
+            (2, "NF - Action", [Movie(300, "EN - The Film (2024)")]),
+        ];
+        await RunLanguageSyncAsync(categories, incremental).ConfigureAwait(true);
+        var folder = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]");
+        var solo = Path.Combine(_libraryPath, "Movies", "Solo Film (2020)");
+        Directory.GetFiles(solo, "*.strm").Select(Path.GetFileName).Should().Equal("Solo Film (2020) - DE.strm");
+
+        _configure = p => p.VersionLanguageRules = "^DE\\b=GER";
+        await RunLanguageSyncAsync(categories, incremental, cleanupOrphans: false).ConfigureAwait(true);
+
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Order(StringComparer.Ordinal).Should().Equal(
+            "The Film (2024) [tmdbid-42] - EN.strm",
+            "The Film (2024) [tmdbid-42] - GER.strm");
+        (await StreamIdOfAsync(Path.Combine(folder, "The Film (2024) [tmdbid-42] - GER.strm")).ConfigureAwait(true)).Should().Be(100);
+        Directory.GetFiles(solo, "*.strm").Select(Path.GetFileName).Should().Equal("Solo Film (2020) - GER.strm");
+    }
+
+    // Turning labels off is a rename as well: the labelled file goes when the plain one is written.
+    [Fact]
+    public async Task TurningLabelsOff_ReplacesTheStreamsLabelledFileWithoutCleanup()
+    {
+        VodInfoWithTmdbId(100, "42");
+        (int Id, string Name, StreamInfo[] Streams)[] categories = [(1, "DE - Kino", [Movie(100, "DE - The Film (2024)")])];
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+        var folder = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]");
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().Equal("The Film (2024) [tmdbid-42] - DE.strm");
+
+        _configure = p =>
+        {
+            p.VersionLanguageRules = string.Empty;
+            p.VersionLanguageDefault = string.Empty;
+        };
+        await RunLanguageSyncAsync(categories, incremental: true, cleanupOrphans: false).ConfigureAwait(true);
+
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().Equal("The Film (2024) [tmdbid-42].strm");
+    }
+
     // A run with movie sync off still saves the current config fingerprint. When the label settings
     // changed in that run, the run that turns movies back on sees no fingerprint change and skips
     // every unchanged movie, so the files keep their old names (CodeRabbit).
@@ -352,7 +402,7 @@ public class StrmNameCollisionTests : IDisposable
 
         await RunLanguageSyncAsync(categories, incremental: true, cleanupOrphans: false).ConfigureAwait(true);
 
-        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().Contain("The Film (2024) [tmdbid-42] - GER.strm");
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().Equal("The Film (2024) [tmdbid-42] - GER.strm");
     }
 
     // Only the stream's own plain file goes. One whose URL names another stream answers to cleanup.

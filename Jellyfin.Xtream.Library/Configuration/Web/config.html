@@ -835,8 +835,9 @@
                                         ("DE" before "DE 4K" before "EN"). Resolutions are written as words (2160p
                                         becomes 4K, 1080p FHD, 720p HD), because Jellyfin would otherwise prefer a
                                         version with a number like 1080p in its name. Changing the rules renames movie
-                                        files on the next sync. Leave both this field and the default below empty to
-                                        keep the file names as they are; a default alone still labels every stream.
+                                        files on the next sync; each stream's previous file is removed as its renamed
+                                        one is written. Leave both this field and the default below empty to keep the
+                                        file names as they are; a default alone still labels every stream.
                                     </div>
                                 </div>
                                 <div class="inputContainer">
