@@ -364,6 +364,31 @@ public class StrmNameCollisionTests : IDisposable
             .Select(Path.GetFileName).Should().Equal("Other Film (2023).strm");
     }
 
+    // With grouping off the rules label nothing, so they must not reorder the category batches either:
+    // with one category per batch, the batch a stream first turns up in decides its mapped folder (CodeRabbit).
+    [Fact]
+    public async Task WithGroupingOff_LanguageRulesLeaveTheCategoryOrderAlone()
+    {
+        var film = Movie(700, "Other Film (2023)");
+        _client.Setup(c => c.GetVodCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new Category { CategoryId = 1, CategoryName = "Kids" }, new Category { CategoryId = 2, CategoryName = "Other" }]);
+        _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new StreamInfo { StreamId = 700, Name = film.Name, ContainerExtension = "mp4", CategoryId = 1 }]);
+        _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 2, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new StreamInfo { StreamId = 700, Name = film.Name, ContainerExtension = "mp4", CategoryId = 2 }]);
+        _configure = p =>
+        {
+            p.CategoryBatchSize = 1;
+            p.MovieFolderMode = "Multiple";
+            p.MovieFolderMappings = KidsAndOther;
+            p.VersionLanguageRules = "^Other=EN";
+        };
+
+        await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: false, providerCount: 1, proactiveMediaInfo: false, groupByTmdbId: false, cleanupOrphans: false).ConfigureAwait(true);
+
+        StrmFiles("Movies").Should().ContainSingle().Which.Should().StartWith("Kids", "the provider's category order decides, not a rule that labels nothing");
+    }
+
     [Fact]
     public async Task LanguageLabelledGroup_WhenTheOwnerLeaves_TheGuestKeepsItsFileOnEveryLaterRun()
     {

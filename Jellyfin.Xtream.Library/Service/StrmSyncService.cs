@@ -1385,8 +1385,9 @@ public partial class StrmSyncService
         // A stream is labelled in the first batch it turns up in, with the categories of that batch
         // only. Categories matching an earlier language rule go first, so that batch always holds
         // the stream's highest-ranked category. OrderBy is stable: the provider's order stays
-        // within a rank.
-        if (languageRules.Count > 0)
+        // within a rank. Labels only apply with grouping on; without it the rules must not move a
+        // stream's first batch, and with it its mapped folder, either (CodeRabbit).
+        if (groupByTmdb && languageRules.Count > 0)
         {
             categories = categories.OrderBy(c => VersionLanguageLabeler.RuleRank(c.CategoryName, languageRules)).ToList();
         }
