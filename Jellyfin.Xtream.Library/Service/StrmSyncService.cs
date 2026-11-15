@@ -5919,13 +5919,22 @@ public partial class StrmSyncService
             // them as changed and rewrite their files (CodeRabbit on #190).
             bool carriedFilesHoldOldLogin = LoginChanged(provider, carryForwardFrom);
 
+            // The same for the config fingerprint: it covers the folder, category and language
+            // settings, each of which names files. Changed while a sync was off, the carried files
+            // keep names the new settings would not produce, and this snapshot already records the
+            // new fingerprint, so the run that turns the sync back on would stay incremental and
+            // skip them as unchanged (CodeRabbit).
+            bool carriedFilesHoldOldConfig = carryForwardFrom?.ConfigFingerprint is { Length: > 0 } recordedConfig
+                && !string.Equals(recordedConfig, snapshot.ConfigFingerprint, StringComparison.Ordinal);
+            bool carriedFilesNeedRewrite = carriedFilesHoldOldLogin || carriedFilesHoldOldConfig;
+
             // Movies were not synced this run, so allMovies is empty and rebuilding from it would
             // drop every identity the previous run recorded, taking the grouping map with it.
             if (!provider.SyncMovies && carryForwardFrom != null)
             {
                 foreach (var carried in carryForwardFrom.Movies)
                 {
-                    snapshot.Movies[carried.Key] = MarkRewriteIf(carriedFilesHoldOldLogin, carried.Value);
+                    snapshot.Movies[carried.Key] = MarkRewriteIf(carriedFilesNeedRewrite, carried.Value);
                 }
 
                 snapshot.UnreadMovieCategoriesSince = new Dictionary<int, DateTime>(carryForwardFrom.UnreadMovieCategoriesSince);
@@ -5935,7 +5944,7 @@ public partial class StrmSyncService
             {
                 foreach (var carried in carryForwardFrom.Series)
                 {
-                    snapshot.Series[carried.Key] = MarkRewriteIf(carriedFilesHoldOldLogin, carried.Value);
+                    snapshot.Series[carried.Key] = MarkRewriteIf(carriedFilesNeedRewrite, carried.Value);
                 }
 
                 snapshot.UnreadSeriesCategoriesSince = new Dictionary<int, DateTime>(carryForwardFrom.UnreadSeriesCategoriesSince);
@@ -6004,12 +6013,12 @@ public partial class StrmSyncService
             // the next run that the category had items (GitHub #171).
             foreach (var (streamId, kept) in unread.KeptMovies)
             {
-                snapshot.Movies.TryAdd(streamId, MarkRewriteIf(carriedFilesHoldOldLogin, kept));
+                snapshot.Movies.TryAdd(streamId, MarkRewriteIf(carriedFilesNeedRewrite, kept));
             }
 
             foreach (var (seriesId, kept) in unread.KeptSeries)
             {
-                snapshot.Series.TryAdd(seriesId, MarkRewriteIf(carriedFilesHoldOldLogin, kept));
+                snapshot.Series.TryAdd(seriesId, MarkRewriteIf(carriedFilesNeedRewrite, kept));
             }
 
             if (provider.SyncMovies)

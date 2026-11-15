@@ -334,6 +334,27 @@ public class StrmNameCollisionTests : IDisposable
         Directory.GetFiles(solo, "*.strm").Select(Path.GetFileName).Should().Equal("Solo Film (2020) - DE.strm");
     }
 
+    // A run with movie sync off still saves the current config fingerprint. When the label settings
+    // changed in that run, the run that turns movies back on sees no fingerprint change and skips
+    // every unchanged movie, so the files keep their old names (CodeRabbit).
+    [Fact]
+    public async Task LabelSettingsChangedWhileMovieSyncWasOff_StillRenameTheFiles_WhenSyncIsBackOn()
+    {
+        VodInfoWithTmdbId(100, "42");
+        (int Id, string Name, StreamInfo[] Streams)[] categories = [(1, "DE - Kino", [Movie(100, "DE - The Film (2024)")])];
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+        var folder = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]");
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().Equal("The Film (2024) [tmdbid-42] - DE.strm");
+
+        _configure = p => p.VersionLanguageRules = "^DE\\b=GER";
+        await RunLanguageSyncAsync(categories, incremental: true, cleanupOrphans: false, syncMovies: false).ConfigureAwait(true);
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().ContainSingle().Which.Should().Be("The Film (2024) [tmdbid-42] - DE.strm", "nothing is written while movie sync is off");
+
+        await RunLanguageSyncAsync(categories, incremental: true, cleanupOrphans: false).ConfigureAwait(true);
+
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().Contain("The Film (2024) [tmdbid-42] - GER.strm");
+    }
+
     // Only the stream's own plain file goes. One whose URL names another stream answers to cleanup.
     [Fact]
     public async Task TurningLabelsOn_LeavesAPlainFileOfAnotherStreamAlone()
@@ -414,7 +435,7 @@ public class StrmNameCollisionTests : IDisposable
 
     private static StreamInfo Movie(int id, string name) => new() { StreamId = id, Name = name, ContainerExtension = "mp4" };
 
-    private async Task RunLanguageSyncAsync((int Id, string Name, StreamInfo[] Streams)[] categories, bool incremental, bool cleanupOrphans = false)
+    private async Task RunLanguageSyncAsync((int Id, string Name, StreamInfo[] Streams)[] categories, bool incremental, bool cleanupOrphans = false, bool syncMovies = true)
     {
         _client.Setup(c => c.GetVodCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(categories.Select(c => new Category { CategoryId = c.Id, CategoryName = c.Name }).ToList());
@@ -434,7 +455,7 @@ public class StrmNameCollisionTests : IDisposable
         };
         try
         {
-            await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: incremental, providerCount: 1, proactiveMediaInfo: false, groupByTmdbId: true, cleanupOrphans).ConfigureAwait(true);
+            await RunSyncAsync(syncMovies, syncSeries: false, useShippedDefaults: incremental, providerCount: 1, proactiveMediaInfo: false, groupByTmdbId: true, cleanupOrphans).ConfigureAwait(true);
         }
         finally
         {
