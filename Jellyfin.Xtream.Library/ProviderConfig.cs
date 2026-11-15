@@ -238,8 +238,9 @@ public class ProviderConfig
     /// matches wins.
     /// <para>
     /// The label is written in front of the quality label ("DE", "EN HEVC 4K"), so versions of one
-    /// film grouped into a folder can be told apart in Jellyfin's version picker. Empty means no
-    /// language labels, which keeps the earlier file names.
+    /// film grouped into a folder can be told apart in Jellyfin's version picker. Empty rules give no
+    /// language labels, and so keep the earlier file names, only while
+    /// <see cref="VersionLanguageDefault"/> is empty too; otherwise every stream gets that default.
     /// </para>
     /// </summary>
     public string VersionLanguageRules { get; set; } = string.Empty;

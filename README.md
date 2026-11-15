@@ -169,8 +169,8 @@ Jellyfin plays the version whose label sorts first alphabetically by default (`D
 `EN`). Resolutions are written as words (2160p → 4K, 1080p → FHD, 720p → HD) because Jellyfin would
 otherwise prefer a version with a number like 1080p in its name. Each version keeps its own label; only a
 second stream with the same label gets its stream id appended (`… - EN - 123456.strm`). Changing the rules
-renames movie files on the next sync (it forces a full sync). Leave the rules empty to keep the previous
-file names.
+renames movie files on the next sync (it forces a full sync). Leave both the rules and the default label
+empty to keep the previous file names; a default on its own still labels every stream.
 
 ### Metadata Matching (Optional)
 
