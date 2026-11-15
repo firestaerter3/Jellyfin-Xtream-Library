@@ -33,10 +33,16 @@ internal static partial class VersionLanguageLabeler
 {
     private static readonly TimeSpan MatchTimeout = TimeSpan.FromSeconds(1);
 
+    // A label goes into the file name as it is. A path separator in it ("DE/EN") would make the
+    // writer look for a folder "Title - DE" that nothing creates, so the write fails; the other
+    // characters are invalid in file names on Windows, where the server or its library share may
+    // live. Fixed list rather than Path.GetInvalidFileNameChars, which depends on the platform.
+    private static readonly char[] InvalidLabelChars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
+
     /// <summary>
     /// Parses the rule list: one rule per line, "regex=LABEL", split at the last '='.
     /// Lines with an invalid regex or no label are skipped; the order of the lines is kept,
-    /// because the first matching rule wins.
+    /// because the first matching rule wins. Labels pass through <see cref="SanitizeLabel"/>.
     /// </summary>
     /// <param name="rules">The rule text as entered in the settings.</param>
     /// <returns>The valid rules in list order.</returns>
@@ -58,8 +64,8 @@ internal static partial class VersionLanguageLabeler
             }
 
             string pattern = line[..separator].Trim();
-            string label = line[(separator + 1)..].Trim();
-            if (pattern.Length == 0 || label.Length == 0)
+            string? label = SanitizeLabel(line[(separator + 1)..]);
+            if (pattern.Length == 0 || label is null)
             {
                 continue;
             }
@@ -87,7 +93,8 @@ internal static partial class VersionLanguageLabeler
     /// <param name="categoryNames">Names of the categories the stream sits in.</param>
     /// <param name="streamName">The provider's stream name, used as a fallback.</param>
     /// <param name="rules">Rules from <see cref="ParseRules"/>.</param>
-    /// <param name="defaultLabel">Label when nothing matches; null or empty means no label.</param>
+    /// <param name="defaultLabel">Label when nothing matches; null or empty means no label. Passes
+    /// through <see cref="SanitizeLabel"/>.</param>
     /// <returns>The language label, or null when the stream gets none.</returns>
     internal static string? Resolve(
         IEnumerable<string> categoryNames,
@@ -128,7 +135,33 @@ internal static partial class VersionLanguageLabeler
             }
         }
 
-        return string.IsNullOrWhiteSpace(defaultLabel) ? null : defaultLabel.Trim();
+        return SanitizeLabel(defaultLabel);
+    }
+
+    /// <summary>
+    /// Makes a label safe for a file name: trimmed, with path separators and the characters Windows
+    /// forbids in file names replaced by an underscore ("DE/EN" becomes "DE_EN").
+    /// </summary>
+    /// <param name="label">The label as entered.</param>
+    /// <returns>The label to use, or null when nothing usable is left.</returns>
+    internal static string? SanitizeLabel(string? label)
+    {
+        if (string.IsNullOrWhiteSpace(label))
+        {
+            return null;
+        }
+
+        char[] chars = label.Trim().ToCharArray();
+        for (int i = 0; i < chars.Length; i++)
+        {
+            if (char.IsControl(chars[i]) || Array.IndexOf(InvalidLabelChars, chars[i]) >= 0)
+            {
+                chars[i] = '_';
+            }
+        }
+
+        string clean = RepeatedUnderscorePattern().Replace(new string(chars), "_").Trim(' ', '_');
+        return clean.Length == 0 ? null : clean;
     }
 
     /// <summary>
@@ -137,11 +170,16 @@ internal static partial class VersionLanguageLabeler
     /// up in, so the sync orders categories by this rank: the batch where a stream first appears
     /// then always holds its highest-ranked category.
     /// </summary>
-    /// <param name="categoryName">The category name.</param>
+    /// <param name="categoryName">The category name; null or empty (a provider may send none) matches no rule.</param>
     /// <param name="rules">Rules from <see cref="ParseRules"/>.</param>
     /// <returns>The rank; lower comes first.</returns>
-    internal static int RuleRank(string categoryName, IReadOnlyList<(Regex Pattern, string Label)> rules)
+    internal static int RuleRank(string? categoryName, IReadOnlyList<(Regex Pattern, string Label)> rules)
     {
+        if (string.IsNullOrEmpty(categoryName))
+        {
+            return rules.Count;
+        }
+
         for (int i = 0; i < rules.Count; i++)
         {
             if (IsMatch(rules[i].Pattern, categoryName))
@@ -207,4 +245,7 @@ internal static partial class VersionLanguageLabeler
 
     [GeneratedRegex(@"\b(2160|1080|720|576|480)[ip]\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ResolutionTokenPattern();
+
+    [GeneratedRegex("_{2,}")]
+    private static partial Regex RepeatedUnderscorePattern();
 }

@@ -60,6 +60,36 @@ public class VersionLanguageLabelerTests
         => VersionLanguageLabeler.RuleRank(category, Rules()).Should().Be(expected);
 
     [Fact]
+    public void RuleRank_NoCategoryName_RanksLast()
+    {
+        // A provider may send "category_name": null. The sort must not throw on it; the category
+        // simply matches no rule and syncs last.
+        VersionLanguageLabeler.RuleRank(null, Rules()).Should().Be(2);
+        VersionLanguageLabeler.RuleRank(string.Empty, Rules()).Should().Be(2);
+    }
+
+    // Labels end up in file names. "DE/EN" would make the writer look for a folder "Title - DE".
+    [Theory]
+    [InlineData("DE/EN", "DE_EN")]
+    [InlineData("DE\\EN", "DE_EN")]
+    [InlineData("4K:HDR?", "4K_HDR")]
+    [InlineData(" DE ", "DE")]
+    public void Resolve_DefaultLabelWithFileNameSeparators_IsNormalized(string label, string expected)
+        => VersionLanguageLabeler.Resolve(["FIFA+ - Docs"], "Joker (2019)", Rules(), label).Should().Be(expected);
+
+    [Fact]
+    public void Resolve_DefaultLabelOfOnlySeparators_MeansNoLabel()
+        => VersionLanguageLabeler.Resolve(["FIFA+ - Docs"], "Joker (2019)", Rules(), "/").Should().BeNull();
+
+    [Fact]
+    public void ParseRules_LabelWithFileNameSeparators_IsNormalized()
+        => VersionLanguageLabeler.ParseRules("^DE\\b=DE/AT").Should().ContainSingle().Which.Label.Should().Be("DE_AT");
+
+    [Fact]
+    public void ParseRules_LabelOfOnlySeparators_SkipsTheRule()
+        => VersionLanguageLabeler.ParseRules("^DE\\b=/\n^EN\\b=EN").Should().ContainSingle().Which.Label.Should().Be("EN");
+
+    [Fact]
     public void Resolve_NothingMatches_ReturnsDefault()
         => VersionLanguageLabeler.Resolve(["FIFA+ - Docs"], "Joker (2019)", Rules(), "EN").Should().Be("EN");
 
