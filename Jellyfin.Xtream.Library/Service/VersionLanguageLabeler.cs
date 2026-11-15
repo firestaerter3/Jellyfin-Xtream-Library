@@ -170,12 +170,12 @@ internal static partial class VersionLanguageLabeler
     /// up in, so the sync orders categories by this rank: the batch where a stream first appears
     /// then always holds its highest-ranked category.
     /// </summary>
-    /// <param name="categoryName">The category name; null or empty (a provider may send none) matches no rule.</param>
+    /// <param name="categoryName">The category name; null or blank (a provider may send none) matches no rule, as in <see cref="Resolve"/>.</param>
     /// <param name="rules">Rules from <see cref="ParseRules"/>.</param>
     /// <returns>The rank; lower comes first.</returns>
     internal static int RuleRank(string? categoryName, IReadOnlyList<(Regex Pattern, string Label)> rules)
     {
-        if (string.IsNullOrEmpty(categoryName))
+        if (string.IsNullOrWhiteSpace(categoryName))
         {
             return rules.Count;
         }

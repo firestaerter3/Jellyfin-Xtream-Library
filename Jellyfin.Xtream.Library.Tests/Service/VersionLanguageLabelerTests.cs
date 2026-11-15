@@ -68,6 +68,16 @@ public class VersionLanguageLabelerTests
         VersionLanguageLabeler.RuleRank(string.Empty, Rules()).Should().Be(2);
     }
 
+    [Fact]
+    public void RuleRank_BlankCategoryName_RanksLastEvenWhenARuleMatchesIt()
+    {
+        // Resolve ignores a blank name. If a catch-all rule ranked that category first, its batch
+        // would label a stream with the default before the stream's EN category came up.
+        var rules = VersionLanguageLabeler.ParseRules("^EN\\b=EN\n.*=ANY");
+        VersionLanguageLabeler.RuleRank("   ", rules).Should().Be(2);
+        VersionLanguageLabeler.Resolve(["   "], null, rules, "XX").Should().Be("XX");
+    }
+
     // Labels end up in file names. "DE/EN" would make the writer look for a folder "Title - DE".
     [Theory]
     [InlineData("DE/EN", "DE_EN")]
