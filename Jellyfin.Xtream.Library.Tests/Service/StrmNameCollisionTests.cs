@@ -295,6 +295,58 @@ public class StrmNameCollisionTests : IDisposable
             .Select(Path.GetFileName).Should().Equal("Other Film (2023) - DE.strm");
     }
 
+    // Turning labels on in an existing library renames every movie file. The plain file a stream wrote
+    // before must go when its labelled one is written: orphan cleanup may be off, held back by the
+    // safety threshold, or protect the file because its URL is still the stream's (CodeRabbit).
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TurningLabelsOn_ReplacesEachStreamsPlainFileWithoutCleanup(bool incremental)
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(300, "42");
+        (int Id, string Name, StreamInfo[] Streams)[] categories =
+        [
+            (1, "DE - Kino", [Movie(100, "DE - The Film (2024)"), Movie(500, "DE - Solo Film (2020)")]),
+            (2, "NF - Action", [Movie(300, "EN - The Film (2024)")]),
+        ];
+
+        _configure = p =>
+        {
+            p.VersionLanguageRules = string.Empty;
+            p.VersionLanguageDefault = string.Empty;
+        };
+        await RunLanguageSyncAsync(categories, incremental).ConfigureAwait(true);
+        var folder = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]");
+        var solo = Path.Combine(_libraryPath, "Movies", "Solo Film (2020)");
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Order(StringComparer.Ordinal).Should().Equal(
+            "The Film (2024) [tmdbid-42] - 300.strm",
+            "The Film (2024) [tmdbid-42].strm");
+
+        _configure = null;
+        await RunLanguageSyncAsync(categories, incremental, cleanupOrphans: false).ConfigureAwait(true);
+
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Order(StringComparer.Ordinal).Should().Equal(
+            "The Film (2024) [tmdbid-42] - DE.strm",
+            "The Film (2024) [tmdbid-42] - EN.strm");
+        (await StreamIdOfAsync(Path.Combine(folder, "The Film (2024) [tmdbid-42] - DE.strm")).ConfigureAwait(true)).Should().Be(100);
+        (await StreamIdOfAsync(Path.Combine(folder, "The Film (2024) [tmdbid-42] - EN.strm")).ConfigureAwait(true)).Should().Be(300);
+        Directory.GetFiles(solo, "*.strm").Select(Path.GetFileName).Should().Equal("Solo Film (2020) - DE.strm");
+    }
+
+    // Only the stream's own plain file goes. One whose URL names another stream answers to cleanup.
+    [Fact]
+    public async Task TurningLabelsOn_LeavesAPlainFileOfAnotherStreamAlone()
+    {
+        var foreign = WriteMainStrm(Path.Combine(_libraryPath, "Movies", "Solo Film (2020)", "Solo Film (2020).strm"), 999);
+
+        await RunLanguageSyncAsync([(1, "DE - Kino", [Movie(500, "DE - Solo Film (2020)")])], incremental: false).ConfigureAwait(true);
+
+        File.Exists(foreign).Should().BeTrue();
+        (await StreamIdOfAsync(foreign).ConfigureAwait(true)).Should().Be(999);
+        File.Exists(Path.Combine(_libraryPath, "Movies", "Solo Film (2020)", "Solo Film (2020) - DE.strm")).Should().BeTrue();
+    }
+
     // Labels tell the versions of a grouped film apart. With grouping off there are no versions to
     // tell apart, so rules left in the settings must not rename the files (CodeRabbit).
     [Fact]

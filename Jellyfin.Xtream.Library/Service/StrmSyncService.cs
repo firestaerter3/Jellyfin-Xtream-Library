@@ -2151,6 +2151,9 @@ public partial class StrmSyncService
                             }
                         }
 
+                        // The files of this stream in this folder that hold its URL after this run.
+                        var ownFilesNow = new List<string>();
+
                         foreach (var (streamUrl, strmFileName) in strmEntries)
                         {
                         string strmPath = Path.Combine(movieFolder, strmFileName);
@@ -2220,11 +2223,13 @@ public partial class StrmSyncService
                         {
                             if (StrmContentMatches(strmPath, streamUrl))
                             {
+                                ownFilesNow.Add(strmPath);
                                 continue;
                             }
 
                             // Stream URL changed, update the STRM file
                             await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
+                            ownFilesNow.Add(strmPath);
                             anyUpdated = true;
                             allSkipped = false;
                             continue;
@@ -2239,6 +2244,7 @@ public partial class StrmSyncService
                         try
                         {
                             await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
+                            ownFilesNow.Add(strmPath);
                             anyCreated = true;
                             roleLedger.NoteCreated(strmPath);
                         }
@@ -2259,6 +2265,21 @@ public partial class StrmSyncService
 
                         _logger.LogDebug("Created movie STRM: {StrmPath}", strmPath);
                         } // end strmEntries foreach
+
+                        // Turning labels on renames the stream's file. Its plain file from before is
+                        // removed here, once the labelled one holds the URL: orphan cleanup may be off
+                        // or held back by its threshold, and an unchanged run protects any file whose
+                        // URL is the stream's, so both would stay (CodeRabbit).
+                        if (languageLabel != null && ownFilesNow.Count > 0)
+                        {
+                            RemoveUnlabelledStrm(
+                                movieFolder,
+                                BuildMovieStrmFileName(folderName, ExtractVersionLabel(stream.Name), provider.RegexRemovalPatterns),
+                                stream.StreamId,
+                                ownFilesNow,
+                                claimedPaths,
+                                owners);
+                        }
 
                         // Write NFO with provider ID and/or media info (only for first target folder)
                         if (anyCreated && firstTargetFolder == targetFolder)
@@ -4688,6 +4709,56 @@ public partial class StrmSyncService
             if (suffix is not null)
             {
                 ledger.RegisterAlternative(Path.Combine(folder, fileName[..^suffix.Length] + ".strm"), streamId, strmFile, groupOwner, groupOwner.HasValue, processed: false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes the files a stream wrote under its name without a language label, once its labelled
+    /// file holds its URL: the plain name and its " - id" alternatives, with or without the
+    /// provider tag. A file is only removed when its URL names this stream of this provider, so a
+    /// Dispatcharr file or another stream's file at that name is left to orphan cleanup.
+    /// </summary>
+    /// <param name="movieFolder">The movie's folder.</param>
+    /// <param name="unlabelledFileName">The file name the stream would have without a language label.</param>
+    /// <param name="streamId">The stream whose old files go.</param>
+    /// <param name="keep">The stream's files written or confirmed this run.</param>
+    /// <param name="claimedPaths">Paths any stream claimed this run; those are never removed.</param>
+    /// <param name="owners">Tells whose stream a file's URL names and which tag the provider uses.</param>
+    private void RemoveUnlabelledStrm(
+        string movieFolder,
+        string unlabelledFileName,
+        int streamId,
+        List<string> keep,
+        ConcurrentDictionary<string, byte> claimedPaths,
+        StrmOwnerResolver owners)
+    {
+        string[] names =
+        [
+            unlabelledFileName,
+            AlternativeFileName(unlabelledFileName, streamId),
+            AlternativeFileName(unlabelledFileName, streamId, owners.AlternativeTag),
+        ];
+
+        foreach (var name in names.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            string path = Path.Combine(movieFolder, name);
+            if (keep.Contains(path, StringComparer.OrdinalIgnoreCase)
+                || claimedPaths.ContainsKey(path)
+                || !File.Exists(path)
+                || owners.OwnerOf(ReadStrmUrl(path)) != streamId)
+            {
+                continue;
+            }
+
+            try
+            {
+                File.Delete(path);
+                _logger.LogInformation("Removed {Path}: stream {StreamId} now has a file with a language label", path, streamId);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogWarning(ex, "Could not remove {Path} after stream {StreamId} got a language label; orphan cleanup handles it", path, streamId);
             }
         }
     }
