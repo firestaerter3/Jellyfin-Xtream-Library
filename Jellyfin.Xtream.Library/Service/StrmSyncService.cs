@@ -1801,11 +1801,15 @@ public partial class StrmSyncService
                     string movieName = SanitizeFileName(stream.Name, provider.CustomTitleRemoveTerms, isMovie: true);
                     int? year = ExtractYear(stream.Name);
                     string baseName = year.HasValue ? $"{movieName} ({year})" : movieName;
-                    string? languageLabel = VersionLanguageLabeler.Resolve(
-                        categoryIds.Select(id => categoryNameById.GetValueOrDefault(id, string.Empty)),
-                        stream.Name,
-                        languageRules,
-                        provider.VersionLanguageDefault);
+                    // Labels tell the versions of a grouped film apart; without grouping there are
+                    // none, and the earlier file names stay (CodeRabbit).
+                    string? languageLabel = groupByTmdb
+                        ? VersionLanguageLabeler.Resolve(
+                            categoryIds.Select(id => categoryNameById.GetValueOrDefault(id, string.Empty)),
+                            stream.Name,
+                            languageRules,
+                            provider.VersionLanguageDefault)
+                        : null;
                     string? versionLabel = ExtractVersionLabel(stream.Name, languageLabel);
 
                     CurrentProgress.MoviePhase = $"Syncing Movies (batch {batchIndex + 1}/{totalBatches}): {baseName}";

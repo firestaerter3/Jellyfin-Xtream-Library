@@ -295,6 +295,23 @@ public class StrmNameCollisionTests : IDisposable
             .Select(Path.GetFileName).Should().Equal("Other Film (2023) - DE.strm");
     }
 
+    // Labels tell the versions of a grouped film apart. With grouping off there are no versions to
+    // tell apart, so rules left in the settings must not rename the files (CodeRabbit).
+    [Fact]
+    public async Task WithGroupingOff_LanguageRulesLeaveTheFileNamesAlone()
+    {
+        _configure = p =>
+        {
+            p.VersionLanguageRules = "^DE\\b=DE";
+            p.VersionLanguageDefault = "EN";
+        };
+
+        await RunMovieSyncAsync([Movie(700, "DE - Other Film (2023)")], useShippedDefaults: false, groupByTmdbId: false).ConfigureAwait(true);
+
+        Directory.GetFiles(Path.Combine(_libraryPath, "Movies"), "*.strm", SearchOption.AllDirectories)
+            .Select(Path.GetFileName).Should().Equal("Other Film (2023).strm");
+    }
+
     [Fact]
     public async Task LanguageLabelledGroup_WhenTheOwnerLeaves_TheGuestKeepsItsFileOnEveryLaterRun()
     {

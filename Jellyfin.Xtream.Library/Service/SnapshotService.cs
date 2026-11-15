@@ -137,7 +137,9 @@ public class SnapshotService : IDisposable
 
         // Language labels are part of every movie file name, so a changed rule renames files. Only
         // added when set, so turning the plugin up to a version that has them forces no full sync.
-        if (!string.IsNullOrWhiteSpace(provider.VersionLanguageRules) || !string.IsNullOrWhiteSpace(provider.VersionLanguageDefault))
+        // Labels only apply with grouping on, so toggling grouping with labels set renames files too.
+        if (provider.GroupMoviesByTmdbId
+            && (!string.IsNullOrWhiteSpace(provider.VersionLanguageRules) || !string.IsNullOrWhiteSpace(provider.VersionLanguageDefault)))
         {
             data = string.Join(
                 "|",
