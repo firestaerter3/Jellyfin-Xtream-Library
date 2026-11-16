@@ -731,6 +731,119 @@ public class StrmNameCollisionTests : IDisposable
         }
     }
 
+    // A full sync over an existing tree found each movie's folder by name alone. Two folders with the
+    // same name ("The Meg [tmdbid-345940]", "The Meg [tmdbid-615656]") share one cache key, so one of
+    // the two streams was written into the other film's folder as a second copy (16.11., 21 streams).
+    [Fact]
+    public async Task FullSync_KeepsAStreamInTheFolderItsFileIsIn_WhenAnotherFolderSharesItsName()
+    {
+        VodInfoWithTmdbId(100, "345940");
+        VodInfoWithTmdbId(200, "615656");
+        (int Id, string Name, StreamInfo[] Streams)[] categories =
+            [(1, "NF - Action", [Movie(100, "EN - The Meg"), Movie(200, "EN - The Meg")])];
+
+        await RunLanguageSyncAsync(categories, incremental: false).ConfigureAwait(true);
+        await RunLanguageSyncAsync(categories, incremental: false).ConfigureAwait(true);
+
+        var first = Path.Combine(_libraryPath, "Movies", "The Meg [tmdbid-345940]");
+        var second = Path.Combine(_libraryPath, "Movies", "The Meg [tmdbid-615656]");
+        Directory.GetFiles(first, "*.strm").Select(Path.GetFileName).Should().Equal("The Meg [tmdbid-345940] - EN.strm");
+        Directory.GetFiles(second, "*.strm").Select(Path.GetFileName).Should().Equal("The Meg [tmdbid-615656] - EN.strm");
+        (await StreamIdOfAsync(Path.Combine(first, "The Meg [tmdbid-345940] - EN.strm")).ConfigureAwait(true)).Should().Be(100);
+        (await StreamIdOfAsync(Path.Combine(second, "The Meg [tmdbid-615656] - EN.strm")).ConfigureAwait(true)).Should().Be(200);
+    }
+
+    // A guest whose own title differs from the folder its owner named is not found by name, so a full
+    // sync treated it as new. When the provider then answered without a tmdb_id, the name lookup put it
+    // into a folder of its own next to the group (16.11., 44 streams).
+    [Fact]
+    public async Task FullSync_KeepsAGuestInItsGroupFolder_WhenTheProviderAnswersWithoutAnId()
+    {
+        _metadataLookup = true;
+        _lookup.Setup(l => l.LookupMovieTmdbIdAsync(It.IsAny<string>(), It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(98);
+        VodInfoWithTmdbId(100, "98");
+        VodInfoWithTmdbId(200, "98");
+        (int Id, string Name, StreamInfo[] Streams)[] categories =
+        [
+            (1, "DE - Kino", [Movie(100, "DE - Il gladiatore")]),
+            (2, "NF - Action", [Movie(200, "EN - Gladiator (2000)")]),
+        ];
+        await RunLanguageSyncAsync(categories, incremental: false).ConfigureAwait(true);
+
+        _client.Setup(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), 200, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VodInfoResponse { Info = null });
+        await RunLanguageSyncAsync(categories, incremental: false).ConfigureAwait(true);
+
+        var group = Path.Combine(_libraryPath, "Movies", "Il gladiatore [tmdbid-98]");
+        Directory.GetDirectories(Path.Combine(_libraryPath, "Movies")).Should().Equal(group);
+        (await StreamIdOfAsync(Path.Combine(group, "Il gladiatore [tmdbid-98] - DE.strm")).ConfigureAwait(true)).Should().Be(100);
+        (await StreamIdOfAsync(Path.Combine(group, "Il gladiatore [tmdbid-98] - EN.strm")).ConfigureAwait(true)).Should().Be(200);
+    }
+
+    // A stream the provider renamed follows its new name, as before: keeping it where its file is would
+    // freeze a typo the provider fixed ("asino Royale") forever.
+    [Fact]
+    public async Task FullSync_ARenamedStreamGetsAFolderUnderItsNewName()
+    {
+        await RunLanguageSyncAsync([(1, "DE - Kino", [Movie(500, "DE - Old Nam (2020)")])], incremental: false).ConfigureAwait(true);
+        await RunLanguageSyncAsync([(1, "DE - Kino", [Movie(500, "DE - Old Name (2020)")])], incremental: false).ConfigureAwait(true);
+
+        var renamed = Path.Combine(_libraryPath, "Movies", "Old Name (2020)", "Old Name (2020) - DE.strm");
+        File.Exists(renamed).Should().BeTrue();
+        (await StreamIdOfAsync(renamed).ConfigureAwait(true)).Should().Be(500);
+    }
+
+    // A stream with a file in two folders stays in the one the snapshot recorded and spreads no further.
+    [Fact]
+    public async Task FullSync_AStreamWithFilesInTwoFolders_StaysInTheRecordedOne()
+    {
+        VodInfoWithTmdbId(100, "98");
+        VodInfoWithTmdbId(200, "98");
+        (int Id, string Name, StreamInfo[] Streams)[] categories =
+        [
+            (1, "DE - Kino", [Movie(100, "DE - Il gladiatore")]),
+            (2, "NF - Action", [Movie(200, "EN - Gladiator (2000)")]),
+        ];
+        await RunLanguageSyncAsync(categories, incremental: false).ConfigureAwait(true);
+        var group = Path.Combine(_libraryPath, "Movies", "Il gladiatore [tmdbid-98]");
+        var stray = Path.Combine(_libraryPath, "Movies", "Gladiator (2000) [tmdbid-98]");
+        Directory.CreateDirectory(stray);
+        File.Copy(Path.Combine(group, "Il gladiatore [tmdbid-98] - EN.strm"), Path.Combine(stray, "Gladiator (2000) [tmdbid-98] - EN.strm"));
+
+        await RunLanguageSyncAsync(categories, incremental: false).ConfigureAwait(true);
+
+        Directory.GetDirectories(Path.Combine(_libraryPath, "Movies")).Should().HaveCount(2);
+        (await StreamIdOfAsync(Path.Combine(group, "Il gladiatore [tmdbid-98] - EN.strm")).ConfigureAwait(true)).Should().Be(200);
+    }
+
+    [Fact]
+    public void MovieFolderIndex_MapsEachStreamToTheFoldersHoldingItsFile()
+    {
+        var movies = Path.Combine(_libraryPath, "Index");
+        WriteMainStrm(Path.Combine(movies, "A [tmdbid-1]", "A [tmdbid-1] - DE.strm"), 10);
+        WriteMainStrm(Path.Combine(movies, "A [tmdbid-1]", "A [tmdbid-1] - EN.strm"), 20);
+        WriteMainStrm(Path.Combine(movies, "B (2000)", "B (2000) - EN.strm"), 20);
+        WriteMainStrm(Path.Combine(movies, "B (2000)", "B (2000) - EN - p2.strm"), 20);
+        File.WriteAllText(Path.Combine(movies, "B (2000)", "B (2000) - X.strm"), "http://d/proxy/vod/movie/uuid?stream_id=5");
+
+        var index = MovieFolderIndex.Build(movies, new StrmOwnerResolver("http://provider0.test", ScopeToProvider: false));
+
+        index.Keys.Should().BeEquivalentTo([10, 20]);
+        index[10].Should().Equal("A [tmdbid-1]");
+        index[20].Order(StringComparer.Ordinal).Should().Equal("A [tmdbid-1]", "B (2000)");
+    }
+
+    [Fact]
+    public void MovieFolderIndex_PicksTheRecordedFolder_ElseTheOrdinalFirst()
+    {
+        string[] folders = ["Il gladiatore [tmdbid-98]", "Gladiator (2000) [tmdbid-98]"];
+
+        MovieFolderIndex.Pick(folders, "il gladiatore [tmdbid-98]").Should().Be("Il gladiatore [tmdbid-98]");
+        MovieFolderIndex.Pick(folders, "Gone [tmdbid-98]").Should().Be("Gladiator (2000) [tmdbid-98]");
+        MovieFolderIndex.Pick(folders, null).Should().Be("Gladiator (2000) [tmdbid-98]");
+    }
+
     private static StreamInfo Movie(int id, string name) => new() { StreamId = id, Name = name, ContainerExtension = "mp4" };
 
     private async Task<SyncResult> RunLanguageSyncAsync((int Id, string Name, StreamInfo[] Streams)[] categories, bool incremental, bool cleanupOrphans = false, bool syncMovies = true, bool groupByTmdbId = true)

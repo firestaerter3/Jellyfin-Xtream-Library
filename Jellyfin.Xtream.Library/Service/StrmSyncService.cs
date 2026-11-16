@@ -1470,6 +1470,7 @@ public partial class StrmSyncService
 
         // Pre-scan existing movie folders for faster skip detection
         var existingMovieFolders = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        var streamFolders = new Dictionary<string, Dictionary<int, List<string>>>(StringComparer.OrdinalIgnoreCase);
         if (Directory.Exists(moviesPath))
         {
             _logger.LogInformation("Pre-scanning existing movie folders...");
@@ -1513,6 +1514,24 @@ public partial class StrmSyncService
 
             var totalFolders = existingMovieFolders.Values.Sum(d => d.Count);
             _logger.LogInformation("Found {Count} existing movie folders", totalFolders);
+
+            // Where each stream's file is, for the streams the last sync recorded. Only with a
+            // snapshot, because a stream is held to its folder only while its title is unchanged,
+            // and only the snapshot says what the title was.
+            if (groupingHint != null)
+            {
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                foreach (var targetFolder in existingMovieFolders.Keys)
+                {
+                    string basePath = string.IsNullOrEmpty(targetFolder) ? moviesPath : Path.Combine(moviesPath, targetFolder);
+                    streamFolders[targetFolder] = MovieFolderIndex.Build(basePath, owners);
+                }
+
+                _logger.LogInformation(
+                    "Indexed the movie STRM files of {Count} streams in {Ms} ms",
+                    streamFolders.Values.Sum(d => d.Count),
+                    stopwatch.ElapsedMilliseconds);
+            }
         }
 
         // Build the per-provider VOD exclusion set once; read-only inside the parallel fetch.
@@ -1908,8 +1927,45 @@ public partial class StrmSyncService
                     // Quick check: does a folder for this movie already exist? If so, skip API calls
                     // Uses pre-scanned cache for O(1) lookup instead of filesystem scan
                     string? existingFolderName = null;
+
+                    // A stream whose file is already in a folder stays there while its title is
+                    // the one the last sync recorded. The name alone was not enough: a full sync over
+                    // an existing tree re-placed 65 streams, 21 into a namesake folder of another film
+                    // ("The Meg") and 44 guests, which are named unlike their group's folder, into a
+                    // folder of their own after the provider answered without a tmdb_id. A renamed
+                    // stream still follows its new name.
+                    if (groupingHint != null
+                        && groupingHint.Movies.TryGetValue(stream.StreamId, out var recordedPlacement)
+                        && string.Equals(recordedPlacement.Name, stream.Name, StringComparison.Ordinal))
+                    {
+                        foreach (var targetFolder in targetFolders)
+                        {
+                            if (streamFolders.TryGetValue(targetFolder, out var onDiskIndex)
+                                && onDiskIndex.TryGetValue(stream.StreamId, out var foldersOnDisk))
+                            {
+                                existingFolderName = MovieFolderIndex.Pick(foldersOnDisk, recordedPlacement.FolderName);
+                                if (foldersOnDisk.Count > 1)
+                                {
+                                    _logger.LogWarning(
+                                        "Movie stream {StreamId} has files in {Count} folders ({Folders}); staying in {Folder}",
+                                        stream.StreamId,
+                                        foldersOnDisk.Count,
+                                        string.Join(", ", foldersOnDisk),
+                                        existingFolderName);
+                                }
+
+                                break;
+                            }
+                        }
+                    }
+
                     foreach (var targetFolder in targetFolders)
                     {
+                        if (existingFolderName != null)
+                        {
+                            break;
+                        }
+
                         if (existingMovieFolders.TryGetValue(targetFolder, out var folderCache) &&
                             folderCache.TryGetValue(baseName, out var cachedFolder))
                         {
@@ -5491,7 +5547,9 @@ public partial class StrmSyncService
     /// Reads the URL from a STRM file, without trailing whitespace. Null when the file cannot be
     /// read or is empty.
     /// </summary>
-    private static string? ReadStrmUrl(string path)
+    /// <param name="path">The STRM file.</param>
+    /// <returns>The URL, or null.</returns>
+    internal static string? ReadStrmUrl(string path)
     {
         try
         {
