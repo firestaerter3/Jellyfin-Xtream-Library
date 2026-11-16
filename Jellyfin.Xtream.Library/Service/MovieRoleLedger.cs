@@ -187,9 +187,78 @@ internal sealed class MovieRoleLedger
             {
                 SwapToLowestStreamId(slot, syncedFiles, claimedPaths, changes);
             }
+
+            foreach (var slot in _slots.Values.Where(s => s.Candidates.Count > 0).OrderBy(s => s.PrimaryPath, StringComparer.Ordinal).ToList())
+            {
+                HandOverToLowestCandidate(slot, syncedFiles, claimedPaths, changes);
+            }
         }
 
         return changes;
+    }
+
+    /// <summary>
+    /// Records a stream that was not written because another stream of this provider holds the
+    /// version label's file, with one stream kept per label. Settling hands it the file when it has
+    /// the lowest id still listed.
+    /// </summary>
+    /// <param name="primaryPath">The label's file the stream would write.</param>
+    /// <param name="streamId">The stream.</param>
+    /// <param name="url">The URL the file would hold for this stream.</param>
+    internal void RegisterCandidate(string primaryPath, int streamId, string url)
+    {
+        lock (_gate)
+        {
+            SlotFor(primaryPath).Candidates[streamId] = url;
+        }
+    }
+
+    // One stream per label: the lowest id among the streams that want the label's file and the one
+    // holding it, while that one is still listed, gets it. The file is rewritten in place, so the
+    // Jellyfin item stays the same; a rename would make it a new item.
+    private void HandOverToLowestCandidate(
+        Slot slot,
+        ConcurrentDictionary<string, byte> syncedFiles,
+        ConcurrentDictionary<string, byte> claimedPaths,
+        List<RoleChange> changes)
+    {
+        bool exists = File.Exists(slot.PrimaryPath);
+        int? owner = exists ? _ownerOfFile(slot.PrimaryPath) : null;
+        if ((exists && owner is null) || owner is < 0)
+        {
+            // A file that names no stream of this provider (another provider's, or a URL that is no
+            // Xtream movie): this provider's catalogue says nothing about it, so it stays.
+            return;
+        }
+
+        int winner = slot.Candidates.Keys.Min();
+        if (owner is int holder && _catalogue!.Contains(holder))
+        {
+            if (holder <= winner)
+            {
+                return;
+            }
+        }
+
+        try
+        {
+            File.WriteAllText(slot.PrimaryPath, slot.Candidates[winner]);
+        }
+        catch (IOException)
+        {
+            return;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return;
+        }
+
+        syncedFiles.TryAdd(slot.PrimaryPath, 0);
+        claimedPaths.TryAdd(slot.PrimaryPath, 0);
+        slot.Candidates.Remove(winner);
+        slot.Holder = winner;
+        slot.HolderEstablished = true;
+        changes.Add(new RoleChange("handover", winner, slot.PrimaryPath, slot.PrimaryPath, owner));
     }
 
     /// <summary>
@@ -502,11 +571,14 @@ internal sealed class MovieRoleLedger
     /// <summary>
     /// One role change made by the ledger.
     /// </summary>
-    /// <param name="Kind">"takeover" (rewritten in place), "swap" or "promotion" (moved to a new name).</param>
+    /// <param name="Kind">
+    /// "takeover" or "handover" (rewritten in place), "swap" or "promotion" (moved to a new name).
+    /// </param>
     /// <param name="StreamId">The stream that holds the primary file now.</param>
     /// <param name="PrimaryPath">The primary file it holds now.</param>
-    /// <param name="PreviousPath">The alternative file it was moved from.</param>
-    internal readonly record struct RoleChange(string Kind, int StreamId, string PrimaryPath, string PreviousPath);
+    /// <param name="PreviousPath">The alternative file it was moved from; the primary itself for a handover.</param>
+    /// <param name="PreviousStreamId">For a handover, the stream the file named before, if any.</param>
+    internal readonly record struct RoleChange(string Kind, int StreamId, string PrimaryPath, string PreviousPath, int? PreviousStreamId = null);
 
     /// <summary>
     /// One movie file name that is a primary or would be one: who holds it and who waits.
@@ -525,6 +597,9 @@ internal sealed class MovieRoleLedger
 
         /// <summary>Gets the alternatives waiting on the primary, by stream id.</summary>
         public Dictionary<int, Alternative> Alternatives { get; } = new();
+
+        /// <summary>Gets the streams not written for this label's file, with their URLs, by stream id.</summary>
+        public Dictionary<int, string> Candidates { get; } = new();
     }
 
     /// <summary>

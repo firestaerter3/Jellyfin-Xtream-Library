@@ -844,6 +844,135 @@ public class StrmNameCollisionTests : IDisposable
         MovieFolderIndex.Pick(folders, null).Should().Be("Gladiator (2000) [tmdbid-98]");
     }
 
+    // Mirco 16.11.: two streams of one film with the same label showed as "EN" and "EN - 300" in the
+    // version picker. With the setting on, only the lowest stream id is written.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OneStreamPerLabel_TwoStreamsWithTheSameLabel_OnlyTheLowestIdIsWritten(bool reversed)
+    {
+        foreach (var id in new[] { 100, 200, 300 })
+        {
+            VodInfoWithTmdbId(id, "42");
+        }
+
+        var german = (1, "DE - Kino", new[] { Movie(100, "DE - The Film (2024)") });
+        var netflix = (2, "NF - Action", new[] { Movie(200, "NF - The Film (2024)") });
+        var amazon = (3, "AMZ - Action", new[] { Movie(300, "AMZ - The Film (2024)") });
+        _configure = p => p.OneStreamPerVersionLabel = true;
+        var result = await RunLanguageSyncAsync(
+            reversed ? [amazon, netflix, german] : [german, netflix, amazon],
+            incremental: false).ConfigureAwait(true);
+
+        var folder = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]");
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Order(StringComparer.Ordinal).Should().Equal(
+            "The Film (2024) [tmdbid-42] - DE.strm",
+            "The Film (2024) [tmdbid-42] - EN.strm");
+        (await StreamIdOfAsync(Path.Combine(folder, "The Film (2024) [tmdbid-42] - EN.strm")).ConfigureAwait(true)).Should().Be(200);
+        result.MovieVersionsDropped.Should().Be(1);
+    }
+
+    // The upgrade: a tree written with the setting off carries "- EN - 300.strm". Turning it on removes
+    // that file even with orphan cleanup off, which is how the setting is meant to be used here.
+    [Fact]
+    public async Task OneStreamPerLabel_RemovesTheDroppedStreamsSuffixFile_WithCleanupOff()
+    {
+        foreach (var id in new[] { 100, 200, 300 })
+        {
+            VodInfoWithTmdbId(id, "42");
+        }
+
+        (int Id, string Name, StreamInfo[] Streams)[] categories =
+        [
+            (1, "DE - Kino", [Movie(100, "DE - The Film (2024)")]),
+            (2, "NF - Action", [Movie(200, "NF - The Film (2024)")]),
+            (3, "AMZ - Action", [Movie(300, "AMZ - The Film (2024)")]),
+        ];
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+        var folder = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]");
+        File.Exists(Path.Combine(folder, "The Film (2024) [tmdbid-42] - EN - 300.strm")).Should().BeTrue();
+
+        _configure = p => p.OneStreamPerVersionLabel = true;
+        await RunLanguageSyncAsync(categories, incremental: true, cleanupOrphans: false).ConfigureAwait(true);
+
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Order(StringComparer.Ordinal).Should().Equal(
+            "The Film (2024) [tmdbid-42] - DE.strm",
+            "The Film (2024) [tmdbid-42] - EN.strm");
+        (await StreamIdOfAsync(Path.Combine(folder, "The Film (2024) [tmdbid-42] - EN.strm")).ConfigureAwait(true)).Should().Be(200);
+    }
+
+    // The stream holding the label leaves. The next lowest takes the same file over, also in an
+    // incremental run in which it is unchanged and never reaches the write path, and with cleanup on
+    // the file it was handed is not deleted as the departed stream's orphan.
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task OneStreamPerLabel_WhenTheHolderLeaves_TheNextLowestTakesItsFileInPlace(bool incremental, bool cleanup)
+    {
+        foreach (var id in new[] { 100, 200, 300 })
+        {
+            VodInfoWithTmdbId(id, "42");
+        }
+
+        _configure = p => p.OneStreamPerVersionLabel = true;
+        await RunLanguageSyncAsync(
+            [
+                (1, "DE - Kino", [Movie(100, "DE - The Film (2024)")]),
+                (2, "NF - Action", [Movie(200, "NF - The Film (2024)")]),
+                (3, "AMZ - Action", [Movie(300, "AMZ - The Film (2024)")]),
+            ],
+            incremental).ConfigureAwait(true);
+
+        var folder = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]");
+        var english = Path.Combine(folder, "The Film (2024) [tmdbid-42] - EN.strm");
+        for (int run = 0; run < 2; run++)
+        {
+            await RunLanguageSyncAsync(
+                [
+                    (1, "DE - Kino", [Movie(100, "DE - The Film (2024)")]),
+                    (2, "NF - Action", [Movie(400, "NF - Other Film (2020)")]),
+                    (3, "AMZ - Action", [Movie(300, "AMZ - The Film (2024)")]),
+                ],
+                incremental,
+                cleanupOrphans: cleanup).ConfigureAwait(true);
+
+            Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Order(StringComparer.Ordinal).Should().Equal(
+                "The Film (2024) [tmdbid-42] - DE.strm",
+                "The Film (2024) [tmdbid-42] - EN.strm");
+            (await StreamIdOfAsync(english).ConfigureAwait(true)).Should().Be(300);
+        }
+    }
+
+    // A new stream with a lower id than the one holding the label takes the label's file over in place.
+    [Fact]
+    public async Task OneStreamPerLabel_ANewStreamWithALowerId_TakesTheLabelInPlace()
+    {
+        foreach (var id in new[] { 100, 200, 300 })
+        {
+            VodInfoWithTmdbId(id, "42");
+        }
+
+        _configure = p => p.OneStreamPerVersionLabel = true;
+        await RunLanguageSyncAsync(
+            [(1, "DE - Kino", [Movie(100, "DE - The Film (2024)")]), (3, "AMZ - Action", [Movie(300, "AMZ - The Film (2024)")])],
+            incremental: true).ConfigureAwait(true);
+        await RunLanguageSyncAsync(
+            [
+                (1, "DE - Kino", [Movie(100, "DE - The Film (2024)")]),
+                (2, "NF - Action", [Movie(200, "NF - The Film (2024)")]),
+                (3, "AMZ - Action", [Movie(300, "AMZ - The Film (2024)")]),
+            ],
+            incremental: true).ConfigureAwait(true);
+
+        var folder = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]");
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Order(StringComparer.Ordinal).Should().Equal(
+            "The Film (2024) [tmdbid-42] - DE.strm",
+            "The Film (2024) [tmdbid-42] - EN.strm");
+        (await StreamIdOfAsync(Path.Combine(folder, "The Film (2024) [tmdbid-42] - EN.strm")).ConfigureAwait(true)).Should().Be(200);
+    }
+
     private static StreamInfo Movie(int id, string name) => new() { StreamId = id, Name = name, ContainerExtension = "mp4" };
 
     private async Task<SyncResult> RunLanguageSyncAsync((int Id, string Name, StreamInfo[] Streams)[] categories, bool incremental, bool cleanupOrphans = false, bool syncMovies = true, bool groupByTmdbId = true)
@@ -913,11 +1042,86 @@ public class StrmNameCollisionTests : IDisposable
         return set;
     }
 
+    private static string MainUrl(int streamId) => $"http://provider0.test/movie/u/p/{streamId}.mp4";
+
     private static string WriteMainStrm(string path, int streamId)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, $"http://provider0.test/movie/u/p/{streamId}.mp4");
+        File.WriteAllText(path, MainUrl(streamId));
         return path;
+    }
+
+    [Fact]
+    public void Settle_Candidates_HandTheFileToTheLowestListedId()
+    {
+        var primary = WriteMainStrm(Path.Combine(_libraryPath, "Film [tmdbid-1]", "Film [tmdbid-1] - EN.strm"), 200);
+        var ledger = NewLedger();
+        ledger.SetCatalogue([100, 200, 300], complete: true);
+        ledger.RegisterPrimary(primary, 200, established: true);
+        ledger.RegisterCandidate(primary, 300, MainUrl(300));
+        ledger.RegisterCandidate(primary, 100, MainUrl(100));
+
+        var change = ledger.SettleNewStreams(FileSet(primary), FileSet(primary)).Should().ContainSingle().Subject;
+
+        change.Kind.Should().Be("handover");
+        change.StreamId.Should().Be(100);
+        change.PreviousStreamId.Should().Be(200);
+        StrmSyncService.ParseMovieStreamId(File.ReadAllText(primary)).Should().Be(100);
+    }
+
+    [Fact]
+    public void Settle_Candidates_LeaveALowerListedHolderAlone()
+    {
+        var primary = WriteMainStrm(Path.Combine(_libraryPath, "Film [tmdbid-1]", "Film [tmdbid-1] - EN.strm"), 100);
+        var ledger = NewLedger();
+        ledger.SetCatalogue([100, 200], complete: true);
+        ledger.RegisterCandidate(primary, 200, MainUrl(200));
+
+        ledger.SettleNewStreams(FileSet(primary), FileSet(primary)).Should().BeEmpty();
+        StrmSyncService.ParseMovieStreamId(File.ReadAllText(primary)).Should().Be(100);
+    }
+
+    [Fact]
+    public void Settle_Candidates_ReplaceAGoneHolder()
+    {
+        var primary = WriteMainStrm(Path.Combine(_libraryPath, "Film [tmdbid-1]", "Film [tmdbid-1] - EN.strm"), 50);
+        var ledger = NewLedger();
+        ledger.SetCatalogue([200, 300], complete: true);
+        ledger.RegisterCandidate(primary, 300, MainUrl(300));
+        ledger.RegisterCandidate(primary, 200, MainUrl(200));
+        var synced = FileSet();
+        var claimed = FileSet();
+
+        ledger.SettleNewStreams(synced, claimed).Should().ContainSingle().Which.PreviousStreamId.Should().Be(50);
+
+        StrmSyncService.ParseMovieStreamId(File.ReadAllText(primary)).Should().Be(200);
+        synced.ContainsKey(primary).Should().BeTrue("cleanup must not take the file it was just handed");
+        claimed.ContainsKey(primary).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Settle_Candidates_CreateAMissingFile()
+    {
+        var primary = Path.Combine(_libraryPath, "Film [tmdbid-1]", "Film [tmdbid-1] - EN.strm");
+        Directory.CreateDirectory(Path.GetDirectoryName(primary)!);
+        var ledger = NewLedger();
+        ledger.SetCatalogue([200], complete: true);
+        ledger.RegisterCandidate(primary, 200, MainUrl(200));
+
+        ledger.SettleNewStreams(FileSet(), FileSet()).Should().ContainSingle().Which.PreviousStreamId.Should().BeNull();
+        StrmSyncService.ParseMovieStreamId(File.ReadAllText(primary)).Should().Be(200);
+    }
+
+    [Fact]
+    public void Settle_Candidates_DecideNothingFromAnIncompleteCatalogue()
+    {
+        var primary = WriteMainStrm(Path.Combine(_libraryPath, "Film [tmdbid-1]", "Film [tmdbid-1] - EN.strm"), 200);
+        var ledger = NewLedger();
+        ledger.SetCatalogue([100], complete: false);
+        ledger.RegisterCandidate(primary, 100, MainUrl(100));
+
+        ledger.SettleNewStreams(FileSet(primary), FileSet(primary)).Should().BeEmpty();
+        StrmSyncService.ParseMovieStreamId(File.ReadAllText(primary)).Should().Be(200);
     }
 
     [Fact]
