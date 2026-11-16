@@ -55,6 +55,7 @@ function fixture() {
         GroupMoviesByTmdbId: true,
         VersionLanguageRules: '^DE\\b=DE' + n,
         VersionLanguageDefault: 'EN' + n,
+        OneStreamPerVersionLabel: n % 2 === 0,
         DispatcharrApiUser: 'admin' + n,
         DispatcharrApiPass: 'secret' + n,
         EnableIncrementalSync: false,
@@ -266,11 +267,14 @@ test('language version labels are shown on load, hidden without grouping, and an
     const { saved, page } = await roundTrip(stored, (cfg, pg) => {
         assert.strictEqual(pg.elements.txtVersionLanguageRules.value, stored.Providers[0].VersionLanguageRules);
         assert.strictEqual(pg.elements.txtVersionLanguageDefault.value, stored.Providers[0].VersionLanguageDefault);
+        assert.strictEqual(pg.elements.chkOneStreamPerVersionLabel.checked, stored.Providers[0].OneStreamPerVersionLabel);
+        pg.elements.chkOneStreamPerVersionLabel.checked = !stored.Providers[0].OneStreamPerVersionLabel;
         pg.elements.txtVersionLanguageRules.value = '^DE\\b=DE\n^FIFA\\+=EN';
         pg.elements.txtVersionLanguageDefault.value = 'EN';
     });
     assert.strictEqual(saved.Providers[0].VersionLanguageRules, '^DE\\b=DE\n^FIFA\\+=EN');
     assert.strictEqual(saved.Providers[0].VersionLanguageDefault, 'EN');
+    assert.strictEqual(saved.Providers[0].OneStreamPerVersionLabel, !stored.Providers[0].OneStreamPerVersionLabel);
     assert.strictEqual(page.elements.versionLanguageSettings.style.display, '');
 
     const ungrouped = fixture();

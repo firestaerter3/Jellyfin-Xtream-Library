@@ -147,6 +147,13 @@ public class SnapshotService : IDisposable
                 "version-language-v1",
                 provider.VersionLanguageRules?.Replace("\r", string.Empty, StringComparison.Ordinal).Trim() ?? string.Empty,
                 provider.VersionLanguageDefault?.Trim() ?? string.Empty);
+
+            // Keeping one stream per label drops files of streams an incremental run would skip
+            // as unchanged, so turning it on or off has to reach every stream once.
+            if (provider.OneStreamPerVersionLabel)
+            {
+                data = string.Join("|", data, "one-stream-per-label-v1");
+            }
         }
 
         return ComputeMd5(data);

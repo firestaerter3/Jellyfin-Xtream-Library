@@ -192,6 +192,14 @@ Rules that are not valid regexes, or that have no pattern or no label, are skipp
 on every sync. A rule that takes longer than a second on a category name counts as no match and is logged
 once per sync.
 
+**Keep one stream per version label** drops that second stream instead. When two streams of a film get
+the same label, only the one with the lowest stream id is written, and a `… - EN - 123456.strm` an
+earlier sync wrote is removed, also with orphan cleanup off. If the kept stream leaves the provider, or
+a stream with a lower id arrives, the label's file is rewritten for that stream in place, so Jellyfin
+keeps the same item. The version picker stays at one entry per label; the price is that no spare stream
+is left when the kept one stops working while the provider still lists it. It needs a language label,
+does not apply to Dispatcharr's per-provider files, and turning it on or off forces a full sync.
+
 ### Metadata Matching (Optional)
 
 For automatic TMDb/TVDb ID lookup:

@@ -264,6 +264,28 @@ public class SnapshotServiceTests : IDisposable
     }
 
     [Fact]
+    public void ConfigFingerprint_OneStreamPerVersionLabel_DifferentHash()
+    {
+        // Turning it on drops files of streams an incremental run would skip as unchanged.
+        var p1 = new ProviderConfig { GroupMoviesByTmdbId = true, VersionLanguageRules = "^DE\\b=DE" };
+        var p2 = new ProviderConfig { GroupMoviesByTmdbId = true, VersionLanguageRules = "^DE\\b=DE", OneStreamPerVersionLabel = true };
+
+        Assert.NotEqual(SnapshotService.CalculateConfigFingerprint(p1), SnapshotService.CalculateConfigFingerprint(p2));
+    }
+
+    [Theory]
+    [InlineData(true, "")]
+    [InlineData(false, "^DE\\b=DE")]
+    public void ConfigFingerprint_OneStreamPerVersionLabel_WithoutLabelsOrGrouping_SameHash(bool grouping, string rules)
+    {
+        // Without grouping or labels the setting changes no file, so it needs no full sync.
+        var p1 = new ProviderConfig { GroupMoviesByTmdbId = grouping, VersionLanguageRules = rules };
+        var p2 = new ProviderConfig { GroupMoviesByTmdbId = grouping, VersionLanguageRules = rules, OneStreamPerVersionLabel = true };
+
+        Assert.Equal(SnapshotService.CalculateConfigFingerprint(p1), SnapshotService.CalculateConfigFingerprint(p2));
+    }
+
+    [Fact]
     public void ConfigFingerprint_LanguageRulesWithGroupingOff_SameHash()
     {
         // Without grouping the rules rename nothing, so changing them needs no full sync.

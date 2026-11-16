@@ -84,6 +84,7 @@ var XtreamLibraryConfig = (function () {
             RegexRemovalPatterns: '',
             VersionLanguageRules: '',
             VersionLanguageDefault: '',
+            OneStreamPerVersionLabel: false,
             DownloadArtworkForUnmatched: true,
             FallbackToYearlessLookup: false,
             EnableProactiveMediaInfo: false,
@@ -224,6 +225,7 @@ var XtreamLibraryConfig = (function () {
         document.getElementById('chkGroupMoviesByTmdbId').checked = p.GroupMoviesByTmdbId === true;
         document.getElementById('txtVersionLanguageRules').value = p.VersionLanguageRules || '';
         document.getElementById('txtVersionLanguageDefault').value = p.VersionLanguageDefault || '';
+        document.getElementById('chkOneStreamPerVersionLabel').checked = p.OneStreamPerVersionLabel === true;
         self.updateVersionLanguageVisibility();
         document.getElementById('txtDispatcharrApiUser').value = p.DispatcharrApiUser || '';
         document.getElementById('txtDispatcharrApiPass').value = p.DispatcharrApiPass || '';
@@ -332,6 +334,7 @@ var XtreamLibraryConfig = (function () {
         p.GroupMoviesByTmdbId = document.getElementById('chkGroupMoviesByTmdbId').checked;
         p.VersionLanguageRules = document.getElementById('txtVersionLanguageRules').value;
         p.VersionLanguageDefault = document.getElementById('txtVersionLanguageDefault').value.trim();
+        p.OneStreamPerVersionLabel = document.getElementById('chkOneStreamPerVersionLabel').checked;
         p.DispatcharrApiUser = document.getElementById('txtDispatcharrApiUser').value.trim();
         p.DispatcharrApiPass = document.getElementById('txtDispatcharrApiPass').value.trim();
     },

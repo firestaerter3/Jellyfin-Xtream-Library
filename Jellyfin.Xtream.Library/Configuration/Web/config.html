@@ -856,6 +856,19 @@
                                         streams no language label.
                                     </div>
                                 </div>
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
+                                        <input is="emby-checkbox" type="checkbox" id="chkOneStreamPerVersionLabel" name="OneStreamPerVersionLabel" />
+                                        <span>Keep one stream per version label</span>
+                                    </label>
+                                    <div class="fieldDescription checkboxFieldDescription">
+                                        When two streams of a film get the same label, for example "DE" from two
+                                        catalogues, only the one with the lowest stream id is written and the other's
+                                        file is removed. The version picker then shows "DE" once instead of
+                                        "DE" and "DE - 813658". The trade-off: there is no spare stream left if the kept
+                                        one stops working. Needs a language label; the next sync is a full one.
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
