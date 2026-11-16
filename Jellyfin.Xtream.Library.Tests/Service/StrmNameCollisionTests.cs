@@ -42,6 +42,7 @@ public class StrmNameCollisionTests : IDisposable
     private readonly Mock<IMetadataLookupService> _lookup = new();
     private bool _metadataLookup;
     private Action<ProviderConfig>? _configure;
+    private int? _failCategoryId;
     private StrmSyncService? _lastService;
 
     private sealed class ListLogger(List<string> sink) : Microsoft.Extensions.Logging.ILogger<StrmSyncService>
@@ -973,6 +974,146 @@ public class StrmNameCollisionTests : IDisposable
         (await StreamIdOfAsync(Path.Combine(folder, "The Film (2024) [tmdbid-42] - EN.strm")).ConfigureAwait(true)).Should().Be(200);
     }
 
+    // Final review: a dropped stream has no file, so the disk index cannot hold it in its folder. A later
+    // full sync then re-placed it by name, the way the 65 streams of 16.11. were re-placed.
+    [Fact]
+    public async Task OneStreamPerLabel_ADroppedGuest_StaysInItsGroup_WhenALaterFullSyncGetsNoIdFromTheProvider()
+    {
+        _metadataLookup = true;
+        _lookup.Setup(l => l.LookupMovieTmdbIdAsync(It.IsAny<string>(), It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(98);
+        foreach (var id in new[] { 100, 200, 300 })
+        {
+            VodInfoWithTmdbId(id, "98");
+        }
+
+        (int Id, string Name, StreamInfo[] Streams)[] categories =
+        [
+            (1, "DE - Kino", [Movie(100, "DE - Il gladiatore")]),
+            (2, "NF - Action", [Movie(200, "EN - Gladiator (2000)")]),
+            (3, "AMZ - Action", [Movie(300, "EN - Gladiator (2000)")]),
+        ];
+        _configure = p => p.OneStreamPerVersionLabel = true;
+        await RunLanguageSyncAsync(categories, incremental: false).ConfigureAwait(true);
+        var group = Path.Combine(_libraryPath, "Movies", "Il gladiatore [tmdbid-98]");
+        Directory.GetFiles(group, "*.strm").Should().HaveCount(2);
+
+        _client.Setup(c => c.GetVodInfoAsync(It.IsAny<ConnectionInfo>(), 300, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VodInfoResponse { Info = null });
+        await RunLanguageSyncAsync(categories, incremental: false).ConfigureAwait(true);
+
+        Directory.GetDirectories(Path.Combine(_libraryPath, "Movies")).Select(Path.GetFileName).Should().Equal("Il gladiatore [tmdbid-98]");
+    }
+
+    // The namesake variant: a dropped stream of one "The Meg" must not become a candidate in the other
+    // film's folder and take that film's file when its holder leaves. Mirrored so directory order
+    // cannot hide it.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OneStreamPerLabel_ADroppedStream_IsNoCandidateInANamesakeFilmsFolder(bool mirrored)
+    {
+        VodInfoWithTmdbId(100, "345940");
+        VodInfoWithTmdbId(200, "615656");
+        VodInfoWithTmdbId(300, mirrored ? "345940" : "615656");
+        _configure = p => p.OneStreamPerVersionLabel = true;
+        StreamInfo[] Meg(params int[] ids) => ids.Select(id => Movie(id, "EN - The Meg")).ToArray();
+        await RunLanguageSyncAsync([(1, "NF - Action", Meg(100, 200, 300))], incremental: false).ConfigureAwait(true);
+        var a = Path.Combine(_libraryPath, "Movies", "The Meg [tmdbid-345940]", "The Meg [tmdbid-345940] - EN.strm");
+        var b = Path.Combine(_libraryPath, "Movies", "The Meg [tmdbid-615656]", "The Meg [tmdbid-615656] - EN.strm");
+        (await StreamIdOfAsync(a).ConfigureAwait(true)).Should().Be(100);
+        (await StreamIdOfAsync(b).ConfigureAwait(true)).Should().Be(200);
+        await RunLanguageSyncAsync([(1, "NF - Action", Meg(100, 200, 300))], incremental: false).ConfigureAwait(true);
+
+        // The holder of the film 300 does not belong to leaves.
+        int leaving = mirrored ? 200 : 100;
+        var stays = new[] { 100, 200 }.Single(id => id != leaving);
+        await RunLanguageSyncAsync(
+            [(1, "NF - Action", [Movie(400, "EN - Other Film (2020)"), .. Meg(stays, 300)])],
+            incremental: false).ConfigureAwait(true);
+
+        (await StreamIdOfAsync(mirrored ? b : a).ConfigureAwait(true)).Should().NotBe(300, "300 is a stream of the other film");
+    }
+
+    // With cleanup on, the holder's file goes as an orphan in a run whose catalogue is incomplete, so no
+    // handover happens then. The next complete run must bring the label back for the listed stream.
+    [Fact]
+    public async Task OneStreamPerLabel_HolderLeavesWhileACategoryFails_TheLabelComesBackOnTheNextRun()
+    {
+        foreach (var id in new[] { 100, 200, 300 })
+        {
+            VodInfoWithTmdbId(id, "42");
+        }
+
+        _configure = p => p.OneStreamPerVersionLabel = true;
+        await RunLanguageSyncAsync(
+            [
+                (1, "DE - Kino", [Movie(100, "DE - The Film (2024)")]),
+                (2, "NF - Action", [Movie(200, "NF - The Film (2024)")]),
+                (3, "AMZ - Action", [Movie(300, "AMZ - The Film (2024)")]),
+                (4, "X - Misc", [Movie(900, "X - Misc (2001)")]),
+            ],
+            incremental: true,
+            cleanupOrphans: true).ConfigureAwait(true);
+        var english = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]", "The Film (2024) [tmdbid-42] - EN.strm");
+        (await StreamIdOfAsync(english).ConfigureAwait(true)).Should().Be(200);
+
+        (int Id, string Name, StreamInfo[] Streams)[] later =
+        [
+            (1, "DE - Kino", [Movie(100, "DE - The Film (2024)")]),
+            (2, "NF - Action", [Movie(400, "NF - Other Film (2020)")]),
+            (3, "AMZ - Action", [Movie(300, "AMZ - The Film (2024)")]),
+            (4, "X - Misc", [Movie(900, "X - Misc (2001)")]),
+        ];
+        _failCategoryId = 4;
+        await RunLanguageSyncAsync(later, incremental: true, cleanupOrphans: true).ConfigureAwait(true);
+        _failCategoryId = null;
+        await RunLanguageSyncAsync(later, incremental: true, cleanupOrphans: true).ConfigureAwait(true);
+
+        File.Exists(english).Should().BeTrue("stream 300 is listed and labelled EN");
+        (await StreamIdOfAsync(english).ConfigureAwait(true)).Should().Be(300);
+    }
+
+    // One category per batch: the holder moves to the German category and gives up its EN file in an
+    // earlier batch than the one that lists the dropped EN stream, which is unchanged.
+    [Fact]
+    public async Task OneStreamPerLabel_HolderChangesItsLabelInAnEarlierBatch_TheDroppedStreamGetsTheFreedLabel()
+    {
+        foreach (var id in new[] { 100, 200, 300 })
+        {
+            VodInfoWithTmdbId(id, "42");
+        }
+
+        _configure = p =>
+        {
+            p.OneStreamPerVersionLabel = true;
+            p.CategoryBatchSize = 1;
+        };
+        await RunLanguageSyncAsync(
+            [
+                (1, "DE - Kino", [Movie(100, "DE - The Film (2024)")]),
+                (2, "NF - Action", [Movie(200, "NF - The Film (2024)")]),
+                (3, "AMZ - Action", [Movie(300, "AMZ - The Film (2024)")]),
+            ],
+            incremental: true).ConfigureAwait(true);
+        var english = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]", "The Film (2024) [tmdbid-42] - EN.strm");
+        (await StreamIdOfAsync(english).ConfigureAwait(true)).Should().Be(200);
+
+        (int Id, string Name, StreamInfo[] Streams)[] later =
+        [
+            (1, "DE - Kino", [Movie(100, "DE - The Film (2024)"), Movie(200, "NF - The Film (2024)")]),
+            (2, "NF - Action", [Movie(400, "NF - Other Film (2020)")]),
+            (3, "AMZ - Action", [Movie(300, "AMZ - The Film (2024)")]),
+        ];
+        for (int run = 0; run < 2; run++)
+        {
+            await RunLanguageSyncAsync(later, incremental: true).ConfigureAwait(true);
+
+            File.Exists(english).Should().BeTrue("stream 300 is listed and labelled EN");
+            (await StreamIdOfAsync(english).ConfigureAwait(true)).Should().Be(300);
+        }
+    }
+
     private static StreamInfo Movie(int id, string name) => new() { StreamId = id, Name = name, ContainerExtension = "mp4" };
 
     private async Task<SyncResult> RunLanguageSyncAsync((int Id, string Name, StreamInfo[] Streams)[] categories, bool incremental, bool cleanupOrphans = false, bool syncMovies = true, bool groupByTmdbId = true)
@@ -992,6 +1133,12 @@ public class StrmNameCollisionTests : IDisposable
             var streams = category.Streams.Select(s => new StreamInfo { StreamId = s.StreamId, Name = s.Name, ContainerExtension = s.ContainerExtension, CategoryId = category.Id }).ToList();
             _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), category.Id, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(streams);
+        }
+
+        if (_failCategoryId is int failing)
+        {
+            _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), failing, It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new System.Net.Http.HttpRequestException("category failed"));
         }
 
         var outer = _configure;

@@ -1701,8 +1701,13 @@ public partial class StrmSyncService
                     // path, but it still has to be a candidate, or the label's file would have no
                     // one to go to when its holder leaves in an incremental run. Dispatcharr is left
                     // out: whether a stream goes through it is only known once it is fetched.
+                    // Only a stream with no file anywhere: one that has a file is a holder, and its
+                    // snapshot folder may be stale (final review).
                     (string VersionLabel, string Url)? candidate = null;
-                    if (groupByTmdb && provider.OneStreamPerVersionLabel && !enableDispatcharrMode)
+                    if (groupByTmdb
+                        && provider.OneStreamPerVersionLabel
+                        && !enableDispatcharrMode
+                        && !streamFolders.Values.Any(index => index.ContainsKey(m.Stream.StreamId)))
                     {
                         string? language = VersionLanguageLabeler.Resolve(
                             m.CategoryIds.Select(id => categoryNameById.GetValueOrDefault(id, string.Empty)),
@@ -1954,9 +1959,12 @@ public partial class StrmSyncService
                     // ("The Meg") and 44 guests, which are named unlike their group's folder, into a
                     // folder of their own after the provider answered without a tmdb_id. A renamed
                     // stream still follows its new name.
-                    if (groupingHint != null
-                        && groupingHint.Movies.TryGetValue(stream.StreamId, out var recordedPlacement)
-                        && string.Equals(recordedPlacement.Name, stream.Name, StringComparison.Ordinal))
+                    MovieSnapshot? recordedPlacement = groupingHint != null
+                        && groupingHint.Movies.TryGetValue(stream.StreamId, out var recordedMovie)
+                        && string.Equals(recordedMovie.Name, stream.Name, StringComparison.Ordinal)
+                            ? recordedMovie
+                            : null;
+                    if (recordedPlacement != null)
                     {
                         foreach (var targetFolder in targetFolders)
                         {
@@ -1974,6 +1982,26 @@ public partial class StrmSyncService
                                         existingFolderName);
                                 }
 
+                                break;
+                            }
+                        }
+                    }
+
+                    // A stream dropped for its label has no file to be found by, so it would fall back
+                    // to its name on every later run, the very path that misplaced the 65. Its recorded
+                    // folder holds it instead, while that folder is still there (final review).
+                    if (existingFolderName == null
+                        && recordedPlacement is { FolderName.Length: > 0 }
+                        && groupByTmdb
+                        && provider.OneStreamPerVersionLabel
+                        && languageLabel != null)
+                    {
+                        foreach (var targetFolder in targetFolders)
+                        {
+                            string recordedBase = string.IsNullOrEmpty(targetFolder) ? moviesPath : Path.Combine(moviesPath, targetFolder);
+                            if (Directory.Exists(Path.Combine(recordedBase, recordedPlacement.FolderName)))
+                            {
+                                existingFolderName = recordedPlacement.FolderName;
                                 break;
                             }
                         }
@@ -4728,14 +4756,16 @@ public partial class StrmSyncService
                 string recordedFolder = Path.Combine(movieBasePath, recordedMovie.FolderName);
                 ProtectOwnStrmIn(recordedFolder, streamId, syncedFiles, roleLedger, owners, keepUnattributed: false, recordedGroupOwner);
 
-                // With one stream per label: a stream with no file of its own in its folder, whose
-                // label's file another stream of this provider holds, was dropped for that label.
-                if (candidate is { } wanted)
+                // With one stream per label, a stream the caller found without a file of its own was
+                // dropped for its label: it is a candidate for that file whether another stream of
+                // this provider holds it or nobody does any more. The second case is a holder that
+                // moved to another label, or whose file cleanup took while the catalogue was
+                // incomplete; without it the label would stay empty until the next full sync.
+                if (candidate is { } wanted && Directory.Exists(recordedFolder))
                 {
                     string labelPath = Path.Combine(recordedFolder, BuildMovieStrmFileName(recordedMovie.FolderName, wanted.VersionLabel, provider.RegexRemovalPatterns));
-                    if (StrmOwnerOnDisk(labelPath, streamId, owners) is int holder
-                        && holder != StrmOwnerResolver.OtherProvider
-                        && !Directory.GetFiles(recordedFolder, "*.strm").Any(f => owners.OwnerOf(ReadStrmUrl(f)) == streamId))
+                    bool free = !File.Exists(labelPath);
+                    if (free || (owners.OwnerOf(ReadStrmUrl(labelPath)) is int holder && holder >= 0 && holder != streamId))
                     {
                         roleLedger.RegisterCandidate(labelPath, streamId, wanted.Url);
                     }

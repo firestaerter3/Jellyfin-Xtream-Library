@@ -50,7 +50,20 @@ internal static class MovieFolderIndex
         foreach (var folder in Directory.GetDirectories(basePath))
         {
             string folderName = Path.GetFileName(folder);
-            foreach (var file in Directory.GetFiles(folder, "*.strm"))
+            string[] files;
+            try
+            {
+                files = Directory.GetFiles(folder, "*.strm");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // A folder that cannot be listed, or went away since the directory listing, is left
+                // out: its streams fall back to the name lookup, as before the index. Failing here
+                // would abort the whole movie sync (final review).
+                continue;
+            }
+
+            foreach (var file in files)
             {
                 if (owners.OwnerOf(StrmSyncService.ReadStrmUrl(file)) is not int streamId || streamId < 0)
                 {
