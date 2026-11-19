@@ -1177,7 +1177,9 @@
                                     For users with "Force transcoding of remote media sources" on. Jellyfin counts live
                                     channels as remote, so with that option it re-encodes their audio and video even when
                                     the client could play them. Turn this on to let Jellyfin copy them again, while the
-                                    option still applies to movies and series. Native tuner only.
+                                    option still applies to movies and series. Native tuner only. Channels with
+                                    Dispatcharr stream stats still have their audio re-encoded; only their video can be
+                                    copied.
                                     <br />
                                     Jellyfin then holds live channels to each client's maximum bitrate, which it skips
                                     for remote sources. A client with a low limit, such as one watching away from home,

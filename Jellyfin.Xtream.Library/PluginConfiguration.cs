@@ -265,7 +265,9 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <para>
     /// With the user policy "Force transcoding of remote media sources" on, Jellyfin forbids copying
     /// the video and audio of a remote source, so a channel whose audio the client could play was
-    /// re-encoded anyway. A local source is exempt from that policy.
+    /// re-encoded anyway. A local source is exempt from that policy. A channel with stream stats
+    /// declares no audio codec unless <see cref="LiveTvCopyAudio"/> is on, so its audio is still
+    /// re-encoded; only its video can then be copied.
     /// </para>
     /// <para>
     /// Off by default, because Jellyfin skips the client's maximum bitrate only for remote sources.
