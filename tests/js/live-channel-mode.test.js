@@ -247,3 +247,108 @@ test('the counter says excluded or selected to match the mode', async (t) => {
         }
     });
 });
+
+// GitHub #195: ticking one channel under a category that does not sync switched the category on
+// and took only that channel off the exclusion list, so the save brought in every channel of the
+// category. And in ExcludeSelected mode the channel boxes read a ticked category as "syncs", the
+// opposite of what it means there. A channel box now means "syncs" in both modes.
+test('picking one channel syncs that channel, not its whole category', async (t) => {
+    const CATEGORY = 5;
+    const CHANNELS = [{ StreamId: 501, Name: 'A' }, { StreamId: 502, Name: 'B' }, { StreamId: 503, Name: 'C' }];
+    const CATEGORY_CB_SELECTOR = 'input[data-category-type="live"][data-category-id="' + CATEGORY + '"]';
+    const PANEL_SELECTOR = '.live-channel-list[data-cat-id="' + CATEGORY + '"]';
+
+    function setup(mode, categoryTicked, excluded) {
+        const config = loadConfig();
+        config.liveChannelsByCategory = { [CATEGORY]: CHANNELS };
+        config.excludedLiveStreamIds = excluded.slice();
+        const categoryCb = categoryCheckbox(CATEGORY, categoryTicked);
+        const panel = element({});
+        const restore = withDocument({}, Object.assign(liveDom(mode, [categoryCb]), {
+            [CATEGORY_CB_SELECTOR]: [categoryCb],
+            [PANEL_SELECTOR]: [panel],
+        }));
+        return { config, categoryCb, panel, restore };
+    }
+
+    /** The stream ids renderLiveChannels drew as ticked. */
+    function tickedIds(panel) {
+        return [...panel.innerHTML.matchAll(/data-stream-id="(\d+)" (checked)?/g)]
+            .filter((m) => m[2])
+            .map((m) => Number(m[1]));
+    }
+
+    await t.test('Custom: ticking a channel under a deselected category excludes its siblings', () => {
+        const { config, categoryCb, restore } = setup('Custom', false, []);
+        try {
+            config.setLiveChannelSynced(CATEGORY, 502, true, categoryCb);
+            assert.strictEqual(categoryCb.checked, true);
+            assert.deepStrictEqual(config.excludedLiveStreamIds.sort(), [501, 503]);
+        } finally {
+            restore();
+        }
+    });
+
+    await t.test('Custom: under a selected category only that channel changes', () => {
+        const { config, categoryCb, restore } = setup('Custom', true, [501, 503]);
+        try {
+            config.setLiveChannelSynced(CATEGORY, 503, true, categoryCb);
+            assert.strictEqual(categoryCb.checked, true);
+            assert.deepStrictEqual(config.excludedLiveStreamIds, [501]);
+        } finally {
+            restore();
+        }
+    });
+
+    await t.test('ExcludeSelected: ticking a channel under an excluded category unticks it and excludes the siblings', () => {
+        const { config, categoryCb, restore } = setup('ExcludeSelected', true, []);
+        try {
+            config.setLiveChannelSynced(CATEGORY, 502, true, categoryCb);
+            assert.strictEqual(categoryCb.checked, false);
+            assert.deepStrictEqual(config.excludedLiveStreamIds.sort(), [501, 503]);
+        } finally {
+            restore();
+        }
+    });
+
+    await t.test('ExcludeSelected: unticking a channel in a synced category leaves the category alone', () => {
+        const { config, categoryCb, restore } = setup('ExcludeSelected', false, []);
+        try {
+            config.setLiveChannelSynced(CATEGORY, 501, false, categoryCb);
+            assert.strictEqual(categoryCb.checked, false);
+            assert.deepStrictEqual(config.excludedLiveStreamIds, [501]);
+        } finally {
+            restore();
+        }
+    });
+
+    await t.test('ExcludeSelected: channels of a synced category are drawn ticked unless excluded', () => {
+        const { config, panel, restore } = setup('ExcludeSelected', false, [502]);
+        try {
+            config.renderLiveChannels(CATEGORY);
+            assert.deepStrictEqual(tickedIds(panel), [501, 503]);
+        } finally {
+            restore();
+        }
+    });
+
+    await t.test('ExcludeSelected: channels of an excluded category are drawn unticked', () => {
+        const { config, panel, restore } = setup('ExcludeSelected', true, []);
+        try {
+            config.renderLiveChannels(CATEGORY);
+            assert.deepStrictEqual(tickedIds(panel), []);
+        } finally {
+            restore();
+        }
+    });
+
+    await t.test('Custom: drawing is unchanged', () => {
+        const { config, panel, restore } = setup('Custom', true, [502]);
+        try {
+            config.renderLiveChannels(CATEGORY);
+            assert.deepStrictEqual(tickedIds(panel), [501, 503]);
+        } finally {
+            restore();
+        }
+    });
+});
