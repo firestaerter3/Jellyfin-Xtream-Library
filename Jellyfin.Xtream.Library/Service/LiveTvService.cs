@@ -1419,7 +1419,7 @@ public class LiveTvService : IDisposable
             if (idMap.Count > 0)
             {
                 var fragments = await GetProviderXmltvFragmentsAsync(channels, cancellationToken).ConfigureAwait(false);
-                if (config.PreferPortraitProgramImages)
+                if (config.IncludeProgramImages && config.PreferPortraitProgramImages)
                 {
                     await PortraitImages.ResolveAsync(fragments.Select(f => f.Xml), cancellationToken).ConfigureAwait(false);
                 }
@@ -1653,7 +1653,13 @@ public class LiveTvService : IDisposable
                 }
 
                 element.SetAttributeValue("channel", ourId);
-                if (config.PreferPortraitProgramImages)
+                if (!config.IncludeProgramImages)
+                {
+                    // Jellyfin keeps a copy of a programme image per programme under
+                    // metadata/livetv and removes it only when Refresh Guide finishes (GitHub #196).
+                    element.Elements("icon").Remove();
+                }
+                else if (config.PreferPortraitProgramImages)
                 {
                     UsePortraitIcons(element, PortraitImages);
                 }

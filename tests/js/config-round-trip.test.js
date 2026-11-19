@@ -94,6 +94,7 @@ function fixture() {
         LiveTvNumberByCategory: true,
         LiveTvCategoryAsTag: true,
         LiveTvTreatAsLocal: true,
+        IncludeProgramImages: false,
         ChannelRemoveTerms: 'HD\nFHD',
         ChannelOverrides: '123=Name',
         LiveTvEndpointAllowedIps: '127.0.0.1\n::1',

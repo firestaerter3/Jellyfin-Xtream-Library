@@ -180,6 +180,18 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool PreferPortraitProgramImages { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether programmes in Epg.xml keep the &lt;icon&gt; of the
+    /// upstream guide. Channel logos are not affected (GitHub #196).
+    /// <para>
+    /// During Refresh Guide Jellyfin downloads the image of every programme of the next two days and
+    /// stores a copy per programme under metadata/livetv, also when many programmes share one
+    /// image. Those copies are removed only when Refresh Guide runs to the end, so a refresh that
+    /// keeps failing lets the folder grow without limit. Turning this off avoids the downloads.
+    /// </para>
+    /// </summary>
+    public bool IncludeProgramImages { get; set; } = true;
+
+    /// <summary>
     /// Gets or sets a value indicating whether the posters of this plugin's items get a small text
     /// badge in one corner, so they can be told apart from the same title in another library. The
     /// badge is drawn while the image is served; files on disk are never changed.
