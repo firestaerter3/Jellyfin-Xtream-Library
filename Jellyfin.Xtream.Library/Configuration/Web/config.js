@@ -1668,14 +1668,15 @@ var XtreamLibraryConfig = (function () {
         const excluded = {};
         self.excludedLiveStreamIds.forEach(function (id) { excluded[id] = true; });
 
-        // If the parent category isn't selected, the whole category is skipped at sync time —
+        // If the parent category doesn't sync, the whole category is skipped at sync time —
         // reflect that in the UI so per-channel checkboxes don't show as ticked when they
         // won't actually sync. Without this, Deselect-All-Categories clears the exclusion
         // list and every channel underneath would pop back on as "checked", which is what
-        // Estarna reported on issue #46 against v1.35.1.
+        // Estarna reported on issue #46 against v1.35.1. A channel checkbox means "syncs" in
+        // every mode, so it reads the category through the mode (GitHub #195).
         const categoryCb = document.querySelector(
             'input[data-category-type="live"][data-category-id="' + categoryId + '"]');
-        const categorySelected = categoryCb ? categoryCb.checked : false;
+        const categorySyncs = categoryCb ? self.liveCategorySyncs(categoryCb.checked) : false;
 
         let html = '';
         html += '<div style="margin: 4px 0;">';
@@ -1684,13 +1685,16 @@ var XtreamLibraryConfig = (function () {
         html += '<button type="button" class="live-ch-deselect-all" data-cat-id="' + categoryId + '" ';
         html += 'style="background: none; border: 1px solid rgba(255,255,255,0.2); color: inherit; cursor: pointer; padding: 2px 8px; border-radius: 3px;">Deselect all</button>';
         html += '<small style="opacity: 0.6; margin-left: 10px;">' + channels.length + ' channels</small>';
-        if (!categorySelected) {
-            html += '<small style="opacity: 0.6; margin-left: 10px; font-style: italic;">Category is deselected — tick a channel or the category to include it.</small>';
+        if (!categorySyncs) {
+            const note = self.getLiveChannelMode() === 'ExcludeSelected'
+                ? 'Category is excluded — tick a channel to sync only that channel, or untick the category.'
+                : 'Category is deselected — tick a channel or the category to include it.';
+            html += '<small style="opacity: 0.6; margin-left: 10px; font-style: italic;">' + note + '</small>';
         }
         html += '</div>';
 
         channels.forEach(function (channel) {
-            const isChecked = categorySelected && !excluded[channel.StreamId] ? 'checked' : '';
+            const isChecked = categorySyncs && !excluded[channel.StreamId] ? 'checked' : '';
             html += '<div class="checkboxContainer" style="margin: 2px 0;">';
             html += '<label class="emby-checkbox-label">';
             html += '<input is="emby-checkbox" type="checkbox" class="live-channel-cb" ';
@@ -1707,21 +1711,15 @@ var XtreamLibraryConfig = (function () {
         panel.querySelectorAll('.live-channel-cb').forEach(function (cb) {
             cb.addEventListener('change', function () {
                 const streamId = parseInt(cb.getAttribute('data-stream-id'));
-                // Ticking a channel under a deselected category implies the user wants the
-                // category included — auto-tick the parent so the channel actually syncs.
-                if (cb.checked && categoryCb && !categoryCb.checked) {
-                    categoryCb.checked = true;
-                    self.updateLiveCategoryCounter();
-                }
-                self.updateLiveExclusion(streamId, !cb.checked);
+                self.setLiveChannelSynced(categoryId, streamId, cb.checked, categoryCb);
             });
         });
 
         const selectAll = panel.querySelector('.live-ch-select-all');
         if (selectAll) {
             selectAll.addEventListener('click', function () {
-                if (categoryCb && !categoryCb.checked) {
-                    categoryCb.checked = true;
+                if (categoryCb && !self.liveCategorySyncs(categoryCb.checked)) {
+                    categoryCb.checked = !categoryCb.checked;
                     self.updateLiveCategoryCounter();
                 }
                 panel.querySelectorAll('.live-channel-cb').forEach(function (cb) {
@@ -1743,6 +1741,63 @@ var XtreamLibraryConfig = (function () {
                 });
             });
         }
+    },
+
+    /**
+     * Whether a category's channels sync when its checkbox has the given state. A ticked category
+     * means "sync" in Custom mode and "skip" in ExcludeSelected mode (#79), so the channel
+     * checkboxes under it, which always mean "syncs", read it through the mode (GitHub #195).
+     */
+    liveCategorySyncs: function (categoryTicked) {
+        return this.getLiveChannelMode() === 'ExcludeSelected' ? !categoryTicked : categoryTicked;
+    },
+
+    /**
+     * A channel was ticked or unticked in an expanded category panel. Ticking one under a category
+     * that does not sync switches the category on, and then only that channel may follow: its
+     * siblings go on the exclusion list. Before, only the ticked channel came off the list, so
+     * saving brought in the whole category (GitHub #195). Exclusions are by stream id and apply in
+     * every category, so a sibling that already syncs through another loaded category is left alone.
+     */
+    setLiveChannelSynced: function (categoryId, streamId, synced, categoryCb) {
+        const self = this;
+        if (synced && categoryCb && !self.liveCategorySyncs(categoryCb.checked)) {
+            const syncingElsewhere = self.liveStreamsSyncingOutside(categoryId);
+            categoryCb.checked = !categoryCb.checked;
+            self.updateLiveCategoryCounter();
+            (self.liveChannelsByCategory[categoryId] || []).forEach(function (channel) {
+                if (!syncingElsewhere[channel.StreamId]) {
+                    self.updateLiveExclusion(channel.StreamId, true);
+                }
+            });
+        }
+
+        self.updateLiveExclusion(streamId, !synced);
+    },
+
+    /**
+     * The stream ids that sync through a loaded category other than the given one. Only categories
+     * whose channel list has been fetched are known; a stream listed in an unloaded one can still
+     * be excluded by a sibling exclusion.
+     */
+    liveStreamsSyncingOutside: function (categoryId) {
+        const self = this;
+        const excluded = {};
+        self.excludedLiveStreamIds.forEach(function (id) { excluded[id] = true; });
+        const syncing = {};
+        Object.keys(self.liveChannelsByCategory).forEach(function (key) {
+            const otherId = parseInt(key);
+            if (otherId === categoryId) return;
+            const cb = document.querySelector(
+                'input[data-category-type="live"][data-category-id="' + otherId + '"]');
+            if (!cb || !self.liveCategorySyncs(cb.checked)) return;
+            (self.liveChannelsByCategory[otherId] || []).forEach(function (channel) {
+                if (!excluded[channel.StreamId]) {
+                    syncing[channel.StreamId] = true;
+                }
+            });
+        });
+        return syncing;
     },
 
     updateLiveExclusion: function (streamId, shouldBeExcluded) {
@@ -2036,7 +2091,9 @@ var XtreamLibraryConfig = (function () {
     redrawExpandedLiveChannelPanels: function () {
         const self = this;
         Object.keys(self.expandedLiveCategories).forEach(function (categoryId) {
-            if (self.expandedLiveCategories[categoryId]) {
+            // A panel without a channel list is still loading or shows its Retry button; drawing
+            // it now would replace either with "No channels in this category".
+            if (self.expandedLiveCategories[categoryId] && self.liveChannelsByCategory[categoryId]) {
                 self.renderLiveChannels(parseInt(categoryId));
             }
         });
@@ -3095,6 +3152,8 @@ function initXtreamLibraryConfig() {
     for (var i = 0; i < liveModeRadios.length; i++) {
         liveModeRadios[i].addEventListener('change', function () {
             XtreamLibraryConfig.updateLiveChannelModeVisibility();
+            // Whether a channel box shows ticked depends on the mode (GitHub #195).
+            XtreamLibraryConfig.redrawExpandedLiveChannelPanels();
 
             // The auto-load on page open reads the *saved* mode, so switching into a mode that
             // needs the category list would otherwise reveal an empty panel until the user found
