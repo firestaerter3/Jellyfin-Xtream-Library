@@ -260,6 +260,22 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool LiveTvDirectPlayDispatcharr { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether native-tuner channels are handed to Jellyfin as a
+    /// local source instead of a remote one (GitHub #197).
+    /// <para>
+    /// With the user policy "Force transcoding of remote media sources" on, Jellyfin forbids copying
+    /// the video and audio of a remote source, so a channel whose audio the client could play was
+    /// re-encoded anyway. A local source is exempt from that policy.
+    /// </para>
+    /// <para>
+    /// Off by default, because Jellyfin skips the client's maximum bitrate only for remote sources.
+    /// A local channel above that maximum is transcoded in full, video included, which hits remote
+    /// clients with a low bitrate limit whether or not the policy is on.
+    /// </para>
+    /// </summary>
+    public bool LiveTvTreatAsLocal { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether to include adult channels.
     /// </summary>
     public bool IncludeAdultChannels { get; set; }

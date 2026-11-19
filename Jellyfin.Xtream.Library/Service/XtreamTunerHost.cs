@@ -447,7 +447,11 @@ public class XtreamTunerHost : ITunerHost
             // (XtreamLiveStream.Open connects lazily) and a source that was never opened made
             // Jellyfin wait about 1.7 s before starting ffmpeg (homelab-ops #550).
             RequiresOpening = true,
-            IsRemote = true,
+            // Remote unless asked otherwise. For a remote source Jellyfin's "Force transcoding of
+            // remote media sources" policy forbids copying audio and video; for a local one it
+            // applies the client's maximum bitrate, which it skips for remote sources. That
+            // trade-off is the user's to make (GitHub #197).
+            IsRemote = !config.LiveTvTreatAsLocal,
             IsInfiniteStream = true,
             // No direct play with an Xtream URL: a client that direct plays (Swiftfin with VLC)
             // opens Path itself, so it got the provider URL with the login in it and bypassed
@@ -535,6 +539,16 @@ public class XtreamTunerHost : ITunerHost
             });
 
             mediaSource.MediaStreams = mediaStreams;
+
+            // The bitrate Jellyfin holds against the client's maximum when the source is local
+            // (LiveTvTreatAsLocal). Left unset, it assumes 40 Mbps and transcodes for any client
+            // capped below that (StreamBuilder.IsBitrateLimitExceeded, GitHub #197). The stats
+            // bitrate is ffmpeg's output bitrate, so it covers the audio as well. Only then: Jellyfin
+            // also caps a transcode at the source bitrate, and a remote source has gone without it.
+            if (config.LiveTvTreatAsLocal && stats.Bitrate.HasValue)
+            {
+                mediaSource.Bitrate = (int)Math.Round(stats.Bitrate.Value * 1000);
+            }
 
             logger.LogDebug(
                 "Channel {ChannelId}: using stats - {VideoCodec} {Width}x{Height} @{Fps}fps, audio {AudioCodec}",

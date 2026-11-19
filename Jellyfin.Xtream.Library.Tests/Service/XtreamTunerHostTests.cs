@@ -457,6 +457,49 @@ public class XtreamTunerHostTests : IDisposable
         source.SupportsDirectPlay.Should().Be(expected);
     }
 
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void CreateMediaSourceInfo_IsRemoteUnlessTreatAsLocalIsOn(bool treatAsLocal, bool expectedRemote)
+    {
+        // A remote source falls under "Force transcoding of remote media sources", which forbids
+        // copying audio the client could play (GitHub #197). A local one is held to the client's
+        // maximum bitrate instead, so it stays opt-in.
+        var config = new PluginConfiguration { LiveTvTreatAsLocal = treatAsLocal };
+
+        var withoutStats = XtreamTunerHost.CreateMediaSourceInfo("xtream_1", "http://provider/live/u/p/1.ts", null, false, config, NullLogger.Instance);
+        var withStats = XtreamTunerHost.CreateMediaSourceInfo(
+            "xtream_1", "http://provider/live/u/p/1.ts", new StreamStatsInfo { VideoCodec = "h264" }, false, config, NullLogger.Instance);
+
+        withoutStats.IsRemote.Should().Be(expectedRemote);
+        withStats.IsRemote.Should().Be(expectedRemote);
+    }
+
+    [Fact]
+    public void CreateMediaSourceInfo_SetsTheSourceBitrateFromTheStatsWhenLocal()
+    {
+        // Left unset, Jellyfin assumes 40 Mbps for a local source and transcodes for any client
+        // capped below that (GitHub #197). Stats are in kbps.
+        var stats = Newtonsoft.Json.JsonConvert.DeserializeObject<StreamStatsInfo>(
+            """{"video_codec":"h264","resolution":"1920x1080","ffmpeg_output_bitrate":5800.4,"audio_bitrate":128}""")!;
+
+        var source = XtreamTunerHost.CreateMediaSourceInfo("xtream_1", "http://host/x", stats, false, new PluginConfiguration { LiveTvTreatAsLocal = true }, NullLogger.Instance);
+        var remote = XtreamTunerHost.CreateMediaSourceInfo("xtream_1", "http://host/x", stats, false, new PluginConfiguration(), NullLogger.Instance);
+
+        remote.Bitrate.Should().BeNull("a remote source keeps behaving as before");
+        source.Bitrate.Should().Be(5_800_400, "ffmpeg's output bitrate already includes the audio");
+    }
+
+    [Fact]
+    public void CreateMediaSourceInfo_LeavesTheSourceBitrateUnsetWithoutAVideoBitrate()
+    {
+        var stats = new StreamStatsInfo { VideoCodec = "h264" };
+
+        var source = XtreamTunerHost.CreateMediaSourceInfo("xtream_1", "http://host/x", stats, false, new PluginConfiguration { LiveTvTreatAsLocal = true }, NullLogger.Instance);
+
+        source.Bitrate.Should().BeNull();
+    }
+
     [Fact]
     public void CreateMediaSourceInfo_NoDirectPlayWithoutStats()
     {

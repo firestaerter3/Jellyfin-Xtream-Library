@@ -1168,6 +1168,23 @@
                                     tags, before relying on allowed tags again.
                                 </div>
                             </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkLiveTvTreatAsLocal" name="LiveTvTreatAsLocal" />
+                                    <span>Treat live channels as a local source</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    For users with "Force transcoding of remote media sources" on. Jellyfin counts live
+                                    channels as remote, so with that option it re-encodes their audio and video even when
+                                    the client could play them. Turn this on to let Jellyfin copy them again, while the
+                                    option still applies to movies and series. Native tuner only.
+                                    <br />
+                                    Jellyfin then holds live channels to each client's maximum bitrate, which it skips
+                                    for remote sources. A client with a low limit, such as one watching away from home,
+                                    gets the whole stream transcoded, video included. This applies to every user, not
+                                    only those with the option on.
+                                </div>
+                            </div>
                         </div>
                         <div class="verticalSection">
                             <h3 class="sectionTitle">Title Cleaning</h3>
