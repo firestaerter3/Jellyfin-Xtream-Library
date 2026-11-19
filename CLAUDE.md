@@ -170,7 +170,7 @@ Then update `BUGS.md` and run `python3 scripts/check-bugs-status.py`, as for a b
 A beta build is normally left to soak about **a week** before promotion. Check what is overdue by
 diffing the two manifests rather than going by memory: anything in `manifest-dev.json` that is not
 in `manifest.json` and is older than that is a candidate. Since 2026-10-04 only the newest
-candidate of each line (1.x, 2.x) goes to stable, since Jellyfin installs the highest compatible
+candidate of each line (1.x while it was maintained, 2.x) goes to stable, since Jellyfin installs the highest compatible
 version anyway. Its changelog is rewritten to cover everything since the version stable already
 has, written for someone coming from that version: no fixes of beta-only bugs, user actions first.
 Every other field (version, `targetAbi`, `sourceUrl`, `checksum`, `timestamp`) is copied
@@ -268,16 +268,18 @@ for each, with `targetAbi` telling the server which one it may install: `10.11.0
 entries, `12.0.0.0` on the 2.x ones. That is what 32 of 32 official plugins did when 12.0 shipped,
 and all 32 stopped publishing for 10.11 at the same moment.
 
-**The 1.x line is maintained on `release/1.x`**, branched from `v1.55.0.0`. `main` is 2.x only.
-User-facing bug fixes land on `main` first and are cherry-picked onto `release/1.x`; new features
-stay on 2.x. Tag the 1.x release from that branch: a tag push runs the workflow file as it exists at
-the tag, which on `release/1.x` still sets up .NET 9, so nothing on `main` has to build for 10.11.
-Its manifest entries carry `targetAbi` `10.11.0.0`.
+**The 1.x line is frozen at v1.55.7.0 (since 2026-11-19).** The owner decided to stop changing
+`release/1.x`: fixes land on `main` (2.x) only, with no cherry-pick, no 1.x tag and no new 1.x
+manifest entries. The branch stays as it is, so the existing 1.x entries keep working for 10.11
+servers. Do not reopen it without asking the owner.
 
-Why it was unfrozen (2026-09-23): the 1.x line had been declared frozen at 1.55.0.0, but download
-counts showed 10.11 was still the majority. Stable had no 2.x entry at all, so its ~1,000 installs
-were all on 1.x, and even on beta 1.55.0.0 drew about a quarter of the downloads. Re-check those
-counts before retiring the branch; they are the only measurement of how many users are still on
+For reference, how it worked while it was maintained: `release/1.x` was branched from `v1.55.0.0`,
+and a 1.x tag was pushed from that branch so its own workflow file (.NET 9) built it. Its manifest
+entries carry `targetAbi` `10.11.0.0`.
+
+History: the line was first declared frozen at 1.55.0.0, then unfrozen on 2026-09-23 because
+download counts showed 10.11 was still the majority (stable had no 2.x entry, so its ~1,000 installs
+were all on 1.x). Those download counts are the only measurement of how many users are still on
 10.11, since the plugin has no telemetry.
 
 ## Key Dependencies
