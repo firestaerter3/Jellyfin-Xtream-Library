@@ -107,6 +107,43 @@ public sealed class XmltvPassthroughTests : IDisposable
             "the second listing repeats overlapping programmes; back-to-back episodes of the same series stay");
     }
 
+    // GitHub #196. Jellyfin stores a copy of every programme image per programme under
+    // metadata/livetv, so a setting leaves them out. Channel logos have to stay.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ProgrammeIconsFollowTheSettingWhileChannelLogosStay(bool include)
+    {
+        Plugin.Instance.Configuration.IncludeProgramImages = include;
+        Plugin.Instance.Configuration.PreferPortraitProgramImages = false;
+        var t = DateTimeOffset.UtcNow.AddMinutes(-10);
+        _client
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiveStreamInfo> { new() { StreamId = 1, Num = 1, Name = "NPO 1", EpgChannelId = "1", StreamIcon = "http://logos/npo1.png" } });
+        _client
+            .Setup(c => c.GetXmltvAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("<tv>"
+                + $"<programme start=\"{XmltvTime(t)}\" stop=\"{XmltvTime(t.AddMinutes(30))}\" channel=\"1\"><title>Journaal</title><icon src=\"http://img/journaal.jpg\" /><image type=\"backdrop\">http://img/bg.jpg</image></programme>"
+                + "</tv>");
+
+        var xml = await _liveTvService.GetXmltvEpgAsync(CancellationToken.None);
+
+        var doc = XDocument.Parse(xml);
+        doc.Descendants("channel").Single().Element("icon").Should().NotBeNull("the channel logo is not a programme image");
+        var programme = doc.Descendants("programme").Single();
+        programme.Element("title")!.Value.Should().Be("Journaal");
+        if (include)
+        {
+            programme.Element("icon")!.Attribute("src")!.Value.Should().Be("http://img/journaal.jpg");
+            programme.Element("image")!.Value.Should().Be("http://img/bg.jpg");
+        }
+        else
+        {
+            programme.Element("icon").Should().BeNull();
+            programme.Element("image").Should().BeNull();
+        }
+    }
+
     [Fact]
     public async Task AProgrammeWithoutAReadableStartIsNotTreatedAsADuplicate()
     {

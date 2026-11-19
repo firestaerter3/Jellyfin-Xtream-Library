@@ -1056,6 +1056,19 @@
                                     When the guide gives a program a wide Gracenote image, use the portrait poster of the same image if Gracenote has one, so it is not cropped in poster rows.
                                 </div>
                             </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkIncludeProgramImages" name="IncludeProgramImages" />
+                                    <span>Include program images in the guide</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Jellyfin downloads the image of every program in the next two days during Refresh Guide
+                                    and keeps a separate copy per program in its <code>metadata/livetv</code> folder. Those
+                                    copies are only removed when Refresh Guide runs to the end, so the folder can grow by
+                                    gigabytes a day. Turn this off to leave program images out of the guide. Channel logos
+                                    stay. Images Jellyfin has already saved are only removed by a Refresh Guide that completes.
+                                </div>
+                            </div>
                             <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="selLiveTvOutputFormat">Stream Format</label>
                                 <select is="emby-select" id="selLiveTvOutputFormat" name="LiveTvOutputFormat">

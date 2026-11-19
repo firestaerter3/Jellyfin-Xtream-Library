@@ -165,6 +165,8 @@ For automatic TMDb/TVDb ID lookup:
 6. Optionally enable **Catchup** for timeshift replay support
 7. Click **Save**
 
+**Program images and disk space.** During **Refresh Guide** Jellyfin downloads the image of every program in the next two days and keeps a separate copy per program under `metadata/livetv`, even when many programs share one image. It removes them only when Refresh Guide runs to the end. If that task keeps getting cancelled or hits its time limit (for example because the library scan or a sync runs at the same time), the folder only grows. Schedule Refresh Guide away from other heavy nightly tasks, or turn off **Include program images in the guide** to leave program images out of `Epg.xml` (channel logos stay).
+
 Once enabled, go to **Dashboard → Live TV** in Jellyfin — the Xtream Library tuner and guide data will appear automatically. Channels are grouped by their Xtream category in the guide. To trim a large channel list down, set the Live channel mode to **Custom** and select only the categories you want — by default every channel the provider exposes is included.
 
 ### First Sync
