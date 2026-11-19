@@ -180,8 +180,8 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool PreferPortraitProgramImages { get; set; } = true;
 
     /// <summary>
-    /// Gets or sets a value indicating whether programmes in Epg.xml keep the &lt;icon&gt; of the
-    /// upstream guide. Channel logos are not affected (GitHub #196).
+    /// Gets or sets a value indicating whether programmes in Epg.xml keep the &lt;icon&gt; and
+    /// &lt;image&gt; elements of the upstream guide. Channel logos are not affected (GitHub #196).
     /// <para>
     /// During Refresh Guide Jellyfin downloads the image of every programme of the next two days and
     /// stores a copy per programme under metadata/livetv, also when many programmes share one

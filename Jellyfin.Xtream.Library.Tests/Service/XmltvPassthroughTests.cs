@@ -123,7 +123,7 @@ public sealed class XmltvPassthroughTests : IDisposable
         _client
             .Setup(c => c.GetXmltvAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("<tv>"
-                + $"<programme start=\"{XmltvTime(t)}\" stop=\"{XmltvTime(t.AddMinutes(30))}\" channel=\"1\"><title>Journaal</title><icon src=\"http://img/journaal.jpg\" /></programme>"
+                + $"<programme start=\"{XmltvTime(t)}\" stop=\"{XmltvTime(t.AddMinutes(30))}\" channel=\"1\"><title>Journaal</title><icon src=\"http://img/journaal.jpg\" /><image type=\"backdrop\">http://img/bg.jpg</image></programme>"
                 + "</tv>");
 
         var xml = await _liveTvService.GetXmltvEpgAsync(CancellationToken.None);
@@ -135,10 +135,12 @@ public sealed class XmltvPassthroughTests : IDisposable
         if (include)
         {
             programme.Element("icon")!.Attribute("src")!.Value.Should().Be("http://img/journaal.jpg");
+            programme.Element("image")!.Value.Should().Be("http://img/bg.jpg");
         }
         else
         {
             programme.Element("icon").Should().BeNull();
+            programme.Element("image").Should().BeNull();
         }
     }
 

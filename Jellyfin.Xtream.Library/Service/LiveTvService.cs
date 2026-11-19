@@ -1657,7 +1657,9 @@ public class LiveTvService : IDisposable
                 {
                     // Jellyfin keeps a copy of a programme image per programme under
                     // metadata/livetv and removes it only when Refresh Guide finishes (GitHub #196).
+                    // Jellyfin also reads still and backdrop images from the newer <image> element.
                     element.Elements("icon").Remove();
+                    element.Elements("image").Remove();
                 }
                 else if (config.PreferPortraitProgramImages)
                 {
