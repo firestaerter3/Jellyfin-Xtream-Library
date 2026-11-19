@@ -1756,20 +1756,48 @@ var XtreamLibraryConfig = (function () {
      * A channel was ticked or unticked in an expanded category panel. Ticking one under a category
      * that does not sync switches the category on, and then only that channel may follow: its
      * siblings go on the exclusion list. Before, only the ticked channel came off the list, so
-     * saving brought in the whole category (GitHub #195). Exclusions are by stream id, so a sibling
-     * that is also listed in another synced category is excluded there too.
+     * saving brought in the whole category (GitHub #195). Exclusions are by stream id and apply in
+     * every category, so a sibling that already syncs through another loaded category is left alone.
      */
     setLiveChannelSynced: function (categoryId, streamId, synced, categoryCb) {
         const self = this;
         if (synced && categoryCb && !self.liveCategorySyncs(categoryCb.checked)) {
+            const syncingElsewhere = self.liveStreamsSyncingOutside(categoryId);
             categoryCb.checked = !categoryCb.checked;
             self.updateLiveCategoryCounter();
             (self.liveChannelsByCategory[categoryId] || []).forEach(function (channel) {
-                self.updateLiveExclusion(channel.StreamId, true);
+                if (!syncingElsewhere[channel.StreamId]) {
+                    self.updateLiveExclusion(channel.StreamId, true);
+                }
             });
         }
 
         self.updateLiveExclusion(streamId, !synced);
+    },
+
+    /**
+     * The stream ids that sync through a loaded category other than the given one. Only categories
+     * whose channel list has been fetched are known; a stream listed in an unloaded one can still
+     * be excluded by a sibling exclusion.
+     */
+    liveStreamsSyncingOutside: function (categoryId) {
+        const self = this;
+        const excluded = {};
+        self.excludedLiveStreamIds.forEach(function (id) { excluded[id] = true; });
+        const syncing = {};
+        Object.keys(self.liveChannelsByCategory).forEach(function (key) {
+            const otherId = parseInt(key);
+            if (otherId === categoryId) return;
+            const cb = document.querySelector(
+                'input[data-category-type="live"][data-category-id="' + otherId + '"]');
+            if (!cb || !self.liveCategorySyncs(cb.checked)) return;
+            (self.liveChannelsByCategory[otherId] || []).forEach(function (channel) {
+                if (!excluded[channel.StreamId]) {
+                    syncing[channel.StreamId] = true;
+                }
+            });
+        });
+        return syncing;
     },
 
     updateLiveExclusion: function (streamId, shouldBeExcluded) {
@@ -2063,7 +2091,9 @@ var XtreamLibraryConfig = (function () {
     redrawExpandedLiveChannelPanels: function () {
         const self = this;
         Object.keys(self.expandedLiveCategories).forEach(function (categoryId) {
-            if (self.expandedLiveCategories[categoryId]) {
+            // A panel without a channel list is still loading or shows its Retry button; drawing
+            // it now would replace either with "No channels in this category".
+            if (self.expandedLiveCategories[categoryId] && self.liveChannelsByCategory[categoryId]) {
                 self.renderLiveChannels(parseInt(categoryId));
             }
         });

@@ -258,16 +258,25 @@ test('picking one channel syncs that channel, not its whole category', async (t)
     const CATEGORY_CB_SELECTOR = 'input[data-category-type="live"][data-category-id="' + CATEGORY + '"]';
     const PANEL_SELECTOR = '.live-channel-list[data-cat-id="' + CATEGORY + '"]';
 
-    function setup(mode, categoryTicked, excluded) {
+    /** `others` lists more loaded categories as [id, ticked, channels]. */
+    function setup(mode, categoryTicked, excluded, others = []) {
         const config = loadConfig();
         config.liveChannelsByCategory = { [CATEGORY]: CHANNELS };
         config.excludedLiveStreamIds = excluded.slice();
         const categoryCb = categoryCheckbox(CATEGORY, categoryTicked);
         const panel = element({});
-        const restore = withDocument({}, Object.assign(liveDom(mode, [categoryCb]), {
+        const selectors = {
             [CATEGORY_CB_SELECTOR]: [categoryCb],
             [PANEL_SELECTOR]: [panel],
-        }));
+        };
+        const allCbs = [categoryCb];
+        others.forEach(([id, ticked, channels]) => {
+            config.liveChannelsByCategory[id] = channels;
+            const cb = categoryCheckbox(id, ticked);
+            allCbs.push(cb);
+            selectors['input[data-category-type="live"][data-category-id="' + id + '"]'] = [cb];
+        });
+        const restore = withDocument({}, Object.assign(liveDom(mode, allCbs), selectors));
         return { config, categoryCb, panel, restore };
     }
 
@@ -284,6 +293,31 @@ test('picking one channel syncs that channel, not its whole category', async (t)
             config.setLiveChannelSynced(CATEGORY, 502, true, categoryCb);
             assert.strictEqual(categoryCb.checked, true);
             assert.deepStrictEqual(config.excludedLiveStreamIds.sort(), [501, 503]);
+        } finally {
+            restore();
+        }
+    });
+
+    await t.test('Custom: a sibling that already syncs through another selected category is not excluded', () => {
+        const { config, categoryCb, restore } = setup('Custom', false, [], [
+            [9, true, [{ StreamId: 503, Name: 'C' }, { StreamId: 900, Name: 'Z' }]],
+        ]);
+        try {
+            config.setLiveChannelSynced(CATEGORY, 502, true, categoryCb);
+            assert.deepStrictEqual(config.excludedLiveStreamIds.sort(), [501]);
+        } finally {
+            restore();
+        }
+    });
+
+    await t.test('a failed panel keeps its Retry button when the panels are redrawn', () => {
+        const { config, restore } = setup('Custom', true, []);
+        config.expandedLiveCategories = { 7: true };
+        let drawn = [];
+        config.renderLiveChannels = (id) => drawn.push(id);
+        try {
+            config.redrawExpandedLiveChannelPanels();
+            assert.deepStrictEqual(drawn, []);
         } finally {
             restore();
         }
