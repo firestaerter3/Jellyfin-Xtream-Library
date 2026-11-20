@@ -1575,7 +1575,7 @@ public partial class StrmSyncService
             for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                CurrentProgress.MoviePhase = $"Collecting movies (batch {batchIndex + 1}/{totalBatches})";
+                CurrentProgress.MoviePhase = $"Listing movie categories for language labels (batch {batchIndex + 1}/{totalBatches})";
                 var listing = await FetchBatchAsync(BatchCategories(batchIndex)).ConfigureAwait(false);
                 prefetchedBatches[batchIndex] = listing;
                 foreach (var (stream, categoryId) in listing)
@@ -2557,6 +2557,7 @@ public partial class StrmSyncService
         // A movie kept for an unread category is still listed as far as this run knows, so it counts
         // as present and keeps its primary (GitHub #171).
         roleLedger.SetCatalogue(processedStreamIds.Keys.Concat(unread.KeptMovies.Keys), categoryFetchFailures == 0);
+        unread.MovieListingComplete = categoryFetchFailures == 0 && categories.Count > 0;
         if (categoryFetchFailures > 0)
         {
             _logger.LogWarning(
@@ -5940,10 +5941,11 @@ public partial class StrmSyncService
     /// <summary>
     /// Decides <see cref="ContentSnapshot.MovieLanguageLabelsWritten"/> for the snapshot a run saves.
     /// True while labels apply. After they stop applying it stays true until a run has rewritten
-    /// every movie file: a full run that synced movies, read every category and failed no movie.
-    /// A run that skipped some files (movie sync off, incremental, a failed movie, an unread
-    /// category) leaves them with their labels, and the run that later rewrites them still has to
-    /// remove the labelled names.
+    /// every movie file: a full run that synced movies, listed every selected category without a
+    /// fetch failure, and failed no movie. A run that skipped some files (movie sync off,
+    /// incremental, a category that failed to fetch, a failed movie, an unread category) leaves
+    /// them with their labels, and the run that later rewrites them still has to remove the
+    /// labelled names.
     /// </summary>
     /// <param name="labelsApplyNow">Whether labels apply in this run's settings.</param>
     /// <param name="previous">The snapshot the previous run saved, if any.</param>
@@ -5986,7 +5988,7 @@ public partial class StrmSyncService
                         VersionLanguageLabeler.ParseRules(provider.VersionLanguageRules),
                         provider.VersionLanguageDefault),
                     carryForwardFrom,
-                    everyMovieRewritten: provider.SyncMovies && !wasIncremental && failedMovieIds.Count == 0 && unread.KeptMovies.IsEmpty),
+                    everyMovieRewritten: provider.SyncMovies && !wasIncremental && unread.MovieListingComplete && failedMovieIds.Count == 0 && unread.KeptMovies.IsEmpty),
             };
 
             // Entries carried over below were not written this run. After a login change their

@@ -9,6 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -513,6 +514,24 @@ public class StrmNameCollisionTests : IDisposable
         StrmFiles("Movies").Should().BeEquivalentTo(
             Path.Combine("Solo Film (2020)", "Solo Film (2020) - EN.strm"),
             Path.Combine("Other Film (2021)", "Other Film (2021) - EN.strm"));
+
+        // A misconfiguration that is still there is reported again on the next sync.
+        await RunLanguageSyncAsync(
+            [(1, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!", [Movie(500, "Solo Film (2020)"), Movie(501, "Other Film (2021)")])],
+            incremental: false).ConfigureAwait(true);
+        _log.Count(l => l.StartsWith("[Warning]", StringComparison.Ordinal) && l.Contains("[unclosed=XX", StringComparison.Ordinal)).Should().Be(2);
+        _log.Count(l => l.StartsWith("[Warning]", StringComparison.Ordinal) && l.Contains("^(\\w+\\s?)*$", StringComparison.Ordinal)).Should().Be(2);
+    }
+
+    // With grouping off the rules are not used, so a broken rule left in the settings is not worth a warning.
+    [Fact]
+    public async Task SkippedLanguageRules_AreNotLogged_WithGroupingOff()
+    {
+        _configure = p => p.VersionLanguageRules = "[unclosed=XX";
+
+        await RunLanguageSyncAsync([(1, "DE - Kino", [Movie(500, "Solo Film (2020)")])], incremental: false, groupByTmdbId: false).ConfigureAwait(true);
+
+        _log.Should().NotContain(l => l.Contains("[unclosed=XX", StringComparison.Ordinal));
     }
 
     // A stream's superseded files are only removed because labels rename them. With grouping on and no
@@ -588,6 +607,58 @@ public class StrmNameCollisionTests : IDisposable
         StrmSyncService.MovieLanguageLabelsWrittenAfterRun(applyNow, previous, everyMovieRewritten).Should().Be(expected);
     }
 
+    // A full run that lists nothing (Multiple folder mode with no category assigned) rewrites nothing,
+    // so the files keep their labels and the snapshot must keep saying so (Fable review).
+    [Fact]
+    public async Task LabelsTurnedOffWhileNothingWasSelected_TheLabelledFileGoes_WhenCategoriesAreBackOn()
+    {
+        (int Id, string Name, StreamInfo[] Streams)[] categories = [(1, "DE - Kino", [Movie(500, "DE - Solo Film (2020)")])];
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+        StrmFiles("Movies").Should().Equal(Path.Combine("Solo Film (2020)", "Solo Film (2020) - DE.strm"));
+
+        _configure = p =>
+        {
+            p.VersionLanguageRules = string.Empty;
+            p.VersionLanguageDefault = string.Empty;
+            p.MovieFolderMode = "Multiple";
+            p.MovieFolderMappings = string.Empty;
+        };
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+        StrmFiles("Movies").Should().ContainSingle().Which.Should().Be(Path.Combine("Solo Film (2020)", "Solo Film (2020) - DE.strm"), "nothing is selected, so nothing is written or removed");
+
+        _configure = p =>
+        {
+            p.VersionLanguageRules = string.Empty;
+            p.VersionLanguageDefault = string.Empty;
+        };
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+
+        StrmFiles("Movies").Should().Equal(Path.Combine("Solo Film (2020)", "Solo Film (2020).strm"));
+    }
+
+    // The listings read ahead for the labels go through the same failure handling as a batch: a
+    // category that fails to list keeps its films from the previous run and the others are written.
+    [Fact]
+    public async Task LanguageLabelReadAhead_AFailingCategory_KeepsItsFilmsAndWritesTheOthers()
+    {
+        _configure = p => p.CategoryBatchSize = 1;
+        (int Id, string Name, StreamInfo[] Streams)[] categories =
+        [
+            (1, "DE - Kino", [Movie(500, "DE - Solo Film (2020)")]),
+            (2, "NF - Action", [Movie(501, "Other Film (2021)")]),
+        ];
+        await RunLanguageSyncAsync(categories, incremental: true, cleanupOrphans: true).ConfigureAwait(true);
+
+        categories[1] = (2, "NF - Action", null!);
+        var result = await RunLanguageSyncAsync(categories, incremental: true, cleanupOrphans: true).ConfigureAwait(true);
+
+        result.MoviesKeptForUnreadCategories.Should().Be(1);
+        StrmFiles("Movies").Should().BeEquivalentTo(
+            Path.Combine("Solo Film (2020)", "Solo Film (2020) - DE.strm"),
+            Path.Combine("Other Film (2021)", "Other Film (2021) - EN.strm"));
+        _client.Verify(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 2, It.IsAny<CancellationToken>()), Times.Exactly(2), "once per run, failing or not");
+    }
+
     // Once a full run has rewritten every file without labels, the removal stops: a later copy the
     // user makes by hand is theirs again, as before labels were ever turned on.
     [Fact]
@@ -636,12 +707,20 @@ public class StrmNameCollisionTests : IDisposable
 
     private static StreamInfo Movie(int id, string name) => new() { StreamId = id, Name = name, ContainerExtension = "mp4" };
 
-    private async Task RunLanguageSyncAsync((int Id, string Name, StreamInfo[] Streams)[] categories, bool incremental, bool cleanupOrphans = false, bool syncMovies = true, bool groupByTmdbId = true)
+    private async Task<SyncResult> RunLanguageSyncAsync((int Id, string Name, StreamInfo[] Streams)[] categories, bool incremental, bool cleanupOrphans = false, bool syncMovies = true, bool groupByTmdbId = true)
     {
         _client.Setup(c => c.GetVodCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(categories.Select(c => new Category { CategoryId = c.Id, CategoryName = c.Name }).ToList());
         foreach (var category in categories)
         {
+            // A null stream list stands for a category whose listing fails this run.
+            if (category.Streams is null)
+            {
+                _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), category.Id, It.IsAny<CancellationToken>()))
+                    .ThrowsAsync(new HttpRequestException("listing failed"));
+                continue;
+            }
+
             var streams = category.Streams.Select(s => new StreamInfo { StreamId = s.StreamId, Name = s.Name, ContainerExtension = s.ContainerExtension, CategoryId = category.Id }).ToList();
             _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), category.Id, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(streams);
@@ -656,7 +735,7 @@ public class StrmNameCollisionTests : IDisposable
         };
         try
         {
-            await RunSyncAsync(syncMovies, syncSeries: false, useShippedDefaults: incremental, providerCount: 1, proactiveMediaInfo: false, groupByTmdbId, cleanupOrphans).ConfigureAwait(true);
+            return await RunSyncAsync(syncMovies, syncSeries: false, useShippedDefaults: incremental, providerCount: 1, proactiveMediaInfo: false, groupByTmdbId, cleanupOrphans).ConfigureAwait(true);
         }
         finally
         {
