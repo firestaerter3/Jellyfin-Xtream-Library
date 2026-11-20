@@ -856,11 +856,11 @@ public partial class StrmSyncService
                     && siblingOwners.Any(sibling => sibling.OwnerOf(url) is int owner && owner >= 0);
             }
 
-            // Files the movie sync already removed are neither orphans nor part of the library the
-            // threshold measures against; counted, a label change made the whole library look gone.
-            existingStrmFiles.ExceptWith(supersededFiles.Keys);
-
+            // Files the movie sync already removed are not orphans; counted as such, a label change
+            // made the whole library look gone. They stay in the count the threshold measures
+            // against, which is the library as it was before this run.
             var orphanedFiles = existingStrmFiles
+                .Except(supersededFiles.Keys, StringComparer.OrdinalIgnoreCase)
                 .Except(syncedFiles.Keys, StringComparer.OrdinalIgnoreCase)
                 .Where(f => !BelongsToSiblingProvider(f))
                 .ToList();
