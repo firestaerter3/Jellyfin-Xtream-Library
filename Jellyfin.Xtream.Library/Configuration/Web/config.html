@@ -834,10 +834,17 @@
                                         Jellyfin plays the version whose label comes first alphabetically by default
                                         ("DE" before "DE 4K" before "EN"). Resolutions are written as words (2160p
                                         becomes 4K, 1080p FHD, 720p HD), because Jellyfin would otherwise prefer a
-                                        version with a number like 1080p in its name. Changing the rules renames movie
-                                        files on the next sync; each stream's previous file is removed as its renamed
-                                        one is written. Leave both this field and the default below empty to keep the
-                                        file names as they are; a default alone still labels every stream.
+                                        version with a number like 1080p in its name. Leave both this field and the
+                                        default below empty to keep the file names as they are; a default alone still
+                                        labels every stream.
+                                        <br />
+                                        <strong>Turning labels on renames every movie file of this provider</strong>,
+                                        films with a single version included; turning them off or changing a rule
+                                        renames the files it affects. Jellyfin sees a renamed file as a new item, so
+                                        watched status, favourites and resume points of those movies are lost. Each
+                                        stream's previous file is removed as its renamed one is written. With
+                                        Dispatcharr the previous files cannot be told apart and stay until orphan
+                                        cleanup removes them, so every grouped film shows twice until then.
                                     </div>
                                 </div>
                                 <div class="inputContainer">

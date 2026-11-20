@@ -168,10 +168,22 @@ Movies/Joker (2019) [tmdbid-475557]/
 Jellyfin plays the version whose label sorts first alphabetically by default (`DE` before `DE 4K` before
 `EN`). Resolutions are written as words (2160p → 4K, 1080p → FHD, 720p → HD) because Jellyfin would
 otherwise prefer a version with a number like 1080p in its name. Each version keeps its own label; only a
-second stream with the same label gets its stream id appended (`… - EN - 123456.strm`). Changing the rules
-renames movie files on the next sync (it forces a full sync); each stream's previous file is removed as
-its renamed one is written. Leave both the rules and the default label empty to keep the previous file
-names; a default on its own still labels every stream.
+second stream with the same label gets its stream id appended (`… - EN - 123456.strm`). Leave both the
+rules and the default label empty to keep the previous file names; a default on its own still labels
+every stream.
+
+> **Turning labels on renames every movie file of the provider**, films with a single version included.
+> Turning them off, turning grouping off while they are set, or changing a rule renames the files it
+> affects. The change forces a full sync. Jellyfin sees a renamed file as a new item, so watched status,
+> favourites and resume points of those movies are lost.
+
+Each stream's previous file is removed as its renamed one is written, also with orphan cleanup off. Only
+files whose URL names that stream are removed, and only while labels apply or files from before may still
+carry them; with grouping on and no labels, a sync deletes nothing outside orphan cleanup.
+
+**Dispatcharr:** proxy URLs do not name the stream, so the previous files cannot be attributed. After
+turning labels on, every grouped film shows twice (the old unlabelled file and the new labelled one) until
+a full sync runs with orphan cleanup on and stays under its safety threshold.
 
 ### Metadata Matching (Optional)
 
