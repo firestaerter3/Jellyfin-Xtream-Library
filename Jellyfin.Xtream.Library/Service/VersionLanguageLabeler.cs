@@ -176,33 +176,6 @@ internal static partial class VersionLanguageLabeler
     }
 
     /// <summary>
-    /// The index of the first rule that matches a category name, or the number of rules when none
-    /// does. Categories are fetched in batches and a stream is labelled in the first batch it turns
-    /// up in, so the sync orders categories by this rank: the batch where a stream first appears
-    /// then always holds its highest-ranked category.
-    /// </summary>
-    /// <param name="categoryName">The category name; null or blank (a provider may send none) matches no rule, as in <see cref="Resolve"/>.</param>
-    /// <param name="rules">Rules from <see cref="ParseRules"/>.</param>
-    /// <returns>The rank; lower comes first.</returns>
-    internal static int RuleRank(string? categoryName, IReadOnlyList<(Regex Pattern, string Label)> rules)
-    {
-        if (string.IsNullOrWhiteSpace(categoryName))
-        {
-            return rules.Count;
-        }
-
-        for (int i = 0; i < rules.Count; i++)
-        {
-            if (IsMatch(rules[i].Pattern, categoryName))
-            {
-                return i;
-            }
-        }
-
-        return rules.Count;
-    }
-
-    /// <summary>
     /// Writes resolution tokens as words: 2160p becomes 4K, 1080p FHD, 720p HD, 576p and 480p SD.
     /// Jellyfin makes the version whose name carries a number followed by p or i the default, which
     /// would let an "EN 1080p" file win over a plain "DE" file.

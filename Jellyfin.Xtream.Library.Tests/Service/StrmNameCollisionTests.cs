@@ -293,6 +293,10 @@ public class StrmNameCollisionTests : IDisposable
 
         Directory.GetFiles(Path.Combine(_libraryPath, "Movies"), "*.strm", SearchOption.AllDirectories)
             .Select(Path.GetFileName).Should().Equal("Other Film (2023) - DE.strm");
+
+        // The listings read ahead for the labels are the ones the batches use: no category is asked twice.
+        _client.Verify(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()), Times.Once);
+        _client.Verify(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 2, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // Turning labels on in an existing library renames every movie file. The plain file a stream wrote
@@ -458,6 +462,40 @@ public class StrmNameCollisionTests : IDisposable
         await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: false, providerCount: 1, proactiveMediaInfo: false, groupByTmdbId: false, cleanupOrphans: false).ConfigureAwait(true);
 
         StrmFiles("Movies").Should().ContainSingle().Which.Should().StartWith("Kids", "the provider's category order decides, not a rule that labels nothing");
+    }
+
+    // The batch a stream first turns up in decides its mapped folder. Adding a rule must only change the
+    // label, read over all of the stream's categories, and leave the folder alone: before, the rules
+    // reordered the batches, moving a film from Kids/ to German/ and cleaning up the old copy with its
+    // watched state (firestaerter3 on #201).
+    [Fact]
+    public async Task AddingALanguageRule_LabelsTheFilmButLeavesItInItsMappedFolder()
+    {
+        var categories = new (int Id, string Name, StreamInfo[] Streams)[]
+        {
+            (1, "Kids", [Movie(700, "Other Film (2023)")]),
+            (2, "DE - Kino", [Movie(700, "Other Film (2023)")]),
+        };
+        _configure = p =>
+        {
+            p.CategoryBatchSize = 1;
+            p.MovieFolderMode = "Multiple";
+            p.MovieFolderMappings = "Kids=1\nGerman=2";
+            p.VersionLanguageRules = string.Empty;
+            p.VersionLanguageDefault = string.Empty;
+        };
+        await RunLanguageSyncAsync(categories, incremental: true, cleanupOrphans: true).ConfigureAwait(true);
+        StrmFiles("Movies").Should().Equal(Path.Combine("Kids", "Other Film (2023)", "Other Film (2023).strm"));
+
+        _configure = p =>
+        {
+            p.CategoryBatchSize = 1;
+            p.MovieFolderMode = "Multiple";
+            p.MovieFolderMappings = "Kids=1\nGerman=2";
+        };
+        await RunLanguageSyncAsync(categories, incremental: true, cleanupOrphans: true).ConfigureAwait(true);
+
+        StrmFiles("Movies").Should().Equal(Path.Combine("Kids", "Other Film (2023)", "Other Film (2023) - DE.strm"));
     }
 
     // A stream's superseded files are only removed because labels rename them. With grouping on and no

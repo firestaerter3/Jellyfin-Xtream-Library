@@ -1389,16 +1389,6 @@ public partial class StrmSyncService
 
         categories = filteredCategories;
 
-        // A stream is labelled in the first batch it turns up in, with the categories of that batch
-        // only. Categories matching an earlier language rule go first, so that batch always holds
-        // the stream's highest-ranked category. OrderBy is stable: the provider's order stays
-        // within a rank. Labels only apply with grouping on; without it the rules must not move a
-        // stream's first batch, and with it its mapped folder, either (CodeRabbit).
-        if (groupByTmdb && languageRules.Count > 0)
-        {
-            categories = categories.OrderBy(c => VersionLanguageLabeler.RuleRank(c.CategoryName, languageRules)).ToList();
-        }
-
         // Determine batch size - 0 means process all at once (legacy behavior).
         // Math.Max keeps the division below defined when the selection resolves to no categories
         // at all, which is now reachable from the config rather than only by accident: with
@@ -1505,29 +1495,15 @@ public partial class StrmSyncService
         var categoryItemCounts = new ConcurrentDictionary<int, int>();
         var failedCategoryIds = new ConcurrentDictionary<int, byte>();
 
-        // Process categories in batches to reduce memory usage
-        for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
+        List<Category> BatchCategories(int batchIndex) => categories
+            .Skip(batchIndex * batchSize)
+            .Take(batchSize)
+            .ToList();
+
+        // Lists the streams of one batch of categories. Each category is asked once per run.
+        async Task<ConcurrentBag<(StreamInfo Stream, int CategoryId)>> FetchBatchAsync(List<Category> batchCategories)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var batchCategories = categories
-                .Skip(batchIndex * batchSize)
-                .Take(batchSize)
-                .ToList();
-
-            _logger.LogInformation(
-                "Processing movie batch {Batch}/{Total} ({Count} categories)...",
-                batchIndex + 1,
-                totalBatches,
-                batchCategories.Count);
-
-            CurrentProgress.MoviePhase = $"Collecting movies (batch {batchIndex + 1}/{totalBatches})";
-
-            // Collect movies from this batch of categories
-            var batchMovies = new List<(StreamInfo Stream, HashSet<int> CategoryIds)>();
-            var batchCategoryMap = new ConcurrentDictionary<int, HashSet<int>>();
             var streamBag = new ConcurrentBag<(StreamInfo Stream, int CategoryId)>();
-
             await Parallel.ForEachAsync(
                 batchCategories,
                 new ParallelOptions
@@ -1564,6 +1540,65 @@ public partial class StrmSyncService
                         failedCategoryIds.TryAdd(category.CategoryId, 0);
                     }
                 }).ConfigureAwait(false);
+            return streamBag;
+        }
+
+        // A stream is written in the first batch it turns up in, and that batch's categories decide
+        // its mapped folders. Its language label is read over all of its categories, though, as the
+        // first rule matching any of them wins. With several batches, a later batch may hold the
+        // category that rule matches, so all listings are read before the first batch is written;
+        // each batch then uses its listing from here instead of asking the provider again. The
+        // batch order stays the provider's: sorting categories by rule instead moved films between
+        // mapped folders (firestaerter3 on #201).
+        var prefetchedBatches = new Dictionary<int, ConcurrentBag<(StreamInfo Stream, int CategoryId)>>();
+        Dictionary<int, HashSet<int>>? allCategoryIdsByStream = null;
+        if (groupByTmdb && languageRules.Count > 0 && totalBatches > 1)
+        {
+            allCategoryIdsByStream = new Dictionary<int, HashSet<int>>();
+            for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                CurrentProgress.MoviePhase = $"Collecting movies (batch {batchIndex + 1}/{totalBatches})";
+                var listing = await FetchBatchAsync(BatchCategories(batchIndex)).ConfigureAwait(false);
+                prefetchedBatches[batchIndex] = listing;
+                foreach (var (stream, categoryId) in listing)
+                {
+                    if (!allCategoryIdsByStream.TryGetValue(stream.StreamId, out var streamCategories))
+                    {
+                        streamCategories = new HashSet<int>();
+                        allCategoryIdsByStream[stream.StreamId] = streamCategories;
+                    }
+
+                    streamCategories.Add(categoryId);
+                }
+            }
+
+            _logger.LogInformation(
+                "Listed the movies of all {Count} categories before writing, so language labels see every category a stream sits in",
+                categories.Count);
+        }
+
+        // Process categories in batches to reduce memory usage
+        for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var batchCategories = BatchCategories(batchIndex);
+
+            _logger.LogInformation(
+                "Processing movie batch {Batch}/{Total} ({Count} categories)...",
+                batchIndex + 1,
+                totalBatches,
+                batchCategories.Count);
+
+            CurrentProgress.MoviePhase = $"Collecting movies (batch {batchIndex + 1}/{totalBatches})";
+
+            // Collect movies from this batch of categories
+            var batchMovies = new List<(StreamInfo Stream, HashSet<int> CategoryIds)>();
+            var batchCategoryMap = new ConcurrentDictionary<int, HashSet<int>>();
+            var streamBag = prefetchedBatches.Remove(batchIndex, out var prefetched)
+                ? prefetched
+                : await FetchBatchAsync(batchCategories).ConfigureAwait(false);
 
             // Process collected streams to build category membership
             foreach (var (stream, categoryId) in streamBag)
@@ -1813,7 +1848,8 @@ public partial class StrmSyncService
                     // none, and the earlier file names stay (CodeRabbit).
                     string? languageLabel = groupByTmdb
                         ? VersionLanguageLabeler.Resolve(
-                            categoryIds.Select(id => categoryNameById.GetValueOrDefault(id, string.Empty)),
+                            (allCategoryIdsByStream?.GetValueOrDefault(stream.StreamId) ?? categoryIds)
+                                .Select(id => categoryNameById.GetValueOrDefault(id, string.Empty)),
                             stream.Name,
                             languageRules,
                             provider.VersionLanguageDefault)

@@ -52,30 +52,13 @@ public class VersionLanguageLabelerTests
         // "De Palma" in an English category must not become German because the title starts with "De".
         => VersionLanguageLabeler.Resolve(["Documentaries"], "De Palma (2015)", Rules(), "EN").Should().Be("EN");
 
-    [Theory]
-    [InlineData("DE - Kino", 0)]
-    [InlineData("NF - Action", 1)]
-    [InlineData("FIFA+ - Docs", 2)]
-    public void RuleRank_IsTheIndexOfTheFirstMatchingRule(string category, int expected)
-        => VersionLanguageLabeler.RuleRank(category, Rules()).Should().Be(expected);
-
     [Fact]
-    public void RuleRank_NoCategoryName_RanksLast()
+    public void Resolve_BlankCategoryName_MatchesNoRule()
     {
-        // A provider may send "category_name": null. The sort must not throw on it; the category
-        // simply matches no rule and syncs last.
-        VersionLanguageLabeler.RuleRank(null, Rules()).Should().Be(2);
-        VersionLanguageLabeler.RuleRank(string.Empty, Rules()).Should().Be(2);
-    }
-
-    [Fact]
-    public void RuleRank_BlankCategoryName_RanksLastEvenWhenARuleMatchesIt()
-    {
-        // Resolve ignores a blank name. If a catch-all rule ranked that category first, its batch
-        // would label a stream with the default before the stream's EN category came up.
+        // A provider may send "category_name": null or blank. Such a name matches no rule, not even
+        // a catch-all, and does not count as a known category either.
         var rules = VersionLanguageLabeler.ParseRules("^EN\\b=EN\n.*=ANY");
-        VersionLanguageLabeler.RuleRank("   ", rules).Should().Be(2);
-        VersionLanguageLabeler.Resolve(["   "], null, rules, "XX").Should().Be("XX");
+        VersionLanguageLabeler.Resolve(["   ", null!], null, rules, "XX").Should().Be("XX");
     }
 
     // Labels end up in file names. "DE/EN" would make the writer look for a folder "Title - DE".
