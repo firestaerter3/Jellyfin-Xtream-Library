@@ -41,12 +41,14 @@ internal static partial class VersionLanguageLabeler
 
     /// <summary>
     /// Parses the rule list: one rule per line, "regex=LABEL", split at the last '='.
-    /// Lines with an invalid regex or no label are skipped; the order of the lines is kept,
+    /// Lines with an invalid regex, no pattern or no label are skipped and reported through
+    /// <paramref name="onSkipped"/>; blank lines are ignored. The order of the lines is kept,
     /// because the first matching rule wins. Labels pass through <see cref="SanitizeLabel"/>.
     /// </summary>
     /// <param name="rules">The rule text as entered in the settings.</param>
+    /// <param name="onSkipped">Called with the line and the reason for each skipped rule, or null.</param>
     /// <returns>The valid rules in list order.</returns>
-    internal static IReadOnlyList<(Regex Pattern, string Label)> ParseRules(string? rules)
+    internal static IReadOnlyList<(Regex Pattern, string Label)> ParseRules(string? rules, Action<string, string>? onSkipped = null)
     {
         var parsed = new List<(Regex Pattern, string Label)>();
         if (string.IsNullOrWhiteSpace(rules))
@@ -57,16 +59,29 @@ internal static partial class VersionLanguageLabeler
         foreach (var rawLine in rules.Split('\n'))
         {
             string line = rawLine.Trim();
-            int separator = line.LastIndexOf('=');
-            if (separator <= 0)
+            if (line.Length == 0)
             {
+                continue;
+            }
+
+            int separator = line.LastIndexOf('=');
+            if (separator < 0)
+            {
+                onSkipped?.Invoke(line, "no '=' between pattern and label");
                 continue;
             }
 
             string pattern = line[..separator].Trim();
             string? label = SanitizeLabel(line[(separator + 1)..]);
-            if (pattern.Length == 0 || label is null)
+            if (pattern.Length == 0)
             {
+                onSkipped?.Invoke(line, "no pattern before '='");
+                continue;
+            }
+
+            if (label is null)
+            {
+                onSkipped?.Invoke(line, "no usable label after '='");
                 continue;
             }
 
@@ -74,9 +89,10 @@ internal static partial class VersionLanguageLabeler
             {
                 parsed.Add((new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, MatchTimeout), label));
             }
-            catch (ArgumentException)
+            catch (ArgumentException ex)
             {
                 // Invalid regex syntax: skip this rule, keep the others.
+                onSkipped?.Invoke(line, "not a valid regex: " + ex.Message);
             }
         }
 
@@ -95,12 +111,15 @@ internal static partial class VersionLanguageLabeler
     /// <param name="rules">Rules from <see cref="ParseRules"/>.</param>
     /// <param name="defaultLabel">Label when nothing matches; null or empty means no label. Passes
     /// through <see cref="SanitizeLabel"/>.</param>
+    /// <param name="onTimeout">Called with a rule's pattern each time it runs longer than the match
+    /// timeout; that match counts as no match. Null to ignore.</param>
     /// <returns>The language label, or null when the stream gets none.</returns>
     internal static string? Resolve(
         IEnumerable<string> categoryNames,
         string? streamName,
         IReadOnlyList<(Regex Pattern, string Label)> rules,
-        string? defaultLabel)
+        string? defaultLabel,
+        Action<Regex>? onTimeout = null)
     {
         var names = new List<string>();
         foreach (var name in categoryNames)
@@ -115,7 +134,7 @@ internal static partial class VersionLanguageLabeler
         {
             foreach (var name in names)
             {
-                if (IsMatch(pattern, name))
+                if (IsMatch(pattern, name, onTimeout))
                 {
                     return label;
                 }
@@ -128,7 +147,7 @@ internal static partial class VersionLanguageLabeler
         {
             foreach (var (pattern, label) in rules)
             {
-                if (IsMatch(pattern, streamName))
+                if (IsMatch(pattern, streamName, onTimeout))
                 {
                     return label;
                 }
@@ -214,7 +233,7 @@ internal static partial class VersionLanguageLabeler
         return hasQuality ? qualityLabel!.Trim() : null;
     }
 
-    private static bool IsMatch(Regex pattern, string input)
+    private static bool IsMatch(Regex pattern, string input, Action<Regex>? onTimeout)
     {
         try
         {
@@ -223,6 +242,7 @@ internal static partial class VersionLanguageLabeler
         catch (RegexMatchTimeoutException)
         {
             // Pattern was valid but ran too long: treat as no match.
+            onTimeout?.Invoke(pattern);
             return false;
         }
     }

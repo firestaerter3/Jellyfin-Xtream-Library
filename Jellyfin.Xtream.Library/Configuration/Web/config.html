@@ -836,7 +836,8 @@
                                         becomes 4K, 1080p FHD, 720p HD), because Jellyfin would otherwise prefer a
                                         version with a number like 1080p in its name. Leave both this field and the
                                         default below empty to keep the file names as they are; a default alone still
-                                        labels every stream.
+                                        labels every stream. A rule that is not a valid regex or has no label is
+                                        skipped, and the sync log says why.
                                         <br />
                                         <strong>Turning labels on renames every movie file of this provider</strong>,
                                         films with a single version included; turning them off or changing a rule

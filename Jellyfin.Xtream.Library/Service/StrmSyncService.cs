@@ -1287,7 +1287,24 @@ public partial class StrmSyncService
             categoryNameById.TryAdd(category.CategoryId, category.CategoryName);
         }
 
-        var languageRules = VersionLanguageLabeler.ParseRules(provider.VersionLanguageRules);
+        // A rule that labels nothing says why in the log, once per sync: skipped when parsed, or
+        // timed out on a category name. Only with grouping on, where the rules are used at all.
+        var languageRules = VersionLanguageLabeler.ParseRules(
+            provider.VersionLanguageRules,
+            provider.GroupMoviesByTmdbId
+                ? (line, reason) => _logger.LogWarning("Language label rule \"{Rule}\" skipped: {Reason}", line, reason)
+                : null);
+        var timedOutLanguageRules = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
+        void OnLanguageRuleTimeout(Regex pattern)
+        {
+            if (timedOutLanguageRules.TryAdd(pattern.ToString(), 0))
+            {
+                _logger.LogWarning(
+                    "Language label rule \"{Pattern}\" took longer than {Timeout} s on a category name and counted as no match; further timeouts of this rule are not logged this sync",
+                    pattern.ToString(),
+                    pattern.MatchTimeout.TotalSeconds);
+            }
+        }
 
         // GitHub #88. Folder each groupable TMDB id lives in. Seeded from the snapshot so the
         // choice made on an earlier run keeps holding, then extended with ids first seen this run.
@@ -1852,7 +1869,8 @@ public partial class StrmSyncService
                                 .Select(id => categoryNameById.GetValueOrDefault(id, string.Empty)),
                             stream.Name,
                             languageRules,
-                            provider.VersionLanguageDefault)
+                            provider.VersionLanguageDefault,
+                            OnLanguageRuleTimeout)
                         : null;
                     string? versionLabel = ExtractVersionLabel(stream.Name, languageLabel);
 

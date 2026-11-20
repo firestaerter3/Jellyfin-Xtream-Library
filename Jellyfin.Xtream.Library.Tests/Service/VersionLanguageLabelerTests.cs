@@ -31,6 +31,31 @@ public class VersionLanguageLabelerTests
     public void ParseRules_CountsValidLines(string rules, int expected)
         => VersionLanguageLabeler.ParseRules(rules).Should().HaveCount(expected);
 
+    // A skipped rule is reported, so the sync can log why it labels nothing (firestaerter3 on #201).
+    // Blank lines are not rules and are not reported.
+    [Fact]
+    public void ParseRules_ReportsEachSkippedLine()
+    {
+        var skipped = new List<string>();
+        var rules = VersionLanguageLabeler.ParseRules(
+            "^DE\\b=DE\n[unclosed=EN\nno separator\n=EN\n^X=///\n\n   \n^EN=EN",
+            (line, _) => skipped.Add(line));
+
+        rules.Should().HaveCount(2);
+        skipped.Should().Equal("[unclosed=EN", "no separator", "=EN", "^X=///");
+    }
+
+    [Fact]
+    public void Resolve_RuleThatTimesOut_IsReportedAndCountsAsNoMatch()
+    {
+        var timedOut = new List<string>();
+        var rules = VersionLanguageLabeler.ParseRules("^(\\w+\\s?)*$=SLOW");
+
+        VersionLanguageLabeler.Resolve(["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!"], null, rules, "EN", p => timedOut.Add(p.ToString()))
+            .Should().Be("EN");
+        timedOut.Should().Equal("^(\\w+\\s?)*$");
+    }
+
     [Fact]
     public void Resolve_CategoryMatch_ReturnsLabel()
         => VersionLanguageLabeler.Resolve(["DE - Kino 2025"], "DE - Joker (2019)", Rules(), "EN").Should().Be("DE");

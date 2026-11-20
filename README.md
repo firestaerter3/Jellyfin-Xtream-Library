@@ -185,6 +185,10 @@ carry them; with grouping on and no labels, a sync deletes nothing outside orpha
 turning labels on, every grouped film shows twice (the old unlabelled file and the new labelled one) until
 a full sync runs with orphan cleanup on and stays under its safety threshold.
 
+Rules that are not valid regexes, or that have no pattern or no label, are skipped and logged as a warning
+on every sync. A rule that takes longer than a second on a category name counts as no match and is logged
+once per sync.
+
 ### Metadata Matching (Optional)
 
 For automatic TMDb/TVDb ID lookup:

@@ -498,6 +498,23 @@ public class StrmNameCollisionTests : IDisposable
         StrmFiles("Movies").Should().Equal(Path.Combine("Kids", "Other Film (2023)", "Other Film (2023) - DE.strm"));
     }
 
+    // Rules that label nothing must say why in the log, each once per sync (firestaerter3 on #201).
+    [Fact]
+    public async Task SkippedAndTimedOutLanguageRules_AreEachLoggedOncePerSync()
+    {
+        _configure = p => p.VersionLanguageRules = "[unclosed=XX\n^(\\w+\\s?)*$=SLOW\n^DE\\b=DE";
+
+        await RunLanguageSyncAsync(
+            [(1, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!", [Movie(500, "Solo Film (2020)"), Movie(501, "Other Film (2021)")])],
+            incremental: false).ConfigureAwait(true);
+
+        _log.Count(l => l.StartsWith("[Warning]", StringComparison.Ordinal) && l.Contains("[unclosed=XX", StringComparison.Ordinal)).Should().Be(1);
+        _log.Count(l => l.StartsWith("[Warning]", StringComparison.Ordinal) && l.Contains("^(\\w+\\s?)*$", StringComparison.Ordinal)).Should().Be(1);
+        StrmFiles("Movies").Should().BeEquivalentTo(
+            Path.Combine("Solo Film (2020)", "Solo Film (2020) - EN.strm"),
+            Path.Combine("Other Film (2021)", "Other Film (2021) - EN.strm"));
+    }
+
     // A stream's superseded files are only removed because labels rename them. With grouping on and no
     // labels, nothing is renamed, and with cleanup off nothing may be deleted, including a copy the
     // user made by hand that points at the same stream (firestaerter3 on #201).
