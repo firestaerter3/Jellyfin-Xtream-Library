@@ -52,6 +52,7 @@ A Jellyfin plugin that syncs Xtream VOD, Series, and Live TV content to native J
 - **Multiple Folder Mode**: Organize content into subfolders by category (e.g., `Movies/Kids`, `Series/Documentaries`)
 - **Visual Folder UI**: Create folders and assign categories with checkboxes instead of typing IDs
 - **Multi-Folder Categories**: Same category can sync to multiple folders
+- **Movie Versions**: Copies of a film that share a provider TMDB id go into one folder and show as versions of one film, optionally labelled by language (`DE`, `EN`, `EN HEVC 4K`)
 
 ### Artwork & Media Info
 - **Provider Artwork Download**: Downloads posters/fanart from your provider for unmatched content
@@ -143,6 +144,53 @@ To organize content into subfolders:
 3. Check the categories to include in that folder
 4. Repeat for additional folders
 5. Categories not assigned to any folder sync to the root
+
+### Movie Versions and Language Labels (Optional)
+
+With **Group movies with the same TMDB id into one folder** on (Movies tab), copies of a film your
+provider reports under the same TMDB id are written to one folder, and Jellyfin shows them as versions
+of a single film.
+
+Providers often carry a film once per language, so the versions need a label that tells them apart.
+**Language labels for versions** takes one rule per line as `regex=LABEL`. Each rule is matched against
+the names of the categories a stream is in (the stream name is only read when no category is known).
+When a stream sits in categories of several languages, the first rule in the list that matches wins.
+**Language label when no rule matches** covers everything else. For a provider whose German categories start with `DE -`, the rule `^DE\b=DE`
+with the default `EN` gives files like:
+
+```
+Movies/Joker (2019) [tmdbid-475557]/
+├── Joker (2019) [tmdbid-475557] - DE.strm
+├── Joker (2019) [tmdbid-475557] - DE 4K.strm
+└── Joker (2019) [tmdbid-475557] - EN.strm
+```
+
+Jellyfin plays the version whose label sorts first alphabetically by default (`DE` before `DE 4K` before
+`EN`). Resolutions are written as words (2160p → 4K, 1080p → FHD, 720p → HD) because Jellyfin would
+otherwise prefer a version with a number like 1080p in its name. Each version keeps its own label; only a
+second stream with the same label gets its stream id appended (`… - EN - 123456.strm`). Leave both the
+rules and the default label empty to keep the previous file names; a default on its own still labels
+every stream.
+
+> **Turning labels on renames every movie file of the provider**, films with a single version included.
+> Turning them off, turning grouping off while they are set, or changing a rule renames the files it
+> affects. The change forces a full sync. Jellyfin sees a renamed file as a new item, so watched status,
+> favourites and resume points of those movies are lost.
+
+Each stream's previous file is removed as its renamed one is written, also with orphan cleanup off. Only
+files whose URL names that stream are removed, and only while labels apply or files from before may still
+carry them; with grouping on and no labels, a sync deletes nothing outside orphan cleanup.
+
+**Dispatcharr:** proxy URLs do not name the stream, so the previous files cannot be attributed. After
+turning labels on, every grouped film shows twice (the old unlabelled file and the new labelled one) until
+a full sync runs with orphan cleanup on and stays under its safety threshold.
+
+A stream that only gains or loses a category keeps its label on incremental syncs, because the change
+detection looks at the stream itself; the next full sync picks the new label up.
+
+Rules that are not valid regexes, or that have no pattern or no label, are skipped and logged as a warning
+on every sync. A rule that takes longer than a second on a category name counts as no match and is logged
+once per sync.
 
 ### Metadata Matching (Optional)
 

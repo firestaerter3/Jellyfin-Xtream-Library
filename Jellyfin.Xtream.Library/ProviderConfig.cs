@@ -232,6 +232,26 @@ public class ProviderConfig
     public bool GroupMoviesByTmdbId { get; set; }
 
     /// <summary>
+    /// Gets or sets the rules that give a movie version a language label, one rule per line as
+    /// "regex=LABEL". Rules are matched against the names of the categories the stream sits in (the
+    /// stream name is only read when no category is known); the first rule in list order that
+    /// matches wins.
+    /// <para>
+    /// The label is written in front of the quality label ("DE", "EN HEVC 4K"), so versions of one
+    /// film grouped into a folder can be told apart in Jellyfin's version picker. Empty rules give no
+    /// language labels, and so keep the earlier file names, only while
+    /// <see cref="VersionLanguageDefault"/> is empty too; otherwise every stream gets that default.
+    /// </para>
+    /// </summary>
+    public string VersionLanguageRules { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the language label used when no rule in <see cref="VersionLanguageRules"/>
+    /// matches. Empty leaves such a stream without a language label.
+    /// </summary>
+    public string VersionLanguageDefault { get; set; } = string.Empty;
+
+    /// <summary>
     /// Gets or sets a value indicating whether Dispatcharr mode is enabled.
     /// </summary>
     public bool EnableDispatcharrMode { get; set; }

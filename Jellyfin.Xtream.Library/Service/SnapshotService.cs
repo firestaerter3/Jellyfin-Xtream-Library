@@ -135,6 +135,20 @@ public class SnapshotService : IDisposable
             // unchanged while cleanup removes their old files, so the first run is a full one.
             "stereo-version-tags-v1");
 
+        // Language labels are part of every movie file name, so a changed rule renames files. Only
+        // added when set, so turning the plugin up to a version that has them forces no full sync.
+        // Labels only apply with grouping on, so toggling grouping with labels set renames files too.
+        if (provider.GroupMoviesByTmdbId
+            && (!string.IsNullOrWhiteSpace(provider.VersionLanguageRules) || !string.IsNullOrWhiteSpace(provider.VersionLanguageDefault)))
+        {
+            data = string.Join(
+                "|",
+                data,
+                "version-language-v1",
+                provider.VersionLanguageRules?.Replace("\r", string.Empty, StringComparison.Ordinal).Trim() ?? string.Empty,
+                provider.VersionLanguageDefault?.Trim() ?? string.Empty);
+        }
+
         return ComputeMd5(data);
     }
 

@@ -702,6 +702,10 @@ public partial class StrmSyncService
 
         var syncedFiles = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
 
+        // Movie files the movie sync removed because a label change renamed them. They are gone
+        // before orphan cleanup runs, so they must not count as orphans there.
+        var supersededFiles = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+
         // Which stream holds each movie folder's primary STRM and which sit next to it under
         // "<name> - <stream id>.strm". Filled by the movie sync, settled once the last category
         // batch is in, and consulted again after orphan cleanup for promotions.
@@ -745,6 +749,7 @@ public partial class StrmSyncService
                             hintSnapshot,
                             roleLedger,
                             unread,
+                            supersededFiles,
                             cancellationToken).ConfigureAwait(false);
                     },
                     cancellationToken));
@@ -793,6 +798,7 @@ public partial class StrmSyncService
                     hintSnapshot,
                     roleLedger,
                     unread,
+                    supersededFiles,
                     cancellationToken).ConfigureAwait(false);
             }
 
@@ -850,7 +856,11 @@ public partial class StrmSyncService
                     && siblingOwners.Any(sibling => sibling.OwnerOf(url) is int owner && owner >= 0);
             }
 
+            // Files the movie sync already removed are not orphans; counted as such, a label change
+            // made the whole library look gone. They stay in the count the threshold measures
+            // against, which is the library as it was before this run.
             var orphanedFiles = existingStrmFiles
+                .Except(supersededFiles.Keys, StringComparer.OrdinalIgnoreCase)
                 .Except(syncedFiles.Keys, StringComparer.OrdinalIgnoreCase)
                 .Where(f => !BelongsToSiblingProvider(f))
                 .ToList();
@@ -1086,7 +1096,7 @@ public partial class StrmSyncService
         if (UsesSnapshot(provider) && !cancellationToken.IsCancellationRequested)
         {
             CurrentProgress.Phase = "Saving snapshot";
-            await SaveSnapshotAsync(provider, providerKey, allCollectedMovies, allCollectedSeries, allSeriesInfoDict, movieIdentities, seriesIdentities, hintSnapshot ?? categorySnapshot, unread, result.FailedItems, cancellationToken).ConfigureAwait(false);
+            await SaveSnapshotAsync(provider, providerKey, allCollectedMovies, allCollectedSeries, allSeriesInfoDict, movieIdentities, seriesIdentities, hintSnapshot ?? categorySnapshot, unread, result.FailedItems, isIncrementalSync, cancellationToken).ConfigureAwait(false);
         }
 
         result.WasIncrementalSync = isIncrementalSync;
@@ -1268,6 +1278,7 @@ public partial class StrmSyncService
         ContentSnapshot? groupingHint,
         MovieRoleLedger roleLedger,
         UnreadCategories unread,
+        ConcurrentDictionary<string, byte> supersededFiles,
         CancellationToken cancellationToken)
     {
         var connectionInfo = new ConnectionInfo(provider.BaseUrl, provider.Username, provider.Password);
@@ -1279,10 +1290,44 @@ public partial class StrmSyncService
         var categories = await _client.GetVodCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
         var processedStreamIds = new ConcurrentDictionary<int, bool>();
 
+        // Language labels for movie versions come from the names of the categories a stream sits
+        // in. A provider can list a category id twice; the first name wins.
+        var categoryNameById = new Dictionary<int, string>();
+        foreach (var category in categories)
+        {
+            categoryNameById.TryAdd(category.CategoryId, category.CategoryName);
+        }
+
+        // A rule that labels nothing says why in the log, once per sync: skipped when parsed, or
+        // timed out on a category name. Only with grouping on, where the rules are used at all.
+        var languageRules = VersionLanguageLabeler.ParseRules(
+            provider.VersionLanguageRules,
+            provider.GroupMoviesByTmdbId
+                ? (line, reason) => _logger.LogWarning("Language label rule \"{Rule}\" skipped: {Reason}", line, reason)
+                : null);
+        var timedOutLanguageRules = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
+        void OnLanguageRuleTimeout(Regex pattern)
+        {
+            if (timedOutLanguageRules.TryAdd(pattern.ToString(), 0))
+            {
+                _logger.LogWarning(
+                    "Language label rule \"{Pattern}\" took longer than {Timeout} s on a category name and counted as no match; further timeouts of this rule are not logged this sync",
+                    pattern.ToString(),
+                    pattern.MatchTimeout.TotalSeconds);
+            }
+        }
+
         // GitHub #88. Folder each groupable TMDB id lives in. Seeded from the snapshot so the
         // choice made on an earlier run keeps holding, then extended with ids first seen this run.
         // Only new movies consult it: nothing already on disk is moved by a sync.
         bool groupByTmdb = provider.GroupMoviesByTmdbId;
+
+        // A stream's files under an earlier name are removed when its current one is written only
+        // while labels may have renamed them: labels apply now, or the files may still carry labels
+        // from before they were turned off or grouping was. Otherwise a sync deletes nothing outside
+        // orphan cleanup, which is what a user with cleanup off relies on (firestaerter3 on #201).
+        bool removeSupersededFiles = VersionLanguageLabeler.LabelsApply(groupByTmdb, languageRules, provider.VersionLanguageDefault)
+            || unread.PreviousSnapshot?.MovieLanguageLabelsWritten == true;
 
         // Grouping keys on the id the provider returns in get_vod_info, so that call has to happen
         // even when the name-based metadata lookup is off. Without this, turning grouping on with
@@ -1478,29 +1523,15 @@ public partial class StrmSyncService
         var categoryItemCounts = new ConcurrentDictionary<int, int>();
         var failedCategoryIds = new ConcurrentDictionary<int, byte>();
 
-        // Process categories in batches to reduce memory usage
-        for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
+        List<Category> BatchCategories(int batchIndex) => categories
+            .Skip(batchIndex * batchSize)
+            .Take(batchSize)
+            .ToList();
+
+        // Lists the streams of one batch of categories. Each category is asked once per run.
+        async Task<ConcurrentBag<(StreamInfo Stream, int CategoryId)>> FetchBatchAsync(List<Category> batchCategories)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var batchCategories = categories
-                .Skip(batchIndex * batchSize)
-                .Take(batchSize)
-                .ToList();
-
-            _logger.LogInformation(
-                "Processing movie batch {Batch}/{Total} ({Count} categories)...",
-                batchIndex + 1,
-                totalBatches,
-                batchCategories.Count);
-
-            CurrentProgress.MoviePhase = $"Collecting movies (batch {batchIndex + 1}/{totalBatches})";
-
-            // Collect movies from this batch of categories
-            var batchMovies = new List<(StreamInfo Stream, HashSet<int> CategoryIds)>();
-            var batchCategoryMap = new ConcurrentDictionary<int, HashSet<int>>();
             var streamBag = new ConcurrentBag<(StreamInfo Stream, int CategoryId)>();
-
             await Parallel.ForEachAsync(
                 batchCategories,
                 new ParallelOptions
@@ -1537,6 +1568,65 @@ public partial class StrmSyncService
                         failedCategoryIds.TryAdd(category.CategoryId, 0);
                     }
                 }).ConfigureAwait(false);
+            return streamBag;
+        }
+
+        // A stream is written in the first batch it turns up in, and that batch's categories decide
+        // its mapped folders. Its language label is read over all of its categories, though, as the
+        // first rule matching any of them wins. With several batches, a later batch may hold the
+        // category that rule matches, so all listings are read before the first batch is written;
+        // each batch then uses its listing from here instead of asking the provider again. The
+        // batch order stays the provider's: sorting categories by rule instead moved films between
+        // mapped folders (firestaerter3 on #201).
+        var prefetchedBatches = new Dictionary<int, ConcurrentBag<(StreamInfo Stream, int CategoryId)>>();
+        Dictionary<int, HashSet<int>>? allCategoryIdsByStream = null;
+        if (groupByTmdb && languageRules.Count > 0 && totalBatches > 1)
+        {
+            allCategoryIdsByStream = new Dictionary<int, HashSet<int>>();
+            for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                CurrentProgress.MoviePhase = $"Listing movie categories for language labels (batch {batchIndex + 1}/{totalBatches})";
+                var listing = await FetchBatchAsync(BatchCategories(batchIndex)).ConfigureAwait(false);
+                prefetchedBatches[batchIndex] = listing;
+                foreach (var (stream, categoryId) in listing)
+                {
+                    if (!allCategoryIdsByStream.TryGetValue(stream.StreamId, out var streamCategories))
+                    {
+                        streamCategories = new HashSet<int>();
+                        allCategoryIdsByStream[stream.StreamId] = streamCategories;
+                    }
+
+                    streamCategories.Add(categoryId);
+                }
+            }
+
+            _logger.LogInformation(
+                "Listed the movies of all {Count} categories before writing, so language labels see every category a stream sits in",
+                categories.Count);
+        }
+
+        // Process categories in batches to reduce memory usage
+        for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var batchCategories = BatchCategories(batchIndex);
+
+            _logger.LogInformation(
+                "Processing movie batch {Batch}/{Total} ({Count} categories)...",
+                batchIndex + 1,
+                totalBatches,
+                batchCategories.Count);
+
+            CurrentProgress.MoviePhase = $"Collecting movies (batch {batchIndex + 1}/{totalBatches})";
+
+            // Collect movies from this batch of categories
+            var batchMovies = new List<(StreamInfo Stream, HashSet<int> CategoryIds)>();
+            var batchCategoryMap = new ConcurrentDictionary<int, HashSet<int>>();
+            var streamBag = prefetchedBatches.Remove(batchIndex, out var prefetched)
+                ? prefetched
+                : await FetchBatchAsync(batchCategories).ConfigureAwait(false);
 
             // Process collected streams to build category membership
             foreach (var (stream, categoryId) in streamBag)
@@ -1782,7 +1872,18 @@ public partial class StrmSyncService
                     string movieName = SanitizeFileName(stream.Name, provider.CustomTitleRemoveTerms, isMovie: true);
                     int? year = ExtractYear(stream.Name);
                     string baseName = year.HasValue ? $"{movieName} ({year})" : movieName;
-                    string? versionLabel = ExtractVersionLabel(stream.Name);
+                    // Labels tell the versions of a grouped film apart; without grouping there are
+                    // none, and the earlier file names stay (CodeRabbit).
+                    string? languageLabel = groupByTmdb
+                        ? VersionLanguageLabeler.Resolve(
+                            (allCategoryIdsByStream?.GetValueOrDefault(stream.StreamId) ?? categoryIds)
+                                .Select(id => categoryNameById.GetValueOrDefault(id, string.Empty)),
+                            stream.Name,
+                            languageRules,
+                            provider.VersionLanguageDefault,
+                            OnLanguageRuleTimeout)
+                        : null;
+                    string? versionLabel = ExtractVersionLabel(stream.Name, languageLabel);
 
                     CurrentProgress.MoviePhase = $"Syncing Movies (batch {batchIndex + 1}/{totalBatches}): {baseName}";
 
@@ -2045,7 +2146,12 @@ public partial class StrmSyncService
                             // This line asked one host for the uuid and pointed the STRM file at
                             // another (GitHub #113).
                             string providerStreamUrl = $"{provider.EffectiveDispatcharrBaseUrl}/proxy/vod/movie/{uuid}?stream_id={providers[i].StreamId}";
-                            string strmFileName = BuildMovieStrmFileName(folderName, i == 0 ? null : $"Version {i + 1}", provider.RegexRemovalPatterns);
+                            // The language label leads, so all of one language's providers stay
+                            // together in the picker: "DE", "DE Version 2".
+                            string strmFileName = BuildMovieStrmFileName(
+                                folderName,
+                                VersionLanguageLabeler.Combine(languageLabel, i == 0 ? null : $"Version {i + 1}"),
+                                provider.RegexRemovalPatterns);
                             strmEntries.Add((providerStreamUrl, strmFileName));
                         }
                     }
@@ -2076,13 +2182,18 @@ public partial class StrmSyncService
                         // That covers a guest of a TMDB group and equally two streams that share a
                         // title without an id. The role is decided once per folder, not per file, so
                         // a stream with several Dispatcharr files keeps all of them on one side.
-                        bool asAlternative = joinedGroupFolder;
+                        // With a language label the guest's file name carries its own label ("… - EN"),
+                        // so it only collides with the owner when both have the same label. It then
+                        // claims its own name like any primary and falls back to "<name> - <stream id>"
+                        // only when that name is taken; the version picker shows "EN", not "EN - 123".
+                        bool guestHasOwnName = joinedGroupFolder && languageLabel != null;
+                        bool asAlternative = joinedGroupFolder && !guestHasOwnName;
 
                         // The stream whose primary this one is waiting behind: the owner of the TMDB
                         // group it joined, or the stream the file on disk names. Null when the holder
                         // is another stream of this run. Only the complete catalogue says whether it
                         // is still listed, so the roles are settled after the last batch.
-                        int? waitsOn = joinedGroupFolder ? groupOwnerStreamId : null;
+                        int? waitsOn = asAlternative ? groupOwnerStreamId : null;
                         string primaryPath = Path.Combine(movieFolder, strmEntries[0].StrmFileName);
                         bool primaryHeld = false;
                         if (!asAlternative)
@@ -2112,6 +2223,9 @@ public partial class StrmSyncService
                                 asAlternative = true;
                             }
                         }
+
+                        // The files of this stream in this folder that hold its URL after this run.
+                        var ownFilesNow = new List<string>();
 
                         foreach (var (streamUrl, strmFileName) in strmEntries)
                         {
@@ -2156,7 +2270,10 @@ public partial class StrmSyncService
                             }
 
                             strmPath = alternativePath;
-                            roleLedger.RegisterAlternative(plainPath, stream.StreamId, strmPath, waitsOn, joinedGroupFolder, processed: true);
+                            // A guest with its own label that only shares that label with another
+                            // stream is a same-name pair, not a guest waiting on the owner, so the
+                            // lowest stream id gets the plain name as for any such pair.
+                            roleLedger.RegisterAlternative(plainPath, stream.StreamId, strmPath, waitsOn, joinedGroupFolder && !guestHasOwnName, processed: true);
                         }
 
                         // Only now, once the final name is known. Protecting the pre-rename path
@@ -2179,11 +2296,13 @@ public partial class StrmSyncService
                         {
                             if (StrmContentMatches(strmPath, streamUrl))
                             {
+                                ownFilesNow.Add(strmPath);
                                 continue;
                             }
 
                             // Stream URL changed, update the STRM file
                             await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
+                            ownFilesNow.Add(strmPath);
                             anyUpdated = true;
                             allSkipped = false;
                             continue;
@@ -2198,6 +2317,7 @@ public partial class StrmSyncService
                         try
                         {
                             await File.WriteAllTextAsync(strmPath, streamUrl, ct).ConfigureAwait(false);
+                            ownFilesNow.Add(strmPath);
                             anyCreated = true;
                             roleLedger.NoteCreated(strmPath);
                         }
@@ -2218,6 +2338,16 @@ public partial class StrmSyncService
 
                         _logger.LogDebug("Created movie STRM: {StrmPath}", strmPath);
                         } // end strmEntries foreach
+
+                        // A label change renames the stream's file: labels turned on or off, or a
+                        // rule changed. The file it wrote before is removed here, once the current one
+                        // holds the URL: orphan cleanup may be off or held back by its threshold, and
+                        // an unchanged run protects any file whose URL is the stream's, so both would
+                        // stay (CodeRabbit). Only while labels may have renamed it (see removeSupersededFiles).
+                        if (removeSupersededFiles && ownFilesNow.Count > 0)
+                        {
+                            RemoveSupersededStrm(movieFolder, stream.StreamId, ownFilesNow, claimedPaths, owners, supersededFiles);
+                        }
 
                         // Write NFO with provider ID and/or media info (only for first target folder)
                         if (anyCreated && firstTargetFolder == targetFolder)
@@ -2438,6 +2568,7 @@ public partial class StrmSyncService
         // A movie kept for an unread category is still listed as far as this run knows, so it counts
         // as present and keeps its primary (GitHub #171).
         roleLedger.SetCatalogue(processedStreamIds.Keys.Concat(unread.KeptMovies.Keys), categoryFetchFailures == 0);
+        unread.MovieListingComplete = categoryFetchFailures == 0 && categories.Count > 0;
         if (categoryFetchFailures > 0)
         {
             _logger.LogWarning(
@@ -3888,6 +4019,29 @@ public partial class StrmSyncService
     }
 
     /// <summary>
+    /// Builds the version label with a language label in front of the quality label.
+    /// <para>
+    /// Without a language label the result is exactly the one-argument overload's. With one, digit
+    /// resolution tokens are written as words ("2160p" becomes "4K"): Jellyfin makes a version whose
+    /// name carries such a token the default, which would let "EN 1080p" win over a plain "DE".
+    /// </para>
+    /// </summary>
+    /// <param name="name">The provider's stream name.</param>
+    /// <param name="languageLabel">The language label from <see cref="VersionLanguageLabeler"/>, or null.</param>
+    /// <returns>The version label, or null when the stream has none.</returns>
+    internal static string? ExtractVersionLabel(string? name, string? languageLabel)
+    {
+        string? quality = ExtractVersionLabel(name);
+        if (languageLabel == null)
+        {
+            return quality;
+        }
+
+        string? combined = VersionLanguageLabeler.Combine(languageLabel, quality);
+        return combined == null ? null : VersionLanguageLabeler.NormalizeResolutionTokens(combined);
+    }
+
+    /// <summary>
     /// Takes 3D and side-by-side tags out of a title (GitHub #186). "3D" counts only at the start or
     /// in brackets, because at the end it is usually part of the title ("Jackass 3D", "Step Up 3D");
     /// SBS and HSBS count anywhere, since no title uses them as a word. A title that is nothing but
@@ -4447,10 +4601,13 @@ public partial class StrmSyncService
     /// <summary>
     /// Whether this provider's sync loads and saves a snapshot: for incremental sync, for TMDB
     /// grouping, or for keeping the items of a category the provider did not list (GitHub #171),
-    /// which only matters while orphan cleanup is on.
+    /// which only matters while orphan cleanup is on. Also while language label settings are
+    /// filled in: the snapshot records whether files may still carry labels, which the run after
+    /// grouping is turned off needs to replace them (firestaerter3 on #201).
     /// </summary>
     private static bool UsesSnapshot(ProviderConfig provider)
-        => provider.EnableIncrementalSync || provider.GroupMoviesByTmdbId || provider.CleanupOrphans;
+        => provider.EnableIncrementalSync || provider.GroupMoviesByTmdbId || provider.CleanupOrphans
+            || !string.IsNullOrWhiteSpace(provider.VersionLanguageRules) || !string.IsNullOrWhiteSpace(provider.VersionLanguageDefault);
 
     /// <summary>
     /// Decides which categories are unread this run, and for those still within the limit keeps
@@ -4624,6 +4781,54 @@ public partial class StrmSyncService
             if (suffix is not null)
             {
                 ledger.RegisterAlternative(Path.Combine(folder, fileName[..^suffix.Length] + ".strm"), streamId, strmFile, groupOwner, groupOwner.HasValue, processed: false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes the other files a stream holds in a folder once its current ones are written: the
+    /// plain name after labels were turned on, the old label after a rule change, the labelled
+    /// name after labels were turned off, and the " - id" alternatives of each. A file is only
+    /// removed when its URL names this stream of this provider, so a Dispatcharr file or another
+    /// stream's file is left to orphan cleanup.
+    /// </summary>
+    /// <param name="movieFolder">The movie's folder.</param>
+    /// <param name="streamId">The stream whose superseded files go.</param>
+    /// <param name="keep">The stream's files written or confirmed this run.</param>
+    /// <param name="claimedPaths">Paths any stream claimed this run; those are never removed.</param>
+    /// <param name="owners">Tells whose stream a file's URL names.</param>
+    /// <param name="removed">Receives each path that was removed.</param>
+    private void RemoveSupersededStrm(
+        string movieFolder,
+        int streamId,
+        List<string> keep,
+        ConcurrentDictionary<string, byte> claimedPaths,
+        StrmOwnerResolver owners,
+        ConcurrentDictionary<string, byte> removed)
+    {
+        if (!Directory.Exists(movieFolder))
+        {
+            return;
+        }
+
+        foreach (var path in Directory.GetFiles(movieFolder, "*.strm"))
+        {
+            if (keep.Contains(path, StringComparer.OrdinalIgnoreCase)
+                || claimedPaths.ContainsKey(path)
+                || owners.OwnerOf(ReadStrmUrl(path)) != streamId)
+            {
+                continue;
+            }
+
+            try
+            {
+                File.Delete(path);
+                removed.TryAdd(path, 0);
+                _logger.LogInformation("Removed {Path}: stream {StreamId} now writes a file with a different name", path, streamId);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogWarning(ex, "Could not remove {Path}, the earlier file of stream {StreamId}; orphan cleanup handles it", path, streamId);
             }
         }
     }
@@ -5747,6 +5952,22 @@ public partial class StrmSyncService
     internal static bool SeriesIdsFromXtreamApiAfterRun(bool syncedSeries, ContentSnapshot? previous)
         => syncedSeries || (previous?.SeriesIdsFromXtreamApi ?? false);
 
+    /// <summary>
+    /// Decides <see cref="ContentSnapshot.MovieLanguageLabelsWritten"/> for the snapshot a run saves.
+    /// True while labels apply. After they stop applying it stays true until a run has rewritten
+    /// every movie file: a full run that synced movies, listed every selected category without a
+    /// fetch failure, and failed no movie. A run that skipped some files (movie sync off,
+    /// incremental, a category that failed to fetch, a failed movie, an unread category) leaves
+    /// them with their labels, and the run that later rewrites them still has to remove the
+    /// labelled names.
+    /// </summary>
+    /// <param name="labelsApplyNow">Whether labels apply in this run's settings.</param>
+    /// <param name="previous">The snapshot the previous run saved, if any.</param>
+    /// <param name="everyMovieRewritten">Whether this run wrote every movie file.</param>
+    /// <returns>The value to store.</returns>
+    internal static bool MovieLanguageLabelsWrittenAfterRun(bool labelsApplyNow, ContentSnapshot? previous, bool everyMovieRewritten)
+        => labelsApplyNow || (previous?.MovieLanguageLabelsWritten == true && !everyMovieRewritten);
+
     private async Task SaveSnapshotAsync(
         ProviderConfig provider,
         string providerKey,
@@ -5758,6 +5979,7 @@ public partial class StrmSyncService
         ContentSnapshot? carryForwardFrom,
         UnreadCategories unread,
         IReadOnlyList<FailedItem> failedItems,
+        bool wasIncremental,
         CancellationToken cancellationToken)
     {
         try
@@ -5774,6 +5996,13 @@ public partial class StrmSyncService
                 ConfigFingerprint = SnapshotService.CalculateConfigFingerprint(provider, Plugin.Instance.Configuration.EnableMetadataLookup),
                 LoginFingerprint = SnapshotService.CalculateLoginFingerprint(provider),
                 SeriesIdsFromXtreamApi = SeriesIdsFromXtreamApiAfterRun(provider.SyncSeries, carryForwardFrom),
+                MovieLanguageLabelsWritten = MovieLanguageLabelsWrittenAfterRun(
+                    VersionLanguageLabeler.LabelsApply(
+                        provider.GroupMoviesByTmdbId,
+                        VersionLanguageLabeler.ParseRules(provider.VersionLanguageRules),
+                        provider.VersionLanguageDefault),
+                    carryForwardFrom,
+                    everyMovieRewritten: provider.SyncMovies && !wasIncremental && unread.MovieListingComplete && failedMovieIds.Count == 0 && unread.KeptMovies.IsEmpty),
             };
 
             // Entries carried over below were not written this run. After a login change their
@@ -5783,13 +6012,22 @@ public partial class StrmSyncService
             // them as changed and rewrite their files (CodeRabbit on #190).
             bool carriedFilesHoldOldLogin = LoginChanged(provider, carryForwardFrom);
 
+            // The same for the config fingerprint: it covers the folder, category and language
+            // settings, each of which names files. Changed while a sync was off, the carried files
+            // keep names the new settings would not produce, and this snapshot already records the
+            // new fingerprint, so the run that turns the sync back on would stay incremental and
+            // skip them as unchanged (CodeRabbit).
+            bool carriedFilesHoldOldConfig = carryForwardFrom?.ConfigFingerprint is { Length: > 0 } recordedConfig
+                && !string.Equals(recordedConfig, snapshot.ConfigFingerprint, StringComparison.Ordinal);
+            bool carriedFilesNeedRewrite = carriedFilesHoldOldLogin || carriedFilesHoldOldConfig;
+
             // Movies were not synced this run, so allMovies is empty and rebuilding from it would
             // drop every identity the previous run recorded, taking the grouping map with it.
             if (!provider.SyncMovies && carryForwardFrom != null)
             {
                 foreach (var carried in carryForwardFrom.Movies)
                 {
-                    snapshot.Movies[carried.Key] = MarkRewriteIf(carriedFilesHoldOldLogin, carried.Value);
+                    snapshot.Movies[carried.Key] = MarkRewriteIf(carriedFilesNeedRewrite, carried.Value);
                 }
 
                 snapshot.UnreadMovieCategoriesSince = new Dictionary<int, DateTime>(carryForwardFrom.UnreadMovieCategoriesSince);
@@ -5799,7 +6037,7 @@ public partial class StrmSyncService
             {
                 foreach (var carried in carryForwardFrom.Series)
                 {
-                    snapshot.Series[carried.Key] = MarkRewriteIf(carriedFilesHoldOldLogin, carried.Value);
+                    snapshot.Series[carried.Key] = MarkRewriteIf(carriedFilesNeedRewrite, carried.Value);
                 }
 
                 snapshot.UnreadSeriesCategoriesSince = new Dictionary<int, DateTime>(carryForwardFrom.UnreadSeriesCategoriesSince);
@@ -5868,12 +6106,12 @@ public partial class StrmSyncService
             // the next run that the category had items (GitHub #171).
             foreach (var (streamId, kept) in unread.KeptMovies)
             {
-                snapshot.Movies.TryAdd(streamId, MarkRewriteIf(carriedFilesHoldOldLogin, kept));
+                snapshot.Movies.TryAdd(streamId, MarkRewriteIf(carriedFilesNeedRewrite, kept));
             }
 
             foreach (var (seriesId, kept) in unread.KeptSeries)
             {
-                snapshot.Series.TryAdd(seriesId, MarkRewriteIf(carriedFilesHoldOldLogin, kept));
+                snapshot.Series.TryAdd(seriesId, MarkRewriteIf(carriedFilesNeedRewrite, kept));
             }
 
             if (provider.SyncMovies)

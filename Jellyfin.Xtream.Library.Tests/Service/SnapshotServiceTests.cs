@@ -240,6 +240,39 @@ public class SnapshotServiceTests : IDisposable
         Assert.NotEqual(fp1, fp2);
     }
 
+    [Theory]
+    [InlineData("^DE\\b=DE", "", "^DE\\b=DE\n^FIFA=EN", "")]
+    [InlineData("^DE\\b=DE", "EN", "^DE\\b=DE", "")]
+    [InlineData("", "", "^DE\\b=DE", "")]
+    public void ConfigFingerprint_VersionLanguageChange_DifferentHash(string rules1, string default1, string rules2, string default2)
+    {
+        // A changed rule renames files, which an incremental run would leave half done.
+        var p1 = new ProviderConfig { GroupMoviesByTmdbId = true, VersionLanguageRules = rules1, VersionLanguageDefault = default1 };
+        var p2 = new ProviderConfig { GroupMoviesByTmdbId = true, VersionLanguageRules = rules2, VersionLanguageDefault = default2 };
+
+        Assert.NotEqual(SnapshotService.CalculateConfigFingerprint(p1), SnapshotService.CalculateConfigFingerprint(p2));
+    }
+
+    [Fact]
+    public void ConfigFingerprint_GroupingToggleWithLanguageLabels_DifferentHash()
+    {
+        // Labels only apply with grouping on, so toggling it with rules set renames files.
+        var p1 = new ProviderConfig { GroupMoviesByTmdbId = false, VersionLanguageRules = "^DE\\b=DE" };
+        var p2 = new ProviderConfig { GroupMoviesByTmdbId = true, VersionLanguageRules = "^DE\\b=DE" };
+
+        Assert.NotEqual(SnapshotService.CalculateConfigFingerprint(p1), SnapshotService.CalculateConfigFingerprint(p2));
+    }
+
+    [Fact]
+    public void ConfigFingerprint_LanguageRulesWithGroupingOff_SameHash()
+    {
+        // Without grouping the rules rename nothing, so changing them needs no full sync.
+        var p1 = new ProviderConfig { GroupMoviesByTmdbId = false };
+        var p2 = new ProviderConfig { GroupMoviesByTmdbId = false, VersionLanguageRules = "^DE\\b=DE", VersionLanguageDefault = "EN" };
+
+        Assert.Equal(SnapshotService.CalculateConfigFingerprint(p1), SnapshotService.CalculateConfigFingerprint(p2));
+    }
+
     [Fact]
     public void ConfigFingerprint_DifferentCategories_DifferentHash()
     {

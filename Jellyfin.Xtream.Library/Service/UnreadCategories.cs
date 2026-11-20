@@ -37,6 +37,13 @@ internal sealed class UnreadCategories
     public ContentSnapshot? PreviousSnapshot { get; init; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether the movie run listed every selected category: at
+    /// least one was selected and none failed to fetch. Only such a full run has written every
+    /// movie file, which is what lets the snapshot forget that files may still carry language labels.
+    /// </summary>
+    public bool MovieListingComplete { get; set; }
+
+    /// <summary>
     /// Gets every series category that was unread this run. See <see cref="MovieCategoryIds"/>.
     /// </summary>
     public ConcurrentDictionary<int, byte> SeriesCategoryIds { get; } = new();

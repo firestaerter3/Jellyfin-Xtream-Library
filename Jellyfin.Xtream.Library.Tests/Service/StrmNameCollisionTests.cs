@@ -9,6 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -223,6 +224,548 @@ public class StrmNameCollisionTests : IDisposable
 
             Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().Equal("Alpha Movie (2024) [tmdbid-42].strm");
             (await StreamIdOfAsync(primary).ConfigureAwait(true)).Should().Be(200);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LanguageLabelledGroup_EachVersionKeepsItsOwnLabelWithoutStreamId(bool englishOwnsTheFolder)
+    {
+        // Version picker shows the part after the shared prefix: "DE", "EN", "DE 4K" — not "EN - 200".
+        int de = englishOwnsTheFolder ? 300 : 100, en = englishOwnsTheFolder ? 100 : 300, de4k = 500;
+        foreach (var id in new[] { de, en, de4k })
+        {
+            VodInfoWithTmdbId(id, "42");
+        }
+
+        var categories = new (int Id, string Name, StreamInfo[] Streams)[]
+        {
+            (1, "DE - Kino", [Movie(de, "DE - The Film (2024)"), Movie(de4k, "DE - The Film (2024) 4K")]),
+            (2, "NF - Action", [Movie(en, "EN - The Film (2024)")]),
+        };
+
+        for (int run = 0; run < 2; run++)
+        {
+            await RunLanguageSyncAsync(categories, incremental: run == 1).ConfigureAwait(true);
+
+            var folder = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]");
+            Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Order(StringComparer.Ordinal).Should().Equal(
+                "The Film (2024) [tmdbid-42] - DE 4K.strm",
+                "The Film (2024) [tmdbid-42] - DE.strm",
+                "The Film (2024) [tmdbid-42] - EN.strm");
+            (await StreamIdOfAsync(Path.Combine(folder, "The Film (2024) [tmdbid-42] - DE.strm")).ConfigureAwait(true)).Should().Be(de);
+            (await StreamIdOfAsync(Path.Combine(folder, "The Film (2024) [tmdbid-42] - EN.strm")).ConfigureAwait(true)).Should().Be(en);
+        }
+    }
+
+    [Fact]
+    public async Task LanguageLabelledGroup_TwoStreamsWithTheSameLabel_TheSecondKeepsItsStreamId()
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(200, "42");
+        VodInfoWithTmdbId(300, "42");
+        await RunLanguageSyncAsync(
+            [
+                (1, "DE - Kino", [Movie(100, "DE - The Film (2024)")]),
+                (2, "NF - Action", [Movie(200, "NF - The Film (2024)")]),
+                (3, "AMZ - Action", [Movie(300, "AMZ - The Film (2024)")]),
+            ],
+            incremental: false).ConfigureAwait(true);
+
+        var folder = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]");
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Order(StringComparer.Ordinal).Should().Equal(
+            "The Film (2024) [tmdbid-42] - DE.strm",
+            "The Film (2024) [tmdbid-42] - EN - 300.strm",
+            "The Film (2024) [tmdbid-42] - EN.strm");
+    }
+
+    [Fact]
+    public async Task LanguageLabel_UsesAPreferredCategoryFromALaterBatch()
+    {
+        // Batches of one category: the stream first turns up under NF, its DE category comes later.
+        _configure = p => p.CategoryBatchSize = 1;
+        await RunLanguageSyncAsync(
+            [
+                (1, "NF - Top", [Movie(700, "Other Film (2023)")]),
+                (2, "DE - Netflix", [Movie(700, "Other Film (2023)")]),
+            ],
+            incremental: false).ConfigureAwait(true);
+
+        Directory.GetFiles(Path.Combine(_libraryPath, "Movies"), "*.strm", SearchOption.AllDirectories)
+            .Select(Path.GetFileName).Should().Equal("Other Film (2023) - DE.strm");
+
+        // The listings read ahead for the labels are the ones the batches use: no category is asked twice.
+        _client.Verify(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()), Times.Once);
+        _client.Verify(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 2, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // Turning labels on in an existing library renames every movie file. The plain file a stream wrote
+    // before must go when its labelled one is written: orphan cleanup may be off, held back by the
+    // safety threshold, or protect the file because its URL is still the stream's (CodeRabbit).
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TurningLabelsOn_ReplacesEachStreamsPlainFileWithoutCleanup(bool incremental)
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(300, "42");
+        (int Id, string Name, StreamInfo[] Streams)[] categories =
+        [
+            (1, "DE - Kino", [Movie(100, "DE - The Film (2024)"), Movie(500, "DE - Solo Film (2020)")]),
+            (2, "NF - Action", [Movie(300, "EN - The Film (2024)")]),
+        ];
+
+        _configure = p =>
+        {
+            p.VersionLanguageRules = string.Empty;
+            p.VersionLanguageDefault = string.Empty;
+        };
+        await RunLanguageSyncAsync(categories, incremental).ConfigureAwait(true);
+        var folder = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]");
+        var solo = Path.Combine(_libraryPath, "Movies", "Solo Film (2020)");
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Order(StringComparer.Ordinal).Should().Equal(
+            "The Film (2024) [tmdbid-42] - 300.strm",
+            "The Film (2024) [tmdbid-42].strm");
+
+        _configure = null;
+        await RunLanguageSyncAsync(categories, incremental, cleanupOrphans: false).ConfigureAwait(true);
+
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Order(StringComparer.Ordinal).Should().Equal(
+            "The Film (2024) [tmdbid-42] - DE.strm",
+            "The Film (2024) [tmdbid-42] - EN.strm");
+        (await StreamIdOfAsync(Path.Combine(folder, "The Film (2024) [tmdbid-42] - DE.strm")).ConfigureAwait(true)).Should().Be(100);
+        (await StreamIdOfAsync(Path.Combine(folder, "The Film (2024) [tmdbid-42] - EN.strm")).ConfigureAwait(true)).Should().Be(300);
+        Directory.GetFiles(solo, "*.strm").Select(Path.GetFileName).Should().Equal("Solo Film (2020) - DE.strm");
+    }
+
+    // A changed rule renames the stream's file. The file with the old label must go when the new one is
+    // written: with the threshold holding cleanup back it would stay, and every later unchanged run
+    // would protect it because its URL is still the stream's (CodeRabbit).
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ChangingALabel_ReplacesTheStreamsOldLabelledFileWithoutCleanup(bool incremental)
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(300, "42");
+        (int Id, string Name, StreamInfo[] Streams)[] categories =
+        [
+            (1, "DE - Kino", [Movie(100, "DE - The Film (2024)"), Movie(500, "DE - Solo Film (2020)")]),
+            (2, "NF - Action", [Movie(300, "EN - The Film (2024)")]),
+        ];
+        await RunLanguageSyncAsync(categories, incremental).ConfigureAwait(true);
+        var folder = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]");
+        var solo = Path.Combine(_libraryPath, "Movies", "Solo Film (2020)");
+        Directory.GetFiles(solo, "*.strm").Select(Path.GetFileName).Should().Equal("Solo Film (2020) - DE.strm");
+
+        _configure = p => p.VersionLanguageRules = "^DE\\b=GER";
+        await RunLanguageSyncAsync(categories, incremental, cleanupOrphans: false).ConfigureAwait(true);
+
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Order(StringComparer.Ordinal).Should().Equal(
+            "The Film (2024) [tmdbid-42] - EN.strm",
+            "The Film (2024) [tmdbid-42] - GER.strm");
+        (await StreamIdOfAsync(Path.Combine(folder, "The Film (2024) [tmdbid-42] - GER.strm")).ConfigureAwait(true)).Should().Be(100);
+        Directory.GetFiles(solo, "*.strm").Select(Path.GetFileName).Should().Equal("Solo Film (2020) - GER.strm");
+    }
+
+    // Turning labels off is a rename as well: the labelled file goes when the plain one is written.
+    [Fact]
+    public async Task TurningLabelsOff_ReplacesTheStreamsLabelledFileWithoutCleanup()
+    {
+        VodInfoWithTmdbId(100, "42");
+        (int Id, string Name, StreamInfo[] Streams)[] categories = [(1, "DE - Kino", [Movie(100, "DE - The Film (2024)")])];
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+        var folder = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]");
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().Equal("The Film (2024) [tmdbid-42] - DE.strm");
+
+        _configure = p =>
+        {
+            p.VersionLanguageRules = string.Empty;
+            p.VersionLanguageDefault = string.Empty;
+        };
+        await RunLanguageSyncAsync(categories, incremental: true, cleanupOrphans: false).ConfigureAwait(true);
+
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().Equal("The Film (2024) [tmdbid-42].strm");
+    }
+
+    // A run with movie sync off still saves the current config fingerprint. When the label settings
+    // changed in that run, the run that turns movies back on sees no fingerprint change and skips
+    // every unchanged movie, so the files keep their old names (CodeRabbit).
+    [Fact]
+    public async Task LabelSettingsChangedWhileMovieSyncWasOff_StillRenameTheFiles_WhenSyncIsBackOn()
+    {
+        VodInfoWithTmdbId(100, "42");
+        (int Id, string Name, StreamInfo[] Streams)[] categories = [(1, "DE - Kino", [Movie(100, "DE - The Film (2024)")])];
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+        var folder = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]");
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().Equal("The Film (2024) [tmdbid-42] - DE.strm");
+
+        _configure = p => p.VersionLanguageRules = "^DE\\b=GER";
+        await RunLanguageSyncAsync(categories, incremental: true, cleanupOrphans: false, syncMovies: false).ConfigureAwait(true);
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().ContainSingle().Which.Should().Be("The Film (2024) [tmdbid-42] - DE.strm", "nothing is written while movie sync is off");
+
+        await RunLanguageSyncAsync(categories, incremental: true, cleanupOrphans: false).ConfigureAwait(true);
+
+        Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().Equal("The Film (2024) [tmdbid-42] - GER.strm");
+    }
+
+    // Only the stream's own plain file goes. One whose URL names another stream answers to cleanup.
+    [Fact]
+    public async Task TurningLabelsOn_LeavesAPlainFileOfAnotherStreamAlone()
+    {
+        var foreign = WriteMainStrm(Path.Combine(_libraryPath, "Movies", "Solo Film (2020)", "Solo Film (2020).strm"), 999);
+
+        await RunLanguageSyncAsync([(1, "DE - Kino", [Movie(500, "DE - Solo Film (2020)")])], incremental: false).ConfigureAwait(true);
+
+        File.Exists(foreign).Should().BeTrue();
+        (await StreamIdOfAsync(foreign).ConfigureAwait(true)).Should().Be(999);
+        File.Exists(Path.Combine(_libraryPath, "Movies", "Solo Film (2020)", "Solo Film (2020) - DE.strm")).Should().BeTrue();
+    }
+
+    // Labels tell the versions of a grouped film apart. With grouping off there are no versions to
+    // tell apart, so rules left in the settings must not rename the files (CodeRabbit).
+    [Fact]
+    public async Task WithGroupingOff_LanguageRulesLeaveTheFileNamesAlone()
+    {
+        _configure = p =>
+        {
+            p.VersionLanguageRules = "^DE\\b=DE";
+            p.VersionLanguageDefault = "EN";
+        };
+
+        await RunMovieSyncAsync([Movie(700, "DE - Other Film (2023)")], useShippedDefaults: false, groupByTmdbId: false).ConfigureAwait(true);
+
+        Directory.GetFiles(Path.Combine(_libraryPath, "Movies"), "*.strm", SearchOption.AllDirectories)
+            .Select(Path.GetFileName).Should().Equal("Other Film (2023).strm");
+    }
+
+    // With grouping off the rules label nothing, so they must not reorder the category batches either:
+    // with one category per batch, the batch a stream first turns up in decides its mapped folder (CodeRabbit).
+    [Fact]
+    public async Task WithGroupingOff_LanguageRulesLeaveTheCategoryOrderAlone()
+    {
+        var film = Movie(700, "Other Film (2023)");
+        _client.Setup(c => c.GetVodCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new Category { CategoryId = 1, CategoryName = "Kids" }, new Category { CategoryId = 2, CategoryName = "Other" }]);
+        _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new StreamInfo { StreamId = 700, Name = film.Name, ContainerExtension = "mp4", CategoryId = 1 }]);
+        _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 2, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new StreamInfo { StreamId = 700, Name = film.Name, ContainerExtension = "mp4", CategoryId = 2 }]);
+        _configure = p =>
+        {
+            p.CategoryBatchSize = 1;
+            p.MovieFolderMode = "Multiple";
+            p.MovieFolderMappings = KidsAndOther;
+            p.VersionLanguageRules = "^Other=EN";
+        };
+
+        await RunSyncAsync(syncMovies: true, syncSeries: false, useShippedDefaults: false, providerCount: 1, proactiveMediaInfo: false, groupByTmdbId: false, cleanupOrphans: false).ConfigureAwait(true);
+
+        StrmFiles("Movies").Should().ContainSingle().Which.Should().StartWith("Kids", "the provider's category order decides, not a rule that labels nothing");
+    }
+
+    // The batch a stream first turns up in decides its mapped folder. Adding a rule must only change the
+    // label, read over all of the stream's categories, and leave the folder alone: before, the rules
+    // reordered the batches, moving a film from Kids/ to German/ and cleaning up the old copy with its
+    // watched state (firestaerter3 on #201).
+    [Fact]
+    public async Task AddingALanguageRule_LabelsTheFilmButLeavesItInItsMappedFolder()
+    {
+        var categories = new (int Id, string Name, StreamInfo[] Streams)[]
+        {
+            (1, "Kids", [Movie(700, "Other Film (2023)")]),
+            (2, "DE - Kino", [Movie(700, "Other Film (2023)")]),
+        };
+        _configure = p =>
+        {
+            p.CategoryBatchSize = 1;
+            p.MovieFolderMode = "Multiple";
+            p.MovieFolderMappings = "Kids=1\nGerman=2";
+            p.VersionLanguageRules = string.Empty;
+            p.VersionLanguageDefault = string.Empty;
+        };
+        await RunLanguageSyncAsync(categories, incremental: true, cleanupOrphans: true).ConfigureAwait(true);
+        StrmFiles("Movies").Should().Equal(Path.Combine("Kids", "Other Film (2023)", "Other Film (2023).strm"));
+
+        _configure = p =>
+        {
+            p.CategoryBatchSize = 1;
+            p.MovieFolderMode = "Multiple";
+            p.MovieFolderMappings = "Kids=1\nGerman=2";
+        };
+        await RunLanguageSyncAsync(categories, incremental: true, cleanupOrphans: true).ConfigureAwait(true);
+
+        StrmFiles("Movies").Should().Equal(Path.Combine("Kids", "Other Film (2023)", "Other Film (2023) - DE.strm"));
+    }
+
+    // Turning labels on renames every film, and the old files are removed as the new ones are written.
+    // Those removed files must not count as orphans: they made the whole library look gone, so the
+    // safety threshold held back cleanup for that run and films that really left stayed. They still
+    // count towards the library the threshold measures against: 11 of 100 films leaving is 11%, not
+    // 11 of the 11 files left over (CodeRabbit on #201).
+    [Fact]
+    public async Task TurningLabelsOn_RemovedPlainFiles_DoNotCountAsOrphans()
+    {
+        var films = Enumerable.Range(0, 89).Select(i => Movie(600 + i, $"Film {i} (2020)")).ToArray();
+        var gone = Enumerable.Range(0, 11).Select(i => Movie(800 + i, $"Gone Film {i} (2020)")).ToArray();
+        _configure = p =>
+        {
+            p.VersionLanguageRules = string.Empty;
+            p.VersionLanguageDefault = string.Empty;
+        };
+        await RunLanguageSyncAsync([(1, "Films", [.. films, .. gone])], incremental: false, cleanupOrphans: true).ConfigureAwait(true);
+        StrmFiles("Movies").Should().HaveCount(100);
+
+        _configure = null;
+        var result = await RunLanguageSyncAsync([(1, "Films", films)], incremental: false, cleanupOrphans: true).ConfigureAwait(true);
+
+        result.MovieOrphansSkipped.Should().Be(0);
+        StrmFiles("Movies").Should().BeEquivalentTo(
+            Enumerable.Range(0, 89).Select(i => Path.Combine($"Film {i} (2020)", $"Film {i} (2020) - EN.strm")));
+    }
+
+    // Rules that label nothing must say why in the log, each once per sync (firestaerter3 on #201).
+    [Fact]
+    public async Task SkippedAndTimedOutLanguageRules_AreEachLoggedOncePerSync()
+    {
+        _configure = p => p.VersionLanguageRules = "[unclosed=XX\n^(\\w+\\s?)*$=SLOW\n^DE\\b=DE";
+
+        await RunLanguageSyncAsync(
+            [(1, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!", [Movie(500, "Solo Film (2020)"), Movie(501, "Other Film (2021)")])],
+            incremental: false).ConfigureAwait(true);
+
+        _log.Count(l => l.StartsWith("[Warning]", StringComparison.Ordinal) && l.Contains("[unclosed=XX", StringComparison.Ordinal)).Should().Be(1);
+        _log.Count(l => l.StartsWith("[Warning]", StringComparison.Ordinal) && l.Contains("^(\\w+\\s?)*$", StringComparison.Ordinal)).Should().Be(1);
+        StrmFiles("Movies").Should().BeEquivalentTo(
+            Path.Combine("Solo Film (2020)", "Solo Film (2020) - EN.strm"),
+            Path.Combine("Other Film (2021)", "Other Film (2021) - EN.strm"));
+
+        // A misconfiguration that is still there is reported again on the next sync.
+        await RunLanguageSyncAsync(
+            [(1, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!", [Movie(500, "Solo Film (2020)"), Movie(501, "Other Film (2021)")])],
+            incremental: false).ConfigureAwait(true);
+        _log.Count(l => l.StartsWith("[Warning]", StringComparison.Ordinal) && l.Contains("[unclosed=XX", StringComparison.Ordinal)).Should().Be(2);
+        _log.Count(l => l.StartsWith("[Warning]", StringComparison.Ordinal) && l.Contains("^(\\w+\\s?)*$", StringComparison.Ordinal)).Should().Be(2);
+    }
+
+    // With grouping off the rules are not used, so a broken rule left in the settings is not worth a warning.
+    [Fact]
+    public async Task SkippedLanguageRules_AreNotLogged_WithGroupingOff()
+    {
+        _configure = p => p.VersionLanguageRules = "[unclosed=XX";
+
+        await RunLanguageSyncAsync([(1, "DE - Kino", [Movie(500, "Solo Film (2020)")])], incremental: false, groupByTmdbId: false).ConfigureAwait(true);
+
+        _log.Should().NotContain(l => l.Contains("[unclosed=XX", StringComparison.Ordinal));
+    }
+
+    // A stream's superseded files are only removed because labels rename them. With grouping on and no
+    // labels, nothing is renamed, and with cleanup off nothing may be deleted, including a copy the
+    // user made by hand that points at the same stream (firestaerter3 on #201).
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WithGroupingOnAndNoLabels_AnotherFileOfTheSameStreamStays(bool incremental)
+    {
+        var handMade = WriteMainStrm(Path.Combine(_libraryPath, "Movies", "Solo Film (2020)", "Solo Film (2020) - mine.strm"), 500);
+        _configure = p =>
+        {
+            p.VersionLanguageRules = string.Empty;
+            p.VersionLanguageDefault = string.Empty;
+        };
+
+        for (int run = 0; run < 2; run++)
+        {
+            await RunLanguageSyncAsync([(1, "DE - Kino", [Movie(500, "DE - Solo Film (2020)")])], incremental).ConfigureAwait(true);
+        }
+
+        File.Exists(handMade).Should().BeTrue("orphan cleanup is off and no label renamed the stream's file");
+        File.Exists(Path.Combine(_libraryPath, "Movies", "Solo Film (2020)", "Solo Film (2020).strm")).Should().BeTrue();
+    }
+
+    // Labels only apply with grouping on. Turning grouping off with labels still set writes the plain
+    // name again, so the labelled file is superseded and must go, or Jellyfin shows the stream twice
+    // (firestaerter3 on #201).
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TurningGroupingOff_WithLabelsSet_ReplacesTheLabelledFileWithoutCleanup(bool incremental)
+    {
+        (int Id, string Name, StreamInfo[] Streams)[] categories = [(1, "DE - Kino", [Movie(500, "DE - Solo Film (2020)")])];
+        await RunLanguageSyncAsync(categories, incremental).ConfigureAwait(true);
+        StrmFiles("Movies").Should().Equal(Path.Combine("Solo Film (2020)", "Solo Film (2020) - DE.strm"));
+
+        await RunLanguageSyncAsync(categories, incremental, groupByTmdbId: false).ConfigureAwait(true);
+
+        StrmFiles("Movies").Should().Equal(Path.Combine("Solo Film (2020)", "Solo Film (2020).strm"));
+    }
+
+    // Labels turned off while movie sync was off: the run that turns it back on renames the files, and
+    // the labelled ones must still go although labels no longer apply in that run.
+    [Fact]
+    public async Task LabelsTurnedOffWhileMovieSyncWasOff_TheLabelledFileGoes_WhenSyncIsBackOn()
+    {
+        (int Id, string Name, StreamInfo[] Streams)[] categories = [(1, "DE - Kino", [Movie(500, "DE - Solo Film (2020)")])];
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+
+        _configure = p =>
+        {
+            p.VersionLanguageRules = string.Empty;
+            p.VersionLanguageDefault = string.Empty;
+        };
+        await RunLanguageSyncAsync(categories, incremental: true, syncMovies: false).ConfigureAwait(true);
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+
+        StrmFiles("Movies").Should().Equal(Path.Combine("Solo Film (2020)", "Solo Film (2020).strm"));
+    }
+
+    [Theory]
+    [InlineData(true, false, false, true)]
+    [InlineData(true, null, true, true)]
+    [InlineData(false, null, false, false)]
+    [InlineData(false, false, false, false)]
+    [InlineData(false, true, false, true)]
+    [InlineData(false, true, true, false)]
+    public void MovieLanguageLabelsWrittenAfterRun_StaysSetUntilEveryFileIsRewritten(bool applyNow, bool? before, bool everyMovieRewritten, bool expected)
+    {
+        var previous = before is bool b ? new Jellyfin.Xtream.Library.Service.Models.ContentSnapshot { MovieLanguageLabelsWritten = b } : null;
+        StrmSyncService.MovieLanguageLabelsWrittenAfterRun(applyNow, previous, everyMovieRewritten).Should().Be(expected);
+    }
+
+    // A full run that lists nothing (Multiple folder mode with no category assigned) rewrites nothing,
+    // so the files keep their labels and the snapshot must keep saying so (Fable review).
+    [Fact]
+    public async Task LabelsTurnedOffWhileNothingWasSelected_TheLabelledFileGoes_WhenCategoriesAreBackOn()
+    {
+        (int Id, string Name, StreamInfo[] Streams)[] categories = [(1, "DE - Kino", [Movie(500, "DE - Solo Film (2020)")])];
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+        StrmFiles("Movies").Should().Equal(Path.Combine("Solo Film (2020)", "Solo Film (2020) - DE.strm"));
+
+        _configure = p =>
+        {
+            p.VersionLanguageRules = string.Empty;
+            p.VersionLanguageDefault = string.Empty;
+            p.MovieFolderMode = "Multiple";
+            p.MovieFolderMappings = string.Empty;
+        };
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+        StrmFiles("Movies").Should().ContainSingle().Which.Should().Be(Path.Combine("Solo Film (2020)", "Solo Film (2020) - DE.strm"), "nothing is selected, so nothing is written or removed");
+
+        _configure = p =>
+        {
+            p.VersionLanguageRules = string.Empty;
+            p.VersionLanguageDefault = string.Empty;
+        };
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+
+        StrmFiles("Movies").Should().Equal(Path.Combine("Solo Film (2020)", "Solo Film (2020).strm"));
+    }
+
+    // The listings read ahead for the labels go through the same failure handling as a batch: a
+    // category that fails to list keeps its films from the previous run and the others are written.
+    [Fact]
+    public async Task LanguageLabelReadAhead_AFailingCategory_KeepsItsFilmsAndWritesTheOthers()
+    {
+        _configure = p => p.CategoryBatchSize = 1;
+        (int Id, string Name, StreamInfo[] Streams)[] categories =
+        [
+            (1, "DE - Kino", [Movie(500, "DE - Solo Film (2020)")]),
+            (2, "NF - Action", [Movie(501, "Other Film (2021)")]),
+        ];
+        await RunLanguageSyncAsync(categories, incremental: true, cleanupOrphans: true).ConfigureAwait(true);
+
+        categories[1] = (2, "NF - Action", null!);
+        var result = await RunLanguageSyncAsync(categories, incremental: true, cleanupOrphans: true).ConfigureAwait(true);
+
+        result.MoviesKeptForUnreadCategories.Should().Be(1);
+        StrmFiles("Movies").Should().BeEquivalentTo(
+            Path.Combine("Solo Film (2020)", "Solo Film (2020) - DE.strm"),
+            Path.Combine("Other Film (2021)", "Other Film (2021) - EN.strm"));
+        _client.Verify(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), 2, It.IsAny<CancellationToken>()), Times.Exactly(2), "once per run, failing or not");
+    }
+
+    // Once a full run has rewritten every file without labels, the removal stops: a later copy the
+    // user makes by hand is theirs again, as before labels were ever turned on.
+    [Fact]
+    public async Task AfterLabelsAreOffAndEveryFileIsRewritten_AnotherFileOfTheSameStreamStays()
+    {
+        (int Id, string Name, StreamInfo[] Streams)[] categories = [(1, "DE - Kino", [Movie(500, "DE - Solo Film (2020)")])];
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+        _configure = p =>
+        {
+            p.VersionLanguageRules = string.Empty;
+            p.VersionLanguageDefault = string.Empty;
+        };
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+        StrmFiles("Movies").Should().Equal(Path.Combine("Solo Film (2020)", "Solo Film (2020).strm"));
+
+        // Without incremental sync and smart skip the stream is written again, which is where the
+        // removal would run.
+        var handMade = WriteMainStrm(Path.Combine(_libraryPath, "Movies", "Solo Film (2020)", "Solo Film (2020) - mine.strm"), 500);
+        await RunLanguageSyncAsync(categories, incremental: false).ConfigureAwait(true);
+
+        File.Exists(handMade).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task LanguageLabelledGroup_WhenTheOwnerLeaves_TheGuestKeepsItsFileOnEveryLaterRun()
+    {
+        VodInfoWithTmdbId(100, "42");
+        VodInfoWithTmdbId(300, "42");
+        await RunLanguageSyncAsync(
+            [(1, "DE - Kino", [Movie(100, "DE - The Film (2024)")]), (2, "NF - Action", [Movie(300, "EN - The Film (2024)")])],
+            incremental: false).ConfigureAwait(true);
+
+        var folder = Path.Combine(_libraryPath, "Movies", "The Film (2024) [tmdbid-42]");
+        var english = Path.Combine(folder, "The Film (2024) [tmdbid-42] - EN.strm");
+        for (int run = 0; run < 3; run++)
+        {
+            await RunLanguageSyncAsync(
+                [(1, "DE - Kino", [Movie(900, "DE - Another Film (2020)")]), (2, "NF - Action", [Movie(300, "EN - The Film (2024)")])],
+                incremental: run == 1,
+                cleanupOrphans: true).ConfigureAwait(true);
+
+            Directory.GetFiles(folder, "*.strm").Select(Path.GetFileName).Should().Equal("The Film (2024) [tmdbid-42] - EN.strm");
+            (await StreamIdOfAsync(english).ConfigureAwait(true)).Should().Be(300);
+        }
+    }
+
+    private static StreamInfo Movie(int id, string name) => new() { StreamId = id, Name = name, ContainerExtension = "mp4" };
+
+    private async Task<SyncResult> RunLanguageSyncAsync((int Id, string Name, StreamInfo[] Streams)[] categories, bool incremental, bool cleanupOrphans = false, bool syncMovies = true, bool groupByTmdbId = true)
+    {
+        _client.Setup(c => c.GetVodCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(categories.Select(c => new Category { CategoryId = c.Id, CategoryName = c.Name }).ToList());
+        foreach (var category in categories)
+        {
+            // A null stream list stands for a category whose listing fails this run.
+            if (category.Streams is null)
+            {
+                _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), category.Id, It.IsAny<CancellationToken>()))
+                    .ThrowsAsync(new HttpRequestException("listing failed"));
+                continue;
+            }
+
+            var streams = category.Streams.Select(s => new StreamInfo { StreamId = s.StreamId, Name = s.Name, ContainerExtension = s.ContainerExtension, CategoryId = category.Id }).ToList();
+            _client.Setup(c => c.GetVodStreamsByCategoryAsync(It.IsAny<ConnectionInfo>(), category.Id, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(streams);
+        }
+
+        var outer = _configure;
+        _configure = p =>
+        {
+            p.VersionLanguageRules = "^DE\\b=DE";
+            p.VersionLanguageDefault = "EN";
+            outer?.Invoke(p);
+        };
+        try
+        {
+            return await RunSyncAsync(syncMovies, syncSeries: false, useShippedDefaults: incremental, providerCount: 1, proactiveMediaInfo: false, groupByTmdbId, cleanupOrphans).ConfigureAwait(true);
+        }
+        finally
+        {
+            _configure = outer;
         }
     }
 
