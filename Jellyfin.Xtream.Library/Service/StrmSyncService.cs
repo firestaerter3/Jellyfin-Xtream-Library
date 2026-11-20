@@ -702,6 +702,10 @@ public partial class StrmSyncService
 
         var syncedFiles = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
 
+        // Movie files the movie sync removed because a label change renamed them. They are gone
+        // before orphan cleanup runs, so they must not count as orphans there.
+        var supersededFiles = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+
         // Which stream holds each movie folder's primary STRM and which sit next to it under
         // "<name> - <stream id>.strm". Filled by the movie sync, settled once the last category
         // batch is in, and consulted again after orphan cleanup for promotions.
@@ -745,6 +749,7 @@ public partial class StrmSyncService
                             hintSnapshot,
                             roleLedger,
                             unread,
+                            supersededFiles,
                             cancellationToken).ConfigureAwait(false);
                     },
                     cancellationToken));
@@ -793,6 +798,7 @@ public partial class StrmSyncService
                     hintSnapshot,
                     roleLedger,
                     unread,
+                    supersededFiles,
                     cancellationToken).ConfigureAwait(false);
             }
 
@@ -849,6 +855,10 @@ public partial class StrmSyncService
                 return movieOwners.OwnerOf(url) == StrmOwnerResolver.OtherProvider
                     && siblingOwners.Any(sibling => sibling.OwnerOf(url) is int owner && owner >= 0);
             }
+
+            // Files the movie sync already removed are neither orphans nor part of the library the
+            // threshold measures against; counted, a label change made the whole library look gone.
+            existingStrmFiles.ExceptWith(supersededFiles.Keys);
 
             var orphanedFiles = existingStrmFiles
                 .Except(syncedFiles.Keys, StringComparer.OrdinalIgnoreCase)
@@ -1268,6 +1278,7 @@ public partial class StrmSyncService
         ContentSnapshot? groupingHint,
         MovieRoleLedger roleLedger,
         UnreadCategories unread,
+        ConcurrentDictionary<string, byte> supersededFiles,
         CancellationToken cancellationToken)
     {
         var connectionInfo = new ConnectionInfo(provider.BaseUrl, provider.Username, provider.Password);
@@ -2335,7 +2346,7 @@ public partial class StrmSyncService
                         // stay (CodeRabbit). Only while labels may have renamed it (see removeSupersededFiles).
                         if (removeSupersededFiles && ownFilesNow.Count > 0)
                         {
-                            RemoveSupersededStrm(movieFolder, stream.StreamId, ownFilesNow, claimedPaths, owners);
+                            RemoveSupersededStrm(movieFolder, stream.StreamId, ownFilesNow, claimedPaths, owners, supersededFiles);
                         }
 
                         // Write NFO with provider ID and/or media info (only for first target folder)
@@ -4786,12 +4797,14 @@ public partial class StrmSyncService
     /// <param name="keep">The stream's files written or confirmed this run.</param>
     /// <param name="claimedPaths">Paths any stream claimed this run; those are never removed.</param>
     /// <param name="owners">Tells whose stream a file's URL names.</param>
+    /// <param name="removed">Receives each path that was removed.</param>
     private void RemoveSupersededStrm(
         string movieFolder,
         int streamId,
         List<string> keep,
         ConcurrentDictionary<string, byte> claimedPaths,
-        StrmOwnerResolver owners)
+        StrmOwnerResolver owners,
+        ConcurrentDictionary<string, byte> removed)
     {
         if (!Directory.Exists(movieFolder))
         {
@@ -4810,6 +4823,7 @@ public partial class StrmSyncService
             try
             {
                 File.Delete(path);
+                removed.TryAdd(path, 0);
                 _logger.LogInformation("Removed {Path}: stream {StreamId} now writes a file with a different name", path, streamId);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

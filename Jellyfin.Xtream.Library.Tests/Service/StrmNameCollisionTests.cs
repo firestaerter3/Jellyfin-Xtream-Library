@@ -499,6 +499,29 @@ public class StrmNameCollisionTests : IDisposable
         StrmFiles("Movies").Should().Equal(Path.Combine("Kids", "Other Film (2023)", "Other Film (2023) - DE.strm"));
     }
 
+    // Turning labels on renames every film, and the old files are removed as the new ones are written.
+    // Those removed files must not count as orphans: they made the whole library look gone, so the
+    // safety threshold held back cleanup for that run and a film that really left stayed (CodeRabbit on #201).
+    [Fact]
+    public async Task TurningLabelsOn_RemovedPlainFiles_DoNotCountAsOrphans()
+    {
+        var films = Enumerable.Range(0, 12).Select(i => Movie(600 + i, $"Film {i} (2020)")).ToArray();
+        _configure = p =>
+        {
+            p.VersionLanguageRules = string.Empty;
+            p.VersionLanguageDefault = string.Empty;
+        };
+        await RunLanguageSyncAsync([(1, "Films", [.. films, Movie(699, "Gone Film (2020)")])], incremental: false, cleanupOrphans: true).ConfigureAwait(true);
+        StrmFiles("Movies").Should().HaveCount(13);
+
+        _configure = null;
+        var result = await RunLanguageSyncAsync([(1, "Films", films)], incremental: false, cleanupOrphans: true).ConfigureAwait(true);
+
+        result.MovieOrphansSkipped.Should().Be(0);
+        StrmFiles("Movies").Should().BeEquivalentTo(
+            Enumerable.Range(0, 12).Select(i => Path.Combine($"Film {i} (2020)", $"Film {i} (2020) - EN.strm")));
+    }
+
     // Rules that label nothing must say why in the log, each once per sync (firestaerter3 on #201).
     [Fact]
     public async Task SkippedAndTimedOutLanguageRules_AreEachLoggedOncePerSync()
