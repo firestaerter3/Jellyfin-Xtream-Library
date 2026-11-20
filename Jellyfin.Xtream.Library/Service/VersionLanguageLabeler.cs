@@ -139,6 +139,17 @@ internal static partial class VersionLanguageLabeler
     }
 
     /// <summary>
+    /// Whether streams get language labels at all: only with TMDB grouping on, which is what makes
+    /// several versions of a film share a folder, and only when a rule or the default can give one.
+    /// </summary>
+    /// <param name="groupByTmdb">Whether the provider groups movies by TMDB id.</param>
+    /// <param name="rules">Rules from <see cref="ParseRules"/>.</param>
+    /// <param name="defaultLabel">The default label as entered.</param>
+    /// <returns>True when labels apply.</returns>
+    internal static bool LabelsApply(bool groupByTmdb, IReadOnlyList<(Regex Pattern, string Label)> rules, string? defaultLabel)
+        => groupByTmdb && (rules.Count > 0 || SanitizeLabel(defaultLabel) != null);
+
+    /// <summary>
     /// Makes a label safe for a file name: trimmed, with path separators and the characters Windows
     /// forbids in file names replaced by an underscore ("DE/EN" becomes "DE_EN").
     /// </summary>

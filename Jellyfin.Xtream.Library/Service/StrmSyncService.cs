@@ -1086,7 +1086,7 @@ public partial class StrmSyncService
         if (UsesSnapshot(provider) && !cancellationToken.IsCancellationRequested)
         {
             CurrentProgress.Phase = "Saving snapshot";
-            await SaveSnapshotAsync(provider, providerKey, allCollectedMovies, allCollectedSeries, allSeriesInfoDict, movieIdentities, seriesIdentities, hintSnapshot ?? categorySnapshot, unread, result.FailedItems, cancellationToken).ConfigureAwait(false);
+            await SaveSnapshotAsync(provider, providerKey, allCollectedMovies, allCollectedSeries, allSeriesInfoDict, movieIdentities, seriesIdentities, hintSnapshot ?? categorySnapshot, unread, result.FailedItems, isIncrementalSync, cancellationToken).ConfigureAwait(false);
         }
 
         result.WasIncrementalSync = isIncrementalSync;
@@ -1293,6 +1293,13 @@ public partial class StrmSyncService
         // choice made on an earlier run keeps holding, then extended with ids first seen this run.
         // Only new movies consult it: nothing already on disk is moved by a sync.
         bool groupByTmdb = provider.GroupMoviesByTmdbId;
+
+        // A stream's files under an earlier name are removed when its current one is written only
+        // while labels may have renamed them: labels apply now, or the files may still carry labels
+        // from before they were turned off or grouping was. Otherwise a sync deletes nothing outside
+        // orphan cleanup, which is what a user with cleanup off relies on (firestaerter3 on #201).
+        bool removeSupersededFiles = VersionLanguageLabeler.LabelsApply(groupByTmdb, languageRules, provider.VersionLanguageDefault)
+            || unread.PreviousSnapshot?.MovieLanguageLabelsWritten == true;
 
         // Grouping keys on the id the provider returns in get_vod_info, so that call has to happen
         // even when the name-based metadata lookup is off. Without this, turning grouping on with
@@ -2271,8 +2278,8 @@ public partial class StrmSyncService
                         // rule changed. The file it wrote before is removed here, once the current one
                         // holds the URL: orphan cleanup may be off or held back by its threshold, and
                         // an unchanged run protects any file whose URL is the stream's, so both would
-                        // stay (CodeRabbit). Labels only exist with grouping on.
-                        if (groupByTmdb && ownFilesNow.Count > 0)
+                        // stay (CodeRabbit). Only while labels may have renamed it (see removeSupersededFiles).
+                        if (removeSupersededFiles && ownFilesNow.Count > 0)
                         {
                             RemoveSupersededStrm(movieFolder, stream.StreamId, ownFilesNow, claimedPaths, owners);
                         }
@@ -4528,10 +4535,13 @@ public partial class StrmSyncService
     /// <summary>
     /// Whether this provider's sync loads and saves a snapshot: for incremental sync, for TMDB
     /// grouping, or for keeping the items of a category the provider did not list (GitHub #171),
-    /// which only matters while orphan cleanup is on.
+    /// which only matters while orphan cleanup is on. Also while language label settings are
+    /// filled in: the snapshot records whether files may still carry labels, which the run after
+    /// grouping is turned off needs to replace them (firestaerter3 on #201).
     /// </summary>
     private static bool UsesSnapshot(ProviderConfig provider)
-        => provider.EnableIncrementalSync || provider.GroupMoviesByTmdbId || provider.CleanupOrphans;
+        => provider.EnableIncrementalSync || provider.GroupMoviesByTmdbId || provider.CleanupOrphans
+            || !string.IsNullOrWhiteSpace(provider.VersionLanguageRules) || !string.IsNullOrWhiteSpace(provider.VersionLanguageDefault);
 
     /// <summary>
     /// Decides which categories are unread this run, and for those still within the limit keeps
@@ -5873,6 +5883,21 @@ public partial class StrmSyncService
     internal static bool SeriesIdsFromXtreamApiAfterRun(bool syncedSeries, ContentSnapshot? previous)
         => syncedSeries || (previous?.SeriesIdsFromXtreamApi ?? false);
 
+    /// <summary>
+    /// Decides <see cref="ContentSnapshot.MovieLanguageLabelsWritten"/> for the snapshot a run saves.
+    /// True while labels apply. After they stop applying it stays true until a run has rewritten
+    /// every movie file: a full run that synced movies, read every category and failed no movie.
+    /// A run that skipped some files (movie sync off, incremental, a failed movie, an unread
+    /// category) leaves them with their labels, and the run that later rewrites them still has to
+    /// remove the labelled names.
+    /// </summary>
+    /// <param name="labelsApplyNow">Whether labels apply in this run's settings.</param>
+    /// <param name="previous">The snapshot the previous run saved, if any.</param>
+    /// <param name="everyMovieRewritten">Whether this run wrote every movie file.</param>
+    /// <returns>The value to store.</returns>
+    internal static bool MovieLanguageLabelsWrittenAfterRun(bool labelsApplyNow, ContentSnapshot? previous, bool everyMovieRewritten)
+        => labelsApplyNow || (previous?.MovieLanguageLabelsWritten == true && !everyMovieRewritten);
+
     private async Task SaveSnapshotAsync(
         ProviderConfig provider,
         string providerKey,
@@ -5884,6 +5909,7 @@ public partial class StrmSyncService
         ContentSnapshot? carryForwardFrom,
         UnreadCategories unread,
         IReadOnlyList<FailedItem> failedItems,
+        bool wasIncremental,
         CancellationToken cancellationToken)
     {
         try
@@ -5900,6 +5926,13 @@ public partial class StrmSyncService
                 ConfigFingerprint = SnapshotService.CalculateConfigFingerprint(provider, Plugin.Instance.Configuration.EnableMetadataLookup),
                 LoginFingerprint = SnapshotService.CalculateLoginFingerprint(provider),
                 SeriesIdsFromXtreamApi = SeriesIdsFromXtreamApiAfterRun(provider.SyncSeries, carryForwardFrom),
+                MovieLanguageLabelsWritten = MovieLanguageLabelsWrittenAfterRun(
+                    VersionLanguageLabeler.LabelsApply(
+                        provider.GroupMoviesByTmdbId,
+                        VersionLanguageLabeler.ParseRules(provider.VersionLanguageRules),
+                        provider.VersionLanguageDefault),
+                    carryForwardFrom,
+                    everyMovieRewritten: provider.SyncMovies && !wasIncremental && failedMovieIds.Count == 0 && unread.KeptMovies.IsEmpty),
             };
 
             // Entries carried over below were not written this run. After a login change their

@@ -49,6 +49,15 @@ public class ContentSnapshot
     public string? LoginFingerprint { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether movie files on disk may still carry language labels.
+    /// Set while labels apply (TMDB grouping on and a rule or default set), and kept after they stop
+    /// applying until a complete full movie run has written every file without them. While it is
+    /// set, a stream's files under an earlier name are removed when the current one is written;
+    /// otherwise a sync only deletes through orphan cleanup. False in older snapshots.
+    /// </summary>
+    public bool MovieLanguageLabelsWritten { get; set; }
+
+    /// <summary>
     /// Gets or sets all movies indexed by StreamId.
     /// </summary>
     public Dictionary<int, MovieSnapshot> Movies { get; set; } = new();

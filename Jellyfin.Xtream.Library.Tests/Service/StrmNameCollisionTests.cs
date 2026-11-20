@@ -460,6 +460,102 @@ public class StrmNameCollisionTests : IDisposable
         StrmFiles("Movies").Should().ContainSingle().Which.Should().StartWith("Kids", "the provider's category order decides, not a rule that labels nothing");
     }
 
+    // A stream's superseded files are only removed because labels rename them. With grouping on and no
+    // labels, nothing is renamed, and with cleanup off nothing may be deleted, including a copy the
+    // user made by hand that points at the same stream (firestaerter3 on #201).
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WithGroupingOnAndNoLabels_AnotherFileOfTheSameStreamStays(bool incremental)
+    {
+        var handMade = WriteMainStrm(Path.Combine(_libraryPath, "Movies", "Solo Film (2020)", "Solo Film (2020) - mine.strm"), 500);
+        _configure = p =>
+        {
+            p.VersionLanguageRules = string.Empty;
+            p.VersionLanguageDefault = string.Empty;
+        };
+
+        for (int run = 0; run < 2; run++)
+        {
+            await RunLanguageSyncAsync([(1, "DE - Kino", [Movie(500, "DE - Solo Film (2020)")])], incremental).ConfigureAwait(true);
+        }
+
+        File.Exists(handMade).Should().BeTrue("orphan cleanup is off and no label renamed the stream's file");
+        File.Exists(Path.Combine(_libraryPath, "Movies", "Solo Film (2020)", "Solo Film (2020).strm")).Should().BeTrue();
+    }
+
+    // Labels only apply with grouping on. Turning grouping off with labels still set writes the plain
+    // name again, so the labelled file is superseded and must go, or Jellyfin shows the stream twice
+    // (firestaerter3 on #201).
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TurningGroupingOff_WithLabelsSet_ReplacesTheLabelledFileWithoutCleanup(bool incremental)
+    {
+        (int Id, string Name, StreamInfo[] Streams)[] categories = [(1, "DE - Kino", [Movie(500, "DE - Solo Film (2020)")])];
+        await RunLanguageSyncAsync(categories, incremental).ConfigureAwait(true);
+        StrmFiles("Movies").Should().Equal(Path.Combine("Solo Film (2020)", "Solo Film (2020) - DE.strm"));
+
+        await RunLanguageSyncAsync(categories, incremental, groupByTmdbId: false).ConfigureAwait(true);
+
+        StrmFiles("Movies").Should().Equal(Path.Combine("Solo Film (2020)", "Solo Film (2020).strm"));
+    }
+
+    // Labels turned off while movie sync was off: the run that turns it back on renames the files, and
+    // the labelled ones must still go although labels no longer apply in that run.
+    [Fact]
+    public async Task LabelsTurnedOffWhileMovieSyncWasOff_TheLabelledFileGoes_WhenSyncIsBackOn()
+    {
+        (int Id, string Name, StreamInfo[] Streams)[] categories = [(1, "DE - Kino", [Movie(500, "DE - Solo Film (2020)")])];
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+
+        _configure = p =>
+        {
+            p.VersionLanguageRules = string.Empty;
+            p.VersionLanguageDefault = string.Empty;
+        };
+        await RunLanguageSyncAsync(categories, incremental: true, syncMovies: false).ConfigureAwait(true);
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+
+        StrmFiles("Movies").Should().Equal(Path.Combine("Solo Film (2020)", "Solo Film (2020).strm"));
+    }
+
+    [Theory]
+    [InlineData(true, false, false, true)]
+    [InlineData(true, null, true, true)]
+    [InlineData(false, null, false, false)]
+    [InlineData(false, false, false, false)]
+    [InlineData(false, true, false, true)]
+    [InlineData(false, true, true, false)]
+    public void MovieLanguageLabelsWrittenAfterRun_StaysSetUntilEveryFileIsRewritten(bool applyNow, bool? before, bool everyMovieRewritten, bool expected)
+    {
+        var previous = before is bool b ? new Jellyfin.Xtream.Library.Service.Models.ContentSnapshot { MovieLanguageLabelsWritten = b } : null;
+        StrmSyncService.MovieLanguageLabelsWrittenAfterRun(applyNow, previous, everyMovieRewritten).Should().Be(expected);
+    }
+
+    // Once a full run has rewritten every file without labels, the removal stops: a later copy the
+    // user makes by hand is theirs again, as before labels were ever turned on.
+    [Fact]
+    public async Task AfterLabelsAreOffAndEveryFileIsRewritten_AnotherFileOfTheSameStreamStays()
+    {
+        (int Id, string Name, StreamInfo[] Streams)[] categories = [(1, "DE - Kino", [Movie(500, "DE - Solo Film (2020)")])];
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+        _configure = p =>
+        {
+            p.VersionLanguageRules = string.Empty;
+            p.VersionLanguageDefault = string.Empty;
+        };
+        await RunLanguageSyncAsync(categories, incremental: true).ConfigureAwait(true);
+        StrmFiles("Movies").Should().Equal(Path.Combine("Solo Film (2020)", "Solo Film (2020).strm"));
+
+        // Without incremental sync and smart skip the stream is written again, which is where the
+        // removal would run.
+        var handMade = WriteMainStrm(Path.Combine(_libraryPath, "Movies", "Solo Film (2020)", "Solo Film (2020) - mine.strm"), 500);
+        await RunLanguageSyncAsync(categories, incremental: false).ConfigureAwait(true);
+
+        File.Exists(handMade).Should().BeTrue();
+    }
+
     [Fact]
     public async Task LanguageLabelledGroup_WhenTheOwnerLeaves_TheGuestKeepsItsFileOnEveryLaterRun()
     {
@@ -485,7 +581,7 @@ public class StrmNameCollisionTests : IDisposable
 
     private static StreamInfo Movie(int id, string name) => new() { StreamId = id, Name = name, ContainerExtension = "mp4" };
 
-    private async Task RunLanguageSyncAsync((int Id, string Name, StreamInfo[] Streams)[] categories, bool incremental, bool cleanupOrphans = false, bool syncMovies = true)
+    private async Task RunLanguageSyncAsync((int Id, string Name, StreamInfo[] Streams)[] categories, bool incremental, bool cleanupOrphans = false, bool syncMovies = true, bool groupByTmdbId = true)
     {
         _client.Setup(c => c.GetVodCategoryAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(categories.Select(c => new Category { CategoryId = c.Id, CategoryName = c.Name }).ToList());
@@ -505,7 +601,7 @@ public class StrmNameCollisionTests : IDisposable
         };
         try
         {
-            await RunSyncAsync(syncMovies, syncSeries: false, useShippedDefaults: incremental, providerCount: 1, proactiveMediaInfo: false, groupByTmdbId: true, cleanupOrphans).ConfigureAwait(true);
+            await RunSyncAsync(syncMovies, syncSeries: false, useShippedDefaults: incremental, providerCount: 1, proactiveMediaInfo: false, groupByTmdbId, cleanupOrphans).ConfigureAwait(true);
         }
         finally
         {
