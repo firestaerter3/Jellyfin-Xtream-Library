@@ -2797,9 +2797,17 @@ public partial class StrmSyncService
 
         // Pre-scan existing series folders for fast skip-before-API-call detection
         // seriesFolderLookup provides O(1) lookup by (parentDir, baseName) instead of O(N) linear scan
+        //
+        // Built whatever the settings say. It was skipped with smart skip and orphan cleanup both
+        // off, as if only they read it, but the write path resolves every series folder through it
+        // too: without it a series whose id changed (the provider starts sending a TMDB id, a name
+        // lookup succeeds where it failed before) was written to a second folder named after the
+        // new id, next to the one it already had. And the incremental filter judges a series
+        // complete by the count recorded here, so with the index empty it re-read every series on
+        // every run.
         var existingSeriesFolderCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var seriesFolderLookup = new Dictionary<string, (string Path, int Count)>(StringComparer.OrdinalIgnoreCase);
-        if ((provider.SmartSkipExisting || provider.CleanupOrphans) && Directory.Exists(seriesPath))
+        if (Directory.Exists(seriesPath))
         {
             CurrentProgress.Phase = "Scanning existing series";
             _logger.LogInformation("Pre-scanning existing series folders...");
