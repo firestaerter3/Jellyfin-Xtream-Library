@@ -902,6 +902,43 @@ public class StrmNameCollisionTests : IDisposable
         (await StreamIdOfAsync(Path.Combine(folder, "The Film (2024) [tmdbid-42] - EN.strm")).ConfigureAwait(true)).Should().Be(200);
     }
 
+    // Turning the setting on removes every dropped stream's file as the run goes. Those removed files
+    // must not count as orphans, as with a label change: ten of them next to two films that really
+    // left made 12 of 32 files look gone, and the safety threshold held back the two (as 04d2097 on #201).
+    [Fact]
+    public async Task OneStreamPerLabel_RemovedDroppedFiles_DoNotCountAsOrphans()
+    {
+        var groups = Enumerable.Range(0, 10).ToArray();
+        foreach (var i in groups)
+        {
+            foreach (var id in new[] { 100 + i, 200 + i, 300 + i })
+            {
+                VodInfoWithTmdbId(id, $"{42 + i}");
+            }
+        }
+
+        var gone = Enumerable.Range(0, 2).Select(i => Movie(800 + i, $"DE - Gone Film {i} (2020)")).ToArray();
+        (int Id, string Name, StreamInfo[] Streams)[] Categories(StreamInfo[] extra) =>
+        [
+            (1, "DE - Kino", [.. groups.Select(i => Movie(100 + i, $"DE - The Film {i} (2024)")), .. extra]),
+            (2, "NF - Action", [.. groups.Select(i => Movie(200 + i, $"NF - The Film {i} (2024)"))]),
+            (3, "AMZ - Action", [.. groups.Select(i => Movie(300 + i, $"AMZ - The Film {i} (2024)"))]),
+        ];
+        await RunLanguageSyncAsync(Categories(gone), incremental: false, cleanupOrphans: true).ConfigureAwait(true);
+        StrmFiles("Movies").Should().HaveCount(32);
+
+        _configure = p => p.OneStreamPerVersionLabel = true;
+        var result = await RunLanguageSyncAsync(Categories([]), incremental: false, cleanupOrphans: true).ConfigureAwait(true);
+
+        result.MovieOrphansSkipped.Should().Be(0);
+        result.OrphanCleanupBlockedByThreshold.Should().BeFalse();
+        StrmFiles("Movies").Should().BeEquivalentTo(groups.SelectMany(i => new[]
+        {
+            Path.Combine($"The Film {i} (2024) [tmdbid-{42 + i}]", $"The Film {i} (2024) [tmdbid-{42 + i}] - DE.strm"),
+            Path.Combine($"The Film {i} (2024) [tmdbid-{42 + i}]", $"The Film {i} (2024) [tmdbid-{42 + i}] - EN.strm"),
+        }));
+    }
+
     // The stream holding the label leaves. The next lowest takes the same file over, also in an
     // incremental run in which it is unchanged and never reaches the write path, and with cleanup on
     // the file it was handed is not deleted as the departed stream's orphan.
