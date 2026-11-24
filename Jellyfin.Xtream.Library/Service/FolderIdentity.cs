@@ -44,6 +44,14 @@ public static partial class FolderIdentity
     public static bool TryParseTvdbId(string? folderName, out int tvdbId)
         => TryParse(TvdbIdPattern(), folderName, out tvdbId);
 
+    /// <summary>
+    /// Removes a trailing metadata id such as " [tmdbid-1234]" from a folder name. Any other
+    /// bracket is part of the title and stays (GitHub #205).
+    /// </summary>
+    /// <param name="folderName">Folder name to read.</param>
+    /// <returns>The name without its id.</returns>
+    public static string StripIdTag(string folderName) => IdTagPattern().Replace(folderName, string.Empty);
+
     private static bool TryParse(Regex pattern, string? folderName, out int id)
     {
         id = 0;
@@ -61,4 +69,8 @@ public static partial class FolderIdentity
 
     [GeneratedRegex(@"\[tvdbid-(\d+)\]", RegexOptions.IgnoreCase)]
     private static partial Regex TvdbIdPattern();
+
+    // The other spellings are ones Jellyfin reads too, so a folder named by hand is still found.
+    [GeneratedRegex(@"(?<=.) \[(?:tmdb|tvdb|imdb)id[-=]\w+\]\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex IdTagPattern();
 }

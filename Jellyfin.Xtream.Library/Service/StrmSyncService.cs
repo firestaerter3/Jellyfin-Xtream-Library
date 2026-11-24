@@ -1480,9 +1480,8 @@ public partial class StrmSyncService
             foreach (var folder in Directory.GetDirectories(moviesPath))
             {
                 var folderName = Path.GetFileName(folder);
-                // Extract base name (remove [tmdbid-X] suffix if present)
-                var bracketIndex = folderName.LastIndexOf(" [", StringComparison.Ordinal);
-                var baseKey = bracketIndex > 0 ? folderName[..bracketIndex] : folderName;
+                // Extract base name (without the [tmdbid-X] tag, if present)
+                var baseKey = FolderIdentity.StripIdTag(folderName);
                 rootFolders.TryAdd(baseKey, folderName);
             }
 
@@ -1501,8 +1500,7 @@ public partial class StrmSyncService
                         foreach (var folder in Directory.GetDirectories(subPath))
                         {
                             var folderName = Path.GetFileName(folder);
-                            var bracketIndex = folderName.LastIndexOf(" [", StringComparison.Ordinal);
-                            var baseKey = bracketIndex > 0 ? folderName[..bracketIndex] : folderName;
+                            var baseKey = FolderIdentity.StripIdTag(folderName);
                             subFolders.TryAdd(baseKey, folderName);
                         }
 
@@ -2827,10 +2825,9 @@ public partial class StrmSyncService
                         var strmCount = Directory.GetFiles(seriesDir, "*.strm", SearchOption.AllDirectories).Length;
                         existingSeriesFolderCounts.TryAdd(seriesDir, strmCount);
 
-                        // Build O(1) lookup: key = "parentDir|baseName" (strip " [...]" suffix)
+                        // Build O(1) lookup: key = "parentDir|baseName" (without the id tag)
                         var folderName = Path.GetFileName(seriesDir);
-                        var bracketIndex = folderName.LastIndexOf(" [", StringComparison.Ordinal);
-                        var baseKey = bracketIndex > 0 ? folderName[..bracketIndex] : folderName;
+                        var baseKey = FolderIdentity.StripIdTag(folderName);
                         var parentDir = Path.GetDirectoryName(seriesDir)!;
                         var lookupKey = parentDir + "|" + baseKey;
                         seriesFolderLookup.TryAdd(lookupKey, (seriesDir, strmCount));
