@@ -1138,6 +1138,7 @@ public partial class StrmSyncService
         globalResult.MoviesDeleted += providerResult.MoviesDeleted;
         globalResult.MoviesUnmatched += providerResult.MoviesUnmatched;
         globalResult.MovieNameCollisions += providerResult.MovieNameCollisions;
+        globalResult.MovieVersionsDropped += providerResult.MovieVersionsDropped;
         globalResult.MoviesDeferredForGrouping += providerResult.MoviesDeferredForGrouping;
         globalResult.SeriesCreated += providerResult.SeriesCreated;
         globalResult.SeriesSkipped += providerResult.SeriesSkipped;
@@ -1440,6 +1441,7 @@ public partial class StrmSyncService
         int moviesUpdated = 0;
         int moviesSkipped = 0;
         int nameCollisions = 0;
+        int movieVersionsDropped = 0;
         int errors = 0;
         int categoryFetchFailures = 0;
         int unmatchedCount = 0;
@@ -1470,6 +1472,7 @@ public partial class StrmSyncService
 
         // Pre-scan existing movie folders for faster skip detection
         var existingMovieFolders = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        var streamFolders = new Dictionary<string, Dictionary<int, List<string>>>(StringComparer.OrdinalIgnoreCase);
         if (Directory.Exists(moviesPath))
         {
             _logger.LogInformation("Pre-scanning existing movie folders...");
@@ -1511,6 +1514,24 @@ public partial class StrmSyncService
 
             var totalFolders = existingMovieFolders.Values.Sum(d => d.Count);
             _logger.LogInformation("Found {Count} existing movie folders", totalFolders);
+
+            // Where each stream's file is, for the streams the last sync recorded. Only with a
+            // snapshot, because a stream is held to its folder only while its title is unchanged,
+            // and only the snapshot says what the title was.
+            if (groupingHint != null)
+            {
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                foreach (var targetFolder in existingMovieFolders.Keys)
+                {
+                    string basePath = string.IsNullOrEmpty(targetFolder) ? moviesPath : Path.Combine(moviesPath, targetFolder);
+                    streamFolders[targetFolder] = MovieFolderIndex.Build(basePath, owners);
+                }
+
+                _logger.LogInformation(
+                    "Indexed the movie STRM files of {Count} streams in {Ms} ms",
+                    streamFolders.Values.Sum(d => d.Count),
+                    stopwatch.ElapsedMilliseconds);
+            }
         }
 
         // Build the per-provider VOD exclusion set once; read-only inside the parallel fetch.
@@ -1674,7 +1695,30 @@ public partial class StrmSyncService
                 // Track existing STRM paths for unchanged movies (orphan protection)
                 foreach (var m in unchangedMovies)
                 {
-                    KeepExistingMovieFiles(m.Stream.Name, m.Stream.StreamId, m.CategoryIds, provider, moviesPath, folderMappings, existingMovieFolders, groupingHint, syncedFiles, roleLedger, owners);
+                    // A stream dropped for its label is unchanged here and never reaches the write
+                    // path, but it still has to be a candidate, or the label's file would have no
+                    // one to go to when its holder leaves in an incremental run. Dispatcharr is left
+                    // out: whether a stream goes through it is only known once it is fetched.
+                    // Only a stream with no file anywhere: one that has a file is a holder, and its
+                    // snapshot folder may be stale (final review).
+                    (string VersionLabel, string Url)? candidate = null;
+                    if (groupByTmdb
+                        && provider.OneStreamPerVersionLabel
+                        && !enableDispatcharrMode
+                        && !streamFolders.Values.Any(index => index.ContainsKey(m.Stream.StreamId)))
+                    {
+                        string? language = VersionLanguageLabeler.Resolve(
+                            m.CategoryIds.Select(id => categoryNameById.GetValueOrDefault(id, string.Empty)),
+                            m.Stream.Name,
+                            languageRules,
+                            provider.VersionLanguageDefault);
+                        if (language != null)
+                        {
+                            candidate = (ExtractVersionLabel(m.Stream.Name, language) ?? language, MovieStreamUrl(connectionInfo, m.Stream.StreamId, m.Stream.ContainerExtension));
+                        }
+                    }
+
+                    KeepExistingMovieFiles(m.Stream.Name, m.Stream.StreamId, m.CategoryIds, provider, moviesPath, folderMappings, existingMovieFolders, groupingHint, syncedFiles, roleLedger, owners, candidate: candidate);
                 }
 
                 var skipped = unchangedMovies.Count;
@@ -1906,8 +1950,68 @@ public partial class StrmSyncService
                     // Quick check: does a folder for this movie already exist? If so, skip API calls
                     // Uses pre-scanned cache for O(1) lookup instead of filesystem scan
                     string? existingFolderName = null;
+
+                    // A stream whose file is already in a folder stays there while its title is
+                    // the one the last sync recorded. The name alone was not enough: a full sync over
+                    // an existing tree re-placed 65 streams, 21 into a namesake folder of another film
+                    // ("The Meg") and 44 guests, which are named unlike their group's folder, into a
+                    // folder of their own after the provider answered without a tmdb_id. A renamed
+                    // stream still follows its new name.
+                    MovieSnapshot? recordedPlacement = groupingHint != null
+                        && groupingHint.Movies.TryGetValue(stream.StreamId, out var recordedMovie)
+                        && string.Equals(recordedMovie.Name, stream.Name, StringComparison.Ordinal)
+                            ? recordedMovie
+                            : null;
+                    if (recordedPlacement != null)
+                    {
+                        foreach (var targetFolder in targetFolders)
+                        {
+                            if (streamFolders.TryGetValue(targetFolder, out var onDiskIndex)
+                                && onDiskIndex.TryGetValue(stream.StreamId, out var foldersOnDisk))
+                            {
+                                existingFolderName = MovieFolderIndex.Pick(foldersOnDisk, recordedPlacement.FolderName);
+                                if (foldersOnDisk.Count > 1)
+                                {
+                                    _logger.LogWarning(
+                                        "Movie stream {StreamId} has files in {Count} folders ({Folders}); staying in {Folder}",
+                                        stream.StreamId,
+                                        foldersOnDisk.Count,
+                                        string.Join(", ", foldersOnDisk),
+                                        existingFolderName);
+                                }
+
+                                break;
+                            }
+                        }
+                    }
+
+                    // A stream dropped for its label has no file to be found by, so it would fall back
+                    // to its name on every later run, the very path that misplaced the 65. Its recorded
+                    // folder holds it instead, while that folder is still there (final review).
+                    if (existingFolderName == null
+                        && recordedPlacement is { FolderName.Length: > 0 }
+                        && groupByTmdb
+                        && provider.OneStreamPerVersionLabel
+                        && languageLabel != null)
+                    {
+                        foreach (var targetFolder in targetFolders)
+                        {
+                            string recordedBase = string.IsNullOrEmpty(targetFolder) ? moviesPath : Path.Combine(moviesPath, targetFolder);
+                            if (Directory.Exists(Path.Combine(recordedBase, recordedPlacement.FolderName)))
+                            {
+                                existingFolderName = recordedPlacement.FolderName;
+                                break;
+                            }
+                        }
+                    }
+
                     foreach (var targetFolder in targetFolders)
                     {
+                        if (existingFolderName != null)
+                        {
+                            break;
+                        }
+
                         if (existingMovieFolders.TryGetValue(targetFolder, out var folderCache) &&
                             folderCache.TryGetValue(baseName, out var cachedFolder))
                         {
@@ -2128,12 +2232,14 @@ public partial class StrmSyncService
 
                     // Build STRM URLs and filenames — Dispatcharr multi-stream or standard single-stream
                     var strmEntries = new List<(string StreamUrl, string StrmFileName)>();
+                    bool viaDispatcharr = false;
                     // A value that is not a uuid would go into the STRM URL as is; fall back to
                     // the Xtream URL instead.
                     if (enableDispatcharrMode &&
                         dispatcharrCache.TryGetValue(stream.StreamId, out var movieProviderInfo) &&
                         DispatcharrChannelMap.IsUuid(movieProviderInfo.Uuid))
                     {
+                        viaDispatcharr = true;
                         var providers = movieProviderInfo.Providers;
                         string uuid = movieProviderInfo.Uuid;
                         for (int i = 0; i < providers.Count; i++)
@@ -2155,11 +2261,18 @@ public partial class StrmSyncService
                     }
                     else
                     {
-                        string extension = string.IsNullOrEmpty(stream.ContainerExtension) ? "mp4" : stream.ContainerExtension;
-                        string streamUrl = $"{connectionInfo.BaseUrl}/movie/{connectionInfo.UserName}/{connectionInfo.Password}/{stream.StreamId}.{extension}";
+                        string streamUrl = MovieStreamUrl(connectionInfo, stream.StreamId, stream.ContainerExtension);
                         string strmFileName = BuildMovieStrmFileName(folderName, versionLabel, provider.RegexRemovalPatterns);
                         strmEntries.Add((streamUrl, strmFileName));
                     }
+
+                    // One stream per version label (Mirco 16.11.): a second stream with this label is
+                    // not written, the lowest stream id keeps the file. Dispatcharr's per-provider
+                    // files carry their own labels and stay as they are.
+                    bool oneStreamPerLabel = groupByTmdb
+                        && provider.OneStreamPerVersionLabel
+                        && languageLabel != null
+                        && !viaDispatcharr;
 
                     bool anyCreated = false;
                     bool anyUpdated = false;
@@ -2194,6 +2307,7 @@ public partial class StrmSyncService
                         int? waitsOn = asAlternative ? groupOwnerStreamId : null;
                         string primaryPath = Path.Combine(movieFolder, strmEntries[0].StrmFileName);
                         bool primaryHeld = false;
+                        bool versionDropped = false;
                         if (!asAlternative)
                         {
                             // A primary left on disk by an earlier run stays with its stream, whatever
@@ -2202,11 +2316,21 @@ public partial class StrmSyncService
                             // gone, the settle step hands the primary over in place. Otherwise the
                             // first stream to claim the name holds it for now, and the settle step
                             // gives it to the lowest stream id of a folder this run wrote.
+                            // With one stream per label there is no alternative: the stream is a
+                            // candidate for the label's file instead, which the settle step gives to
+                            // the lowest listed id. A file of another provider keeps the old way.
                             int? onDisk = StrmOwnerOnDisk(primaryPath, stream.StreamId, owners);
                             if (onDisk is int otherStream)
                             {
-                                asAlternative = true;
-                                waitsOn = otherStream == StrmOwnerResolver.OtherProvider ? null : otherStream;
+                                if (oneStreamPerLabel && otherStream != StrmOwnerResolver.OtherProvider)
+                                {
+                                    versionDropped = true;
+                                }
+                                else
+                                {
+                                    asAlternative = true;
+                                    waitsOn = otherStream == StrmOwnerResolver.OtherProvider ? null : otherStream;
+                                }
                             }
                             else if (claimedPaths.TryAdd(primaryPath, 0))
                             {
@@ -2216,10 +2340,25 @@ public partial class StrmSyncService
                                     stream.StreamId,
                                     established: owners.OwnerOf(ReadStrmUrl(primaryPath)) == stream.StreamId);
                             }
+                            else if (oneStreamPerLabel)
+                            {
+                                versionDropped = true;
+                            }
                             else
                             {
                                 asAlternative = true;
                             }
+                        }
+
+                        if (versionDropped)
+                        {
+                            // Not written. A file this stream wrote before in this folder, typically
+                            // "… - DE - <id>.strm" from before the setting, goes now: orphan cleanup
+                            // may be off, and an unchanged run protects any file naming the stream.
+                            roleLedger.RegisterCandidate(primaryPath, stream.StreamId, strmEntries[0].StreamUrl);
+                            RemoveSupersededStrm(movieFolder, stream.StreamId, [], claimedPaths, owners, supersededFiles);
+                            Interlocked.Increment(ref movieVersionsDropped);
+                            continue;
                         }
 
                         // The files of this stream in this folder that hold its URL after this run.
@@ -2579,6 +2718,27 @@ public partial class StrmSyncService
         // gets the plain name. Both need the whole catalogue, which no single batch has.
         foreach (var change in roleLedger.SettleNewStreams(syncedFiles, claimedPaths))
         {
+            if (change.Kind == "handover")
+            {
+                _logger.LogInformation(
+                    "Movie STRM version handed over: stream {StreamId} holds {Primary}, was stream {Previous}",
+                    change.StreamId,
+                    Path.GetFileName(change.PrimaryPath),
+                    change.PreviousStreamId);
+
+                // A label's file changing hands says nothing about the folder, unless the stream
+                // that left was the group's owner and the new holder was its guest.
+                if (change.PreviousStreamId is int previous
+                    && !roleLedger.IsListed(previous)
+                    && EffectiveMovieIdentity(movieIdentities, groupingHint, change.StreamId).GroupOwnerStreamId == previous)
+                {
+                    ReassignGroupOwner(change.StreamId, allCollectedMovies, movieIdentities, groupingHint);
+                }
+
+                Interlocked.Increment(ref moviesUpdated);
+                continue;
+            }
+
             _logger.LogInformation(
                 "Movie STRM role settled ({Kind}): stream {StreamId} holds {Primary}, moved from {Previous}",
                 change.Kind,
@@ -2601,6 +2761,12 @@ public partial class StrmSyncService
         result.MoviesUpdated += moviesUpdated;
         result.MoviesSkipped += moviesSkipped;
         result.MovieNameCollisions += nameCollisions;
+        result.MovieVersionsDropped += movieVersionsDropped;
+        if (movieVersionsDropped > 0)
+        {
+            _logger.LogInformation("{Count} movie STRM files not written: another stream holds their version label (one stream per label)", movieVersionsDropped);
+        }
+
         result.MoviesDeferredForGrouping += groupingDeferred;
         result.AddErrors(errors);
         result.AddFailedItems(failedItems);
@@ -4523,7 +4689,8 @@ public partial class StrmSyncService
         ConcurrentDictionary<string, byte> syncedFiles,
         MovieRoleLedger roleLedger,
         StrmOwnerResolver owners,
-        bool ownFilesOnly = false)
+        bool ownFilesOnly = false,
+        (string VersionLabel, string Url)? candidate = null)
     {
         string movieName = SanitizeFileName(title, provider.CustomTitleRemoveTerms, isMovie: true);
         int? year = ExtractYear(title);
@@ -4583,7 +4750,23 @@ public partial class StrmSyncService
                 && groupingHint.Movies.TryGetValue(streamId, out var recordedMovie)
                 && !string.IsNullOrEmpty(recordedMovie.FolderName))
             {
-                ProtectOwnStrmIn(Path.Combine(movieBasePath, recordedMovie.FolderName), streamId, syncedFiles, roleLedger, owners, keepUnattributed: false, recordedGroupOwner);
+                string recordedFolder = Path.Combine(movieBasePath, recordedMovie.FolderName);
+                ProtectOwnStrmIn(recordedFolder, streamId, syncedFiles, roleLedger, owners, keepUnattributed: false, recordedGroupOwner);
+
+                // With one stream per label, a stream the caller found without a file of its own was
+                // dropped for its label: it is a candidate for that file whether another stream of
+                // this provider holds it or nobody does any more. The second case is a holder that
+                // moved to another label, or whose file cleanup took while the catalogue was
+                // incomplete; without it the label would stay empty until the next full sync.
+                if (candidate is { } wanted && Directory.Exists(recordedFolder))
+                {
+                    string labelPath = Path.Combine(recordedFolder, BuildMovieStrmFileName(recordedMovie.FolderName, wanted.VersionLabel, provider.RegexRemovalPatterns));
+                    bool free = !File.Exists(labelPath);
+                    if (free || (owners.OwnerOf(ReadStrmUrl(labelPath)) is int holder && holder >= 0 && holder != streamId))
+                    {
+                        roleLedger.RegisterCandidate(labelPath, streamId, wanted.Url);
+                    }
+                }
             }
         }
     }
@@ -5112,6 +5295,10 @@ public partial class StrmSyncService
             ? owner
             : null;
 
+    // The Xtream URL a movie STRM holds, with mp4 when the provider names no container.
+    private static string MovieStreamUrl(ConnectionInfo connectionInfo, int streamId, string? extension)
+        => $"{connectionInfo.BaseUrl}/movie/{connectionInfo.UserName}/{connectionInfo.Password}/{streamId}.{(string.IsNullOrEmpty(extension) ? "mp4" : extension)}";
+
     /// <summary>
     /// Whether the file at this path is on disk and demonstrably another stream's. A file whose
     /// URL names no stream (Dispatcharr, unreadable) is not.
@@ -5488,7 +5675,9 @@ public partial class StrmSyncService
     /// Reads the URL from a STRM file, without trailing whitespace. Null when the file cannot be
     /// read or is empty.
     /// </summary>
-    private static string? ReadStrmUrl(string path)
+    /// <param name="path">The STRM file.</param>
+    /// <returns>The URL, or null.</returns>
+    internal static string? ReadStrmUrl(string path)
     {
         try
         {
@@ -6414,6 +6603,13 @@ public class SyncResult
     /// duplicate streams the plugin cannot tell apart by name.
     /// </summary>
     public int MovieNameCollisions { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of movie STRM files not written because another stream of the same
+    /// film holds their version label, with <see cref="ProviderConfig.OneStreamPerVersionLabel"/> on.
+    /// One per stream, or one per category folder in Multiple folder mode.
+    /// </summary>
+    public int MovieVersionsDropped { get; set; }
 
     /// <summary>
     /// Gets or sets the number of movies left out of this run because the provider did not

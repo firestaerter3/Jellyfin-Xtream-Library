@@ -252,6 +252,21 @@ public class ProviderConfig
     public string VersionLanguageDefault { get; set; } = string.Empty;
 
     /// <summary>
+    /// Gets or sets a value indicating whether a grouped film keeps only one stream per version
+    /// label. When two streams of one film end up with the same label ("DE" from two catalogues),
+    /// only the one with the lowest stream id is written; the other's file, which would otherwise
+    /// carry its stream id ("… - DE - 813658.strm"), is not written and an earlier one is removed.
+    /// <para>
+    /// Only applies with <see cref="GroupMoviesByTmdbId"/> on and a language label set, and not to
+    /// Dispatcharr's per-provider files. When the stream holding a label leaves the provider, or a
+    /// stream with a lower id arrives, the file is rewritten in place for the new stream, so the
+    /// Jellyfin item stays the same. The cost: the dropped streams are no longer there as a spare
+    /// when the kept one stops working while the provider still lists it.
+    /// </para>
+    /// </summary>
+    public bool OneStreamPerVersionLabel { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether Dispatcharr mode is enabled.
     /// </summary>
     public bool EnableDispatcharrMode { get; set; }
